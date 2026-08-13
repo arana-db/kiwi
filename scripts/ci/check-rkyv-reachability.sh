@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # Copyright (c) 2024-present, arana-db Community.  All rights reserved.
 #
 # Licensed to the Apache Software Foundation (ASF) under one or more
@@ -14,20 +15,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# cargo audit configuration. This complements the [advisories] ignore
-# governance kept in deny.toml. Every ignored advisory must carry a reason
-# and a remove_when condition (documented in the comment next to it) and must
-# be re-audited once that condition is met.
 
-[advisories]
-ignore = [
-  # RUSTSEC-2026-0235: rkyv 0.7.46
-  # owner: WP8 / Issue #421
-  # potential_path: openraft -> byte-unit -> rust_decimal
-  # current_status: unreachable optional dependency
-  # Evidence: the locked offline all-targets all-features inverse tree is empty.
-  # remove_when: rkyv@0.7.46 becomes reachable, or dependencies permit an
-  # advisory-free version without this exception.
-  "RUSTSEC-2026-0235",
-]
+set -euo pipefail
+
+stdout_file="$(mktemp)"
+trap 'rm -f "$stdout_file"' EXIT
+
+if ! cargo tree --locked --offline --target all --all-features -i rkyv@0.7.46 >"$stdout_file"; then
+  printf '%s\n' 'failed to inspect the locked offline rkyv dependency graph' >&2
+  exit 1
+fi
+
+if [[ -s "$stdout_file" ]]; then
+  printf '%s\n' 'rkyv@0.7.46 is reachable; remove the advisory exception or upgrade the dependency:' >&2
+  cat "$stdout_file" >&2
+  exit 1
+fi
+
+printf '%s\n' 'rkyv@0.7.46 is not reachable in the locked all-targets all-features graph'

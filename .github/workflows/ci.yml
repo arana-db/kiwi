@@ -537,5 +537,11 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
 
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+
+      - name: Verify rkyv advisory remains unreachable
+        run: bash scripts/ci/check-rkyv-reachability.sh
+
       - name: Security audit
         run: cargo audit

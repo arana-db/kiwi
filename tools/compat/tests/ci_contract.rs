@@ -33,12 +33,14 @@ fn runner_command(runner: &std::path::Path) -> Command {
     command
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Workflow {
+    #[serde(rename = "on")]
+    triggers: BTreeMap<String, yaml_serde::Value>,
     jobs: BTreeMap<String, Job>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Job {
     #[serde(rename = "runs-on")]
     runs_on: String,
@@ -59,6 +61,10 @@ struct Step {
 }
 
 const VECTOR_CLUSTER_JOB: &str = "vector-cluster-fail-closed";
+const STATIC_ANALYSIS_JOB: &str = "static-analysis";
+const RKYV_TREE_COMMAND: &str =
+    "cargo tree --locked --offline --target all --all-features -i rkyv@0.7.46";
+const RKYV_SENTINEL_COMMAND: &str = "bash scripts/ci/check-rkyv-reachability.sh";
 const GRPCURL_URL: &str = "https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_x86_64.tar.gz";
 const GRPCURL_ARCHIVE_SHA256: &str =
     "a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5";
@@ -175,6 +181,126 @@ fn validate_vector_cluster_workflow(workflow: &Workflow) -> Result<(), String> {
     Ok(())
 }
 
+fn find_only_static_analysis_step(
+    job: &Job,
+    description: &str,
+    predicate: impl Fn(&Step) -> bool,
+) -> Result<usize, String> {
+    let matches = job
+        .steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| predicate(step).then_some(index))
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(format!(
+            "{STATIC_ANALYSIS_JOB} must contain exactly one {description} step, got {matches:?}"
+        ));
+    }
+    Ok(matches[0])
+}
+
+fn validate_rkyv_static_analysis_workflow(workflow: &Workflow) -> Result<(), String> {
+    if !workflow.triggers.contains_key("pull_request") {
+        return Err("CI workflow must run the static-analysis gate for pull requests".to_string());
+    }
+    let job = workflow
+        .jobs
+        .get(STATIC_ANALYSIS_JOB)
+        .ok_or_else(|| format!("required job {STATIC_ANALYSIS_JOB} is missing"))?;
+    if job.runs_on != "ubuntu-latest" {
+        return Err(format!("{STATIC_ANALYSIS_JOB} must run on ubuntu-latest"));
+    }
+    if job.continue_on_error.is_some()
+        || job
+            .steps
+            .iter()
+            .any(|step| step.continue_on_error.is_some())
+    {
+        return Err(format!("{STATIC_ANALYSIS_JOB} cannot continue on error"));
+    }
+
+    let fetch = find_only_static_analysis_step(job, "locked dependency fetch", |step| {
+        step.run
+            .as_deref()
+            .is_some_and(|command| command.trim() == "cargo fetch --locked")
+    })?;
+    let sentinel = find_only_static_analysis_step(job, "rkyv reachability sentinel", |step| {
+        step.run
+            .as_deref()
+            .is_some_and(|command| command.trim() == RKYV_SENTINEL_COMMAND)
+    })?;
+    let audit = find_only_static_analysis_step(job, "cargo audit", |step| {
+        step.run
+            .as_deref()
+            .is_some_and(|command| command.trim() == "cargo audit")
+    })?;
+    if !(fetch < sentinel && sentinel < audit) {
+        return Err(format!(
+            "{STATIC_ANALYSIS_JOB} steps must be ordered fetch < sentinel < audit, got {fetch} < {sentinel} < {audit}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_rkyv_sentinel_source(source: &str) -> Result<(), String> {
+    if source.matches(RKYV_TREE_COMMAND).count() != 1 {
+        return Err("sentinel must invoke the exact rkyv cargo tree command once".to_string());
+    }
+    let command_line = source
+        .lines()
+        .find(|line| line.contains(RKYV_TREE_COMMAND))
+        .ok_or_else(|| "sentinel cargo tree command is missing".to_string())?;
+    if !command_line.trim_start().starts_with("if ! cargo tree ") {
+        return Err("sentinel must fail when cargo tree fails".to_string());
+    }
+    if !command_line.contains(">\"$stdout_file\"")
+        || command_line.contains("2>&1")
+        || command_line.contains("&>")
+    {
+        return Err(
+            "sentinel must capture stdout without treating stderr as dependency output".to_string(),
+        );
+    }
+    let stdout_check = "if [[ -s \"$stdout_file\" ]]; then";
+    let command_position = source
+        .find(RKYV_TREE_COMMAND)
+        .expect("exact command presence checked");
+    let stdout_position = source
+        .find(stdout_check)
+        .ok_or_else(|| "sentinel must fail on non-empty cargo tree stdout".to_string())?;
+    if command_position >= stdout_position {
+        return Err("sentinel must inspect stdout after cargo tree completes".to_string());
+    }
+    Ok(())
+}
+
+fn validate_rkyv_audit_governance(source: &str) -> Result<(), String> {
+    let advisory_ignore_count = source
+        .lines()
+        .filter(|line| line.trim() == "\"RUSTSEC-2026-0235\",")
+        .count();
+    if advisory_ignore_count != 1 {
+        return Err(format!(
+            "audit governance must ignore RUSTSEC-2026-0235 exactly once, got {advisory_ignore_count}"
+        ));
+    }
+    for required in [
+        "owner: WP8 / Issue #421",
+        "potential_path: openraft -> byte-unit -> rust_decimal",
+        "current_status: unreachable optional dependency",
+        "remove_when:",
+    ] {
+        if !source.contains(required) {
+            return Err(format!("audit governance is missing {required}"));
+        }
+    }
+    if source.contains("Raft wire serialization") {
+        return Err("audit governance falsely claims current Raft wire usage".to_string());
+    }
+    Ok(())
+}
+
 #[test]
 fn vector_cluster_required_job_is_unique_and_fail_closed() {
     let workflow_source = include_str!("../../../.github/workflows/ci.yml");
@@ -194,6 +320,147 @@ fn vector_cluster_required_job_is_unique_and_fail_closed() {
 
     let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
     validate_vector_cluster_workflow(&workflow).expect("required Vector cluster job must be exact");
+}
+
+#[test]
+fn rkyv_static_analysis_gate_is_pr_blocking_and_ordered() {
+    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    assert_eq!(
+        workflow_source
+            .lines()
+            .filter(|line| *line == "  static-analysis:")
+            .count(),
+        1
+    );
+    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    validate_rkyv_static_analysis_workflow(&workflow)
+        .expect("static analysis must contain the required fail-closed rkyv gate");
+}
+
+#[test]
+fn rkyv_static_analysis_contract_rejects_removal_reordering_and_continue_on_error() {
+    let source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow: Workflow = yaml_serde::from_str(source).expect("CI workflow must parse");
+
+    let mut no_pull_request = workflow.clone();
+    no_pull_request.triggers.remove("pull_request");
+
+    let mut removed = workflow.clone();
+    removed
+        .jobs
+        .get_mut(STATIC_ANALYSIS_JOB)
+        .expect("static analysis job must exist")
+        .steps
+        .retain(|step| {
+            !step
+                .run
+                .as_deref()
+                .is_some_and(|command| command.trim() == RKYV_SENTINEL_COMMAND)
+        });
+    assert!(validate_rkyv_static_analysis_workflow(&removed).is_err());
+
+    let mut reordered = workflow.clone();
+    let job = reordered
+        .jobs
+        .get_mut(STATIC_ANALYSIS_JOB)
+        .expect("static analysis job must exist");
+    let fetch = job
+        .steps
+        .iter()
+        .position(|step| {
+            step.run
+                .as_deref()
+                .is_some_and(|command| command.trim() == "cargo fetch --locked")
+        })
+        .expect("locked dependency fetch must exist");
+    let sentinel = job
+        .steps
+        .iter()
+        .position(|step| {
+            step.run
+                .as_deref()
+                .is_some_and(|command| command.trim() == RKYV_SENTINEL_COMMAND)
+        })
+        .expect("rkyv sentinel must exist");
+    job.steps.swap(fetch, sentinel);
+
+    let mut job_continued = workflow.clone();
+    job_continued
+        .jobs
+        .get_mut(STATIC_ANALYSIS_JOB)
+        .expect("static analysis job must exist")
+        .continue_on_error = Some(yaml_serde::Value::Bool(true));
+
+    let mut step_continued = workflow;
+    step_continued
+        .jobs
+        .get_mut(STATIC_ANALYSIS_JOB)
+        .expect("static analysis job must exist")
+        .steps
+        .iter_mut()
+        .find(|step| {
+            step.run
+                .as_deref()
+                .is_some_and(|command| command.trim() == RKYV_SENTINEL_COMMAND)
+        })
+        .expect("rkyv sentinel must exist")
+        .continue_on_error = Some(yaml_serde::Value::Bool(true));
+
+    for (name, mutant) in [
+        ("removed pull-request trigger", no_pull_request),
+        ("removed sentinel", removed),
+        ("reordered sentinel", reordered),
+        ("job continue-on-error", job_continued),
+        ("step continue-on-error", step_continued),
+    ] {
+        assert!(
+            validate_rkyv_static_analysis_workflow(&mutant).is_err(),
+            "static-analysis accepted {name} mutant"
+        );
+    }
+}
+
+#[test]
+fn rkyv_sentinel_contract_rejects_ignored_stdout() {
+    let source = include_str!("../../../scripts/ci/check-rkyv-reachability.sh");
+    validate_rkyv_sentinel_source(source).expect("rkyv sentinel source must be fail closed");
+
+    let ignored_stdout = source.replacen(
+        "if [[ -s \"$stdout_file\" ]]; then",
+        "if [[ ! -s \"$stdout_file\" ]]; then",
+        1,
+    );
+    assert!(validate_rkyv_sentinel_source(&ignored_stdout).is_err());
+}
+
+#[test]
+fn rkyv_audit_ignore_has_owner_path_status_and_removal_condition() {
+    let source = include_str!("../../../.cargo/audit.toml");
+    validate_rkyv_audit_governance(source)
+        .expect("rkyv advisory ignore must carry accurate governance");
+
+    let removed_advisory = source.replacen("  \"RUSTSEC-2026-0235\",\n", "", 1);
+    assert!(
+        validate_rkyv_audit_governance(&removed_advisory).is_err(),
+        "audit governance accepted removal of the governed advisory ignore"
+    );
+}
+
+#[test]
+fn rkyv_security_workflow_remains_scheduled_visibility() {
+    let source = include_str!("../../../.github/workflows/security.yml");
+    assert!(source.contains("  schedule:"));
+    let workflow: Workflow = yaml_serde::from_str(source).expect("security workflow must parse");
+    let job = workflow
+        .jobs
+        .get("cargo-audit")
+        .expect("scheduled cargo audit visibility job must exist");
+    assert_eq!(job.runs_on, "ubuntu-latest");
+    assert_eq!(
+        job.continue_on_error,
+        Some(yaml_serde::Value::Bool(true)),
+        "scheduled visibility is not the PR-blocking static-analysis gate"
+    );
 }
 
 #[test]
