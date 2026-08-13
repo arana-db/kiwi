@@ -251,7 +251,7 @@ impl RequiredVectorJobs {
         let mut commands = BTreeMap::new();
         for command in raw_job.commands {
             if !command.starts_with('V')
-                || !command.bytes().all(|byte| (b'A'..=b'Z').contains(&byte))
+                || !command.bytes().all(|byte| byte.is_ascii_uppercase())
                 || commands.insert(command.clone(), ()).is_some()
             {
                 return Err(ManifestError::InvalidRequiredJobs(format!(
@@ -306,7 +306,7 @@ impl RequiredVectorJobs {
                     && raw_case
                         .case_id
                         .bytes()
-                        .all(|byte| byte == b'-' || (b'a'..=b'z').contains(&byte));
+                        .all(|byte| byte == b'-' || byte.is_ascii_lowercase());
                 if !valid_case_id
                     || !matches!(
                         raw_case.evidence_kind.as_str(),

@@ -59,12 +59,20 @@ struct Step {
     uses: Option<String>,
     run: Option<String>,
     #[serde(default)]
-    with: BTreeMap<String, yaml_serde::Value>,
+    with: StepInputs,
     #[serde(rename = "continue-on-error")]
     continue_on_error: Option<yaml_serde::Value>,
 }
 
+#[derive(Clone, Default, Deserialize)]
+struct StepInputs {
+    name: Option<String>,
+    path: Option<String>,
+    r#ref: Option<String>,
+}
+
 const VECTOR_CLUSTER_JOB: &str = "vector-cluster-fail-closed";
+const TRUSTED_VECTOR_JOB: &str = "trusted-vector-differential";
 const STATIC_ANALYSIS_JOB: &str = "static-analysis";
 const RKYV_TREE_COMMAND: &str =
     "cargo tree --locked --offline --target all --all-features -i rkyv@0.7.46";
@@ -76,6 +84,127 @@ const GRPCURL_OUTPUT: &str = "-o \"$RUNNER_TEMP/grpcurl.tar.gz\"";
 const GRPCURL_CHECKSUM_VERIFY: &str = "| (cd \"$RUNNER_TEMP\" && sha256sum -c -)";
 const GRPCURL_EXTRACT: &str =
     "tar -xzf \"$RUNNER_TEMP/grpcurl.tar.gz\" -C \"$RUNNER_TEMP\" grpcurl";
+
+fn validate_required_job_action_versions(workflow: &Workflow) -> Result<(), String> {
+    for job_id in [TRUSTED_VECTOR_JOB, VECTOR_CLUSTER_JOB, STATIC_ANALYSIS_JOB] {
+        let job = workflow
+            .jobs
+            .get(job_id)
+            .ok_or_else(|| format!("required job {job_id} is missing"))?;
+        for action in job.steps.iter().filter_map(|step| step.uses.as_deref()) {
+            let (_, version) = action
+                .rsplit_once('@')
+                .ok_or_else(|| format!("{job_id} action is unversioned: {action}"))?;
+            let versioned_tag = version.strip_prefix('v').is_some_and(|digits| {
+                !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit())
+            });
+            let commit_sha =
+                version.len() == 40 && version.bytes().all(|byte| byte.is_ascii_hexdigit());
+            if !versioned_tag && !commit_sha {
+                return Err(format!("{job_id} action is not versioned: {action}"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), String> {
+    let job = workflow
+        .jobs
+        .get(TRUSTED_VECTOR_JOB)
+        .ok_or_else(|| format!("required job {TRUSTED_VECTOR_JOB} is missing"))?;
+    if job.runs_on != "ubuntu-latest" {
+        return Err(format!("{TRUSTED_VECTOR_JOB} must run on ubuntu-latest"));
+    }
+    if job.condition.is_some() {
+        return Err(format!("{TRUSTED_VECTOR_JOB} cannot be conditional"));
+    }
+    if job.continue_on_error.is_some()
+        || job
+            .steps
+            .iter()
+            .any(|step| step.continue_on_error.is_some())
+    {
+        return Err(format!("{TRUSTED_VECTOR_JOB} cannot continue on error"));
+    }
+
+    let runner = find_only_step(job, "verifier-supervised differential runner", |step| {
+        step.run.as_deref().is_some_and(|command| {
+            [
+                "KIWI_COMPAT_REQUIRE_ORACLE=1",
+                "KIWI_REDIS_ORACLE_SOURCE=\"$RUNNER_TEMP/kiwi-oracle/redis-source\"",
+                "KIWI_REDIS_ORACLE_PRIMARY_METADATA=\"$RUNNER_TEMP/kiwi-oracle/primary-build.json\"",
+                "KIWI_REDIS_ORACLE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json\"",
+                "bash scripts/compat/run-vector-differential.sh",
+            ]
+            .iter()
+            .all(|required| command.contains(required))
+                && !command.contains("redis-cli")
+                && !command.contains(" PING")
+        })
+    })?;
+    let upload = find_only_step(job, "post-cleanup provenance upload", |step| {
+        step.uses
+            .as_deref()
+            .is_some_and(|action| action.starts_with("actions/upload-artifact@"))
+    })?;
+    let upload_step = &job.steps[upload];
+    if upload_step.uses.as_deref() != Some("actions/upload-artifact@v7")
+        || upload_step.with.name.as_deref() != Some("trusted-vector-oracle-provenance")
+        || upload_step.with.path.as_deref()
+            != Some("${{ runner.temp }}/kiwi-oracle/oracle-provenance.json")
+    {
+        return Err(format!(
+            "{TRUSTED_VECTOR_JOB} may upload only the final post-cleanup provenance file"
+        ));
+    }
+    if runner >= upload {
+        return Err(format!(
+            "{TRUSTED_VECTOR_JOB} provenance upload must follow the verifier-supervised runner"
+        ));
+    }
+    if job.steps[runner].condition.is_some() || job.steps[upload].condition.is_some() {
+        return Err(format!(
+            "{TRUSTED_VECTOR_JOB} runner and upload steps cannot be conditional"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_vector_differential_runner_source(source: &str) -> Result<(), String> {
+    let endpoint_guard = "[[ -z ${KIWI_REDIS_ORACLE_HOST:-} ]] \\\n    || die 'Oracle endpoint variables are only accepted inside the verifier callback'";
+    if source.matches(endpoint_guard).count() != 1 {
+        return Err("outer differential runner must reject ambient Oracle endpoints".to_string());
+    }
+    let verifier = "scripts/compat/verify-redis-8.8.1.sh \\\n    --source \"$KIWI_REDIS_ORACLE_SOURCE\" \\\n    --primary-metadata \"$KIWI_REDIS_ORACLE_PRIMARY_METADATA\" \\\n    --output \"$KIWI_REDIS_ORACLE_OUTPUT\" \\\n    --callback-input \"$repository_root\" \\\n    --run-after-ready /bin/bash \\\n    /callback-input/scripts/compat/run-vector-differential.sh --callback";
+    if source.matches(verifier).count() != 1 {
+        return Err(
+            "differential runner must obtain the rebuild runtime from the verifier supervisor"
+                .to_string(),
+        );
+    }
+    let outer = source
+        .split_once("if [[ ${1:-} == --callback ]]; then\n    callback_main")
+        .map(|(_, outer)| outer)
+        .ok_or_else(|| "differential callback dispatch is missing".to_string())?;
+    if outer.contains("redis-cli") || outer.contains(" PING") {
+        return Err(
+            "outer differential runner cannot probe an arbitrary Oracle endpoint".to_string(),
+        );
+    }
+    for required in [
+        "verifier did not publish Oracle provenance after cleanup",
+        "Oracle provenance was published before complete cleanup",
+        "Oracle provenance publication order is invalid",
+    ] {
+        if !outer.contains(required) {
+            return Err(format!(
+                "differential runner is missing post-cleanup proof: {required}"
+            ));
+        }
+    }
+    Ok(())
+}
 
 fn find_only_step(
     job: &Job,
@@ -142,6 +271,9 @@ fn validate_vector_cluster_workflow(workflow: &Workflow) -> Result<(), String> {
     if job.runs_on != "ubuntu-latest" {
         return Err(format!("{VECTOR_CLUSTER_JOB} must run on ubuntu-latest"));
     }
+    if job.condition.is_some() {
+        return Err(format!("{VECTOR_CLUSTER_JOB} cannot be conditional"));
+    }
     if job.continue_on_error.is_some()
         || job
             .steps
@@ -154,7 +286,7 @@ fn validate_vector_cluster_workflow(workflow: &Workflow) -> Result<(), String> {
     let checkout = find_only_step(job, "checkout", |step| {
         step.uses.as_deref() == Some("actions/checkout@v7")
     })?;
-    if job.steps[checkout].with.contains_key("ref") {
+    if job.steps[checkout].with.r#ref.is_some() {
         return Err(format!(
             "{VECTOR_CLUSTER_JOB} checkout must build the triggering current Head"
         ));
@@ -177,6 +309,17 @@ fn validate_vector_cluster_workflow(workflow: &Workflow) -> Result<(), String> {
             .all(|required| command.contains(required))
         })
     })?;
+    for (description, index) in [
+        ("current-Head Kiwi build", build),
+        ("pinned grpcurl preparation", grpcurl),
+        ("required cluster runner", runner),
+    ] {
+        if job.steps[index].condition.is_some() {
+            return Err(format!(
+                "{VECTOR_CLUSTER_JOB} {description} step cannot be conditional"
+            ));
+        }
+    }
     if !(checkout < build && build < grpcurl && grpcurl < runner) {
         return Err(format!(
             "{VECTOR_CLUSTER_JOB} steps must be ordered checkout < build < grpcurl < runner, got {checkout} < {build} < {grpcurl} < {runner}"
@@ -338,6 +481,28 @@ fn vector_cluster_required_job_is_unique_and_fail_closed() {
 
     let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
     validate_vector_cluster_workflow(&workflow).expect("required Vector cluster job must be exact");
+
+    for (name, from, to) in [
+        (
+            "job condition",
+            "  vector-cluster-fail-closed:\n    name: Vector cluster fail-closed",
+            "  vector-cluster-fail-closed:\n    if: false\n    name: Vector cluster fail-closed",
+        ),
+        (
+            "runner condition",
+            "      - name: Run required three-node Vector cluster gate\n        run: |",
+            "      - name: Run required three-node Vector cluster gate\n        if: false\n        run: |",
+        ),
+    ] {
+        let mutant = workflow_source.replacen(from, to, 1);
+        assert_ne!(mutant, workflow_source, "failed to construct {name} mutant");
+        let workflow: Workflow =
+            yaml_serde::from_str(&mutant).expect("cluster condition mutant must parse");
+        assert!(
+            validate_vector_cluster_workflow(&workflow).is_err(),
+            "cluster workflow accepted {name} mutant"
+        );
+    }
 }
 
 #[test]
@@ -728,18 +893,37 @@ fn vector_cluster_validators_reject_collection_totals_and_cleanup_drift() {
     assert!(!collection_result.status.success());
 
     let summary = scratch.join("summary.json");
-    fs::write(
-        &summary,
-        r#"{"collected":16,"passed":15,"failed":0,"skipped":1,"xfailed":0,"xpassed":0,"deselected":0}"#,
-    )
-    .expect("write totals mutant");
-    let summary_result = Command::new("python3")
-        .arg(&validator)
-        .arg("--validate-summary")
-        .arg(&summary)
-        .output()
-        .expect("run totals mutant");
-    assert!(!summary_result.status.success());
+    let passing = r#"{"collected":16,"passed":16,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    fs::write(&summary, passing).expect("write passing totals");
+    let run_summary = || {
+        Command::new("python3")
+            .arg(&validator)
+            .arg("--validate-summary")
+            .arg(&summary)
+            .output()
+            .expect("run totals validator")
+    };
+    assert!(run_summary().status.success());
+    for (name, mutant) in [
+        (
+            "zero collection",
+            passing.replace("\"collected\":16", "\"collected\":0"),
+        ),
+        ("failed", passing.replace("\"failed\":0", "\"failed\":1")),
+        ("skipped", passing.replace("\"skipped\":0", "\"skipped\":1")),
+        ("xfailed", passing.replace("\"xfailed\":0", "\"xfailed\":1")),
+        ("xpassed", passing.replace("\"xpassed\":0", "\"xpassed\":1")),
+        (
+            "deselected",
+            passing.replace("\"deselected\":0", "\"deselected\":1"),
+        ),
+    ] {
+        fs::write(&summary, mutant).expect("write totals mutant");
+        assert!(
+            !run_summary().status.success(),
+            "cluster summary accepted {name} mutant"
+        );
+    }
 
     let cleanup = scratch.join("cleanup.json");
     fs::write(
@@ -753,6 +937,18 @@ fn vector_cluster_validators_reject_collection_totals_and_cleanup_drift() {
         .arg(&cleanup)
         .output()
         .expect("run cleanup mutant");
+    assert!(!cleanup_result.status.success());
+    fs::write(
+        &cleanup,
+        r#"{"schema":"kiwi-vector-cluster-cleanup/v1","processes":[{"term_sent":true,"waited":true,"process_group_gone":true},{"term_sent":true,"waited":true,"process_group_gone":true}]}"#,
+    )
+    .expect("write short cleanup mutant");
+    let cleanup_result = Command::new("python3")
+        .arg(&validator)
+        .arg("--validate-cleanup")
+        .arg(&cleanup)
+        .output()
+        .expect("run short cleanup mutant");
     assert!(!cleanup_result.status.success());
 
     let launch_fault_result = Command::new("python3")
@@ -821,10 +1017,158 @@ fn vector_differential_required_job_is_unique_and_fail_closed() {
 }
 
 #[test]
+fn required_jobs_reject_unversioned_actions() {
+    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    validate_required_job_action_versions(&workflow)
+        .expect("required jobs must use versioned action runners");
+
+    for job_id in [TRUSTED_VECTOR_JOB, VECTOR_CLUSTER_JOB, STATIC_ANALYSIS_JOB] {
+        let mut workflow = workflow.clone();
+        let checkout = workflow
+            .jobs
+            .get_mut(job_id)
+            .expect("required job must exist")
+            .steps
+            .iter_mut()
+            .find(|step| step.uses.as_deref() == Some("actions/checkout@v7"))
+            .expect("required job must contain its versioned checkout");
+        checkout.uses = Some("actions/checkout@main".to_string());
+        assert!(
+            validate_required_job_action_versions(&workflow).is_err(),
+            "required jobs accepted floating action mutant in {job_id}"
+        );
+    }
+}
+
+#[test]
+fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
+    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    validate_vector_differential_workflow(&workflow)
+        .expect("trusted differential workflow must be fail closed");
+
+    let runner_source = include_str!("../../../scripts/compat/run-vector-differential.sh");
+    validate_vector_differential_runner_source(runner_source)
+        .expect("trusted differential runner must obtain its runtime from the verifier");
+
+    let runner_bypass = workflow_source.replacen(
+        "          KIWI_COMPAT_REQUIRE_ORACLE=1 \\\n          KIWI_REDIS_ORACLE_SOURCE=\"$RUNNER_TEMP/kiwi-oracle/redis-source\" \\\n          KIWI_REDIS_ORACLE_PRIMARY_METADATA=\"$RUNNER_TEMP/kiwi-oracle/primary-build.json\" \\\n          KIWI_REDIS_ORACLE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json\" \\\n            bash scripts/compat/run-vector-differential.sh",
+        "          redis-cli -h \"${KIWI_REDIS_ORACLE_HOST:-127.0.0.1}\" \\\n            -p \"${KIWI_REDIS_ORACLE_PORT:-6379}\" PING",
+        1,
+    );
+    assert_ne!(
+        runner_bypass, workflow_source,
+        "failed to construct supervisor bypass mutant"
+    );
+
+    let upload_before_cleanup = workflow_source.replacen(
+        "      - name: Run required trusted Vector differential\n        run: |\n          KIWI_COMPAT_REQUIRE_ORACLE=1",
+        "      - name: Upload trusted Oracle provenance\n        uses: actions/upload-artifact@v7\n        with:\n          name: premature-provenance\n          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json\n\n      - name: Run required trusted Vector differential\n        run: |\n          KIWI_COMPAT_REQUIRE_ORACLE=1",
+        1,
+    );
+    assert_ne!(
+        upload_before_cleanup, workflow_source,
+        "failed to construct premature upload mutant"
+    );
+
+    let unsafe_upload = workflow_source.replacen(
+        "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json",
+        "          path: ${{ runner.temp }}/kiwi-oracle",
+        1,
+    );
+    assert_ne!(
+        unsafe_upload, workflow_source,
+        "failed to construct broad upload mutant"
+    );
+
+    for (name, mutant) in [
+        ("supervisor bypass", runner_bypass),
+        ("upload before cleanup", upload_before_cleanup),
+        ("broad live/candidate upload", unsafe_upload),
+    ] {
+        let workflow: Workflow =
+            yaml_serde::from_str(&mutant).expect("differential mutant must remain valid YAML");
+        assert!(
+            validate_vector_differential_workflow(&workflow).is_err(),
+            "trusted differential accepted {name} mutant"
+        );
+    }
+
+    for (name, from, to) in [
+        (
+            "job condition",
+            "  trusted-vector-differential:\n    name: trusted Vector differential",
+            "  trusted-vector-differential:\n    if: false\n    name: trusted Vector differential",
+        ),
+        (
+            "runner condition",
+            "      - name: Run required trusted Vector differential\n        run: |",
+            "      - name: Run required trusted Vector differential\n        if: false\n        run: |",
+        ),
+        (
+            "upload condition",
+            "      - name: Upload trusted Oracle provenance\n        uses: actions/upload-artifact@v7",
+            "      - name: Upload trusted Oracle provenance\n        if: always()\n        uses: actions/upload-artifact@v7",
+        ),
+    ] {
+        let mutant = workflow_source.replacen(from, to, 1);
+        assert_ne!(mutant, workflow_source, "failed to construct {name} mutant");
+        let workflow: Workflow =
+            yaml_serde::from_str(&mutant).expect("differential condition mutant must parse");
+        assert!(
+            validate_vector_differential_workflow(&workflow).is_err(),
+            "trusted differential accepted {name} mutant"
+        );
+    }
+
+    for (name, mutant) in [
+        (
+            "ambient Oracle endpoint",
+            runner_source.replacen(
+                "[[ -z ${KIWI_REDIS_ORACLE_HOST:-} ]] \\\n    || die 'Oracle endpoint variables are only accepted inside the verifier callback'",
+                ": # accept ambient Oracle endpoint",
+                1,
+            ),
+        ),
+        (
+            "direct arbitrary-port PING",
+            runner_source.replacen(
+                "scripts/compat/verify-redis-8.8.1.sh \\",
+                "/usr/bin/redis-cli -h \"${KIWI_REDIS_ORACLE_HOST:-127.0.0.1}\" -p \"${KIWI_REDIS_ORACLE_PORT:-6379}\" PING #",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(mutant, runner_source, "failed to construct {name} runner mutant");
+        assert!(
+            validate_vector_differential_runner_source(&mutant).is_err(),
+            "trusted differential runner accepted {name} mutant"
+        );
+    }
+}
+
+#[test]
 fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
     let makefile = include_str!("../../../tests/Makefile");
-    assert!(!makefile.contains("--ignore=$(PYTHON_TEST_DIR)/test_vector_set_differential.py"));
+    let differential_path_ignore = |source: &str| {
+        source.lines().any(|line| {
+            let lower = line.to_ascii_lowercase();
+            (lower.contains("--ignore") || lower.contains("--ignore-glob"))
+                && lower.contains("vector_set_differential")
+        })
+    };
+    assert!(!differential_path_ignore(makefile));
     assert!(makefile.contains("-m \"not raw_vector_protocol\""));
+    for mutant in [
+        format!("{makefile}\npytest --ignore=python/test_vector_set_differential.py"),
+        format!("{makefile}\npytest --ignore-glob='*vector_set_differential.py'"),
+    ] {
+        assert!(
+            differential_path_ignore(&mutant),
+            "fast integration path-ignore mutant was not detected"
+        );
+    }
 
     let runner = include_str!("../../../scripts/compat/run-vector-differential.sh");
     for required in [

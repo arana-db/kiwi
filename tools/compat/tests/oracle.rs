@@ -1094,31 +1094,31 @@ assert time.monotonic() - started < 1.0
         .env("PATH", "/usr/bin:/bin")
         .output()
         .expect("setup-stall probe must start");
-    if let Ok(raw_pid) = fs::read_to_string(&marker) {
-        if let Ok(pid) = raw_pid.trim().parse::<i32>() {
-            let probe_bytes = probe.as_os_str().as_encoded_bytes();
-            let matches_probe = || {
-                let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-                cmdline
-                    .windows(probe_bytes.len())
-                    .any(|window| window == probe_bytes)
-            };
-            if matches_probe() {
-                let _ = Command::new("/bin/kill")
-                    .args(["-TERM", "--", &pid.to_string()])
-                    .status();
-                std::thread::sleep(std::time::Duration::from_millis(300));
-            }
-            if matches_probe() {
-                let _ = Command::new("/bin/kill")
-                    .args(["-KILL", "--", &pid.to_string()])
-                    .status();
-            }
-            assert!(
-                !matches_probe(),
-                "setup-stall supervisor PID survived cleanup"
-            );
+    if let Ok(raw_pid) = fs::read_to_string(&marker)
+        && let Ok(pid) = raw_pid.trim().parse::<i32>()
+    {
+        let probe_bytes = probe.as_os_str().as_encoded_bytes();
+        let matches_probe = || {
+            let cmdline = fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+            cmdline
+                .windows(probe_bytes.len())
+                .any(|window| window == probe_bytes)
+        };
+        if matches_probe() {
+            let _ = Command::new("/bin/kill")
+                .args(["-TERM", "--", &pid.to_string()])
+                .status();
+            std::thread::sleep(std::time::Duration::from_millis(300));
         }
+        if matches_probe() {
+            let _ = Command::new("/bin/kill")
+                .args(["-KILL", "--", &pid.to_string()])
+                .status();
+        }
+        assert!(
+            !matches_probe(),
+            "setup-stall supervisor PID survived cleanup"
+        );
     }
     assert_probe_succeeds(output);
 }
