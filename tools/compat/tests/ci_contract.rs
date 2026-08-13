@@ -48,11 +48,99 @@ struct Job {
     steps: Vec<Step>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 struct Step {
+    uses: Option<String>,
     run: Option<String>,
+    #[serde(default)]
+    with: BTreeMap<String, yaml_serde::Value>,
     #[serde(rename = "continue-on-error")]
     continue_on_error: Option<yaml_serde::Value>,
+}
+
+const VECTOR_CLUSTER_JOB: &str = "vector-cluster-fail-closed";
+const GRPCURL_URL: &str = "https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_x86_64.tar.gz";
+const GRPCURL_ARCHIVE_SHA256: &str =
+    "a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5";
+const GRPCURL_EXTRACT: &str =
+    "tar -xzf \"$RUNNER_TEMP/grpcurl.tar.gz\" -C \"$RUNNER_TEMP\" grpcurl";
+
+fn find_only_step(
+    job: &Job,
+    description: &str,
+    predicate: impl Fn(&Step) -> bool,
+) -> Result<usize, String> {
+    let matches = job
+        .steps
+        .iter()
+        .enumerate()
+        .filter_map(|(index, step)| predicate(step).then_some(index))
+        .collect::<Vec<_>>();
+    if matches.len() != 1 {
+        return Err(format!(
+            "{VECTOR_CLUSTER_JOB} must contain exactly one {description} step, got {matches:?}"
+        ));
+    }
+    Ok(matches[0])
+}
+
+fn is_pinned_grpcurl_step(step: &Step) -> bool {
+    step.run.as_deref().is_some_and(|command| {
+        command.contains(GRPCURL_URL)
+            && command.contains(GRPCURL_ARCHIVE_SHA256)
+            && command.contains(GRPCURL_EXTRACT)
+    })
+}
+
+fn validate_vector_cluster_workflow(workflow: &Workflow) -> Result<(), String> {
+    let job = workflow
+        .jobs
+        .get(VECTOR_CLUSTER_JOB)
+        .ok_or_else(|| format!("required job {VECTOR_CLUSTER_JOB} is missing"))?;
+    if job.runs_on != "ubuntu-latest" {
+        return Err(format!("{VECTOR_CLUSTER_JOB} must run on ubuntu-latest"));
+    }
+    if job.continue_on_error.is_some()
+        || job
+            .steps
+            .iter()
+            .any(|step| step.continue_on_error.is_some())
+    {
+        return Err(format!("{VECTOR_CLUSTER_JOB} cannot continue on error"));
+    }
+
+    let checkout = find_only_step(job, "checkout", |step| {
+        step.uses.as_deref() == Some("actions/checkout@v7")
+    })?;
+    if job.steps[checkout].with.contains_key("ref") {
+        return Err(format!(
+            "{VECTOR_CLUSTER_JOB} checkout must build the triggering current Head"
+        ));
+    }
+    let build = find_only_step(job, "current-Head Kiwi build", |step| {
+        step.run
+            .as_deref()
+            .is_some_and(|command| command.trim() == "cargo build --locked --bin kiwi")
+    })?;
+    let grpcurl = find_only_step(job, "pinned grpcurl preparation", is_pinned_grpcurl_step)?;
+    let runner = find_only_step(job, "required cluster runner", |step| {
+        step.run.as_deref().is_some_and(|command| {
+            [
+                "KIWI_RUN_CLUSTER_TESTS=1",
+                "KIWI_BINARY=\"$GITHUB_WORKSPACE/target/debug/kiwi\"",
+                "KIWI_GRPCURL=\"$RUNNER_TEMP/grpcurl\"",
+                "bash scripts/ci/run-vector-cluster.sh",
+            ]
+            .iter()
+            .all(|required| command.contains(required))
+        })
+    })?;
+    if !(checkout < build && build < grpcurl && grpcurl < runner) {
+        return Err(format!(
+            "{VECTOR_CLUSTER_JOB} steps must be ordered checkout < build < grpcurl < runner, got {checkout} < {build} < {grpcurl} < {runner}"
+        ));
+    }
+    Ok(())
 }
 
 #[test]
@@ -73,36 +161,36 @@ fn vector_cluster_required_job_is_unique_and_fail_closed() {
     );
 
     let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
-    let job = workflow
-        .jobs
-        .get("vector-cluster-fail-closed")
-        .expect("required Vector cluster job must exist");
-    assert_eq!(job.runs_on, "ubuntu-latest");
-    assert!(job.continue_on_error.is_none());
-    assert!(
-        job.steps
+    validate_vector_cluster_workflow(&workflow).expect("required Vector cluster job must be exact");
+}
+
+#[test]
+fn vector_cluster_workflow_rejects_grpcurl_moved_to_unrelated_job() {
+    let mut workflow: Workflow =
+        yaml_serde::from_str(include_str!("../../../.github/workflows/ci.yml"))
+            .expect("CI workflow must parse");
+    let grpcurl_step = {
+        let required_job = workflow
+            .jobs
+            .get_mut(VECTOR_CLUSTER_JOB)
+            .expect("required Vector cluster job must exist");
+        let index = required_job
+            .steps
             .iter()
-            .all(|step| step.continue_on_error.is_none())
-    );
-    let runner_commands = job
+            .position(is_pinned_grpcurl_step)
+            .expect("pinned grpcurl step must exist");
+        required_job.steps.remove(index)
+    };
+    workflow
+        .jobs
+        .get_mut("sanitizers")
+        .expect("unrelated job must exist")
         .steps
-        .iter()
-        .filter_map(|step| step.run.as_deref())
-        .filter(|command| command.contains("scripts/ci/run-vector-cluster.sh"))
-        .collect::<Vec<_>>();
-    assert_eq!(runner_commands.len(), 1);
-    let command = runner_commands[0];
-    for required in [
-        "KIWI_RUN_CLUSTER_TESTS=1",
-        "KIWI_BINARY=",
-        "KIWI_GRPCURL=",
-        "scripts/ci/run-vector-cluster.sh",
-    ] {
-        assert!(
-            command.contains(required),
-            "cluster job is missing {required}"
-        );
-    }
+        .push(grpcurl_step);
+
+    let error = validate_vector_cluster_workflow(&workflow)
+        .expect_err("moving grpcurl preparation to another job must fail closed");
+    assert!(error.contains("pinned grpcurl preparation"), "{error}");
 }
 
 #[test]
@@ -134,17 +222,18 @@ fn vector_cluster_runner_and_collection_are_fail_closed() {
     }
     assert!(!runner.contains("command -v grpcurl"));
 
-    let workflow = include_str!("../../../.github/workflows/ci.yml");
-    assert!(workflow.contains("cargo build --locked --bin kiwi"));
-    assert!(workflow.contains("grpcurl_1.9.3_linux_x86_64.tar.gz"));
-    assert!(workflow.contains("a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5"));
-
     let cluster_tests = include_str!("../../../tests/python/test_vector_cluster.py");
     assert!(!cluster_tests.contains("pytest.mark.skipif"));
     assert!(cluster_tests.contains("@pytest.mark.parametrize"));
     assert!(cluster_tests.contains("signal.SIGTERM"));
     assert!(cluster_tests.contains("signal.SIGKILL"));
+    assert!(cluster_tests.contains("signal.pthread_sigmask"));
     assert!(cluster_tests.contains("process_group_gone"));
+    assert!(cluster_tests.contains("KIWI_VECTOR_CLUSTER_TEST_FAIL_AFTER_POPEN_NODE"));
+    assert!(cluster_tests.contains("KIWI_VECTOR_CLUSTER_TEST_INITIALIZE_NODE1_ONLY"));
+    assert!(cluster_tests.contains("wait_converged_cluster"));
+    assert!(cluster_tests.contains("currentLeader"));
+    assert!(cluster_tests.contains("\"Members\""));
 }
 
 #[test]
@@ -254,6 +343,18 @@ fn vector_cluster_validators_reject_collection_totals_and_cleanup_drift() {
         .output()
         .expect("run cleanup mutant");
     assert!(!cleanup_result.status.success());
+
+    let launch_fault_result = Command::new("python3")
+        .arg(&validator)
+        .arg("--exercise-post-popen-failure-cleanup")
+        .output()
+        .expect("run post-Popen cleanup proof");
+    assert!(
+        launch_fault_result.status.success(),
+        "post-Popen cleanup proof failed: {}{}",
+        String::from_utf8_lossy(&launch_fault_result.stdout),
+        String::from_utf8_lossy(&launch_fault_result.stderr)
+    );
 
     fs::remove_dir_all(&scratch).expect("remove cluster validator scratch directory");
 }

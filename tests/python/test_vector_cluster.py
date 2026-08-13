@@ -20,7 +20,11 @@
 import argparse
 import json
 import os
+import signal
+import socket
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 EXPECTED_ERROR = "vector commands are not supported in cluster mode yet"
@@ -78,30 +82,146 @@ def validate_cleanup(path):
             raise SystemExit(f"cluster process cleanup failed: {process}")
 
 
+def wait_until(fn, timeout, desc, interval=0.2):
+    deadline = time.monotonic() + timeout
+    while True:
+        result = fn()
+        if result:
+            return result
+        if time.monotonic() > deadline:
+            raise AssertionError(f"timed out after {timeout}s waiting for: {desc}")
+        time.sleep(interval)
+
+
+def process_group_gone(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return True
+    except PermissionError:
+        return False
+    return False
+
+
+def stop_process_group(proc, pgid, grace_seconds=5):
+    deadline = time.monotonic() + grace_seconds
+    if not process_group_gone(pgid):
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    while time.monotonic() < deadline and not process_group_gone(pgid):
+        try:
+            proc.wait(timeout=min(0.1, max(0, deadline - time.monotonic())))
+        except subprocess.TimeoutExpired:
+            pass
+        time.sleep(0.05)
+    if not process_group_gone(pgid):
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if proc.poll() is None:
+        proc.wait(timeout=10)
+    wait_until(
+        lambda: process_group_gone(pgid),
+        5,
+        f"process group {pgid} to disappear",
+        interval=0.1,
+    )
+
+
+def launch_registered_process(command, cwd, output, env, node_id, publish):
+    previous_mask = signal.pthread_sigmask(
+        signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM}
+    )
+    child_mask = ",".join(str(int(sig)) for sig in previous_mask)
+    unmask_and_exec = (
+        "import os,signal,sys;"
+        f"signal.pthread_sigmask(signal.SIG_SETMASK, {{{child_mask}}});"
+        "os.execve(sys.argv[1], sys.argv[1:], os.environ)"
+    )
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-c", unmask_and_exec, *command],
+            cwd=cwd,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=env,
+        )
+        if os.environ.get("KIWI_VECTOR_CLUSTER_TEST_FAIL_AFTER_POPEN_NODE") == str(node_id):
+            raise RuntimeError(
+                f"injected post-Popen failure for node {node_id} "
+                f"pid={proc.pid} pgid={proc.pid}"
+            )
+        if os.getpgid(proc.pid) != proc.pid:
+            raise RuntimeError(f"node {node_id} did not create its own process group")
+        publish(proc, proc.pid)
+        return proc
+    except BaseException:
+        if proc is not None:
+            stop_process_group(proc, proc.pid)
+        raise
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous_mask)
+
+
+def exercise_post_popen_failure_cleanup():
+    previous = os.environ.get("KIWI_VECTOR_CLUSTER_TEST_FAIL_AFTER_POPEN_NODE")
+    os.environ["KIWI_VECTOR_CLUSTER_TEST_FAIL_AFTER_POPEN_NODE"] = "1"
+    published = False
+
+    def reject_publication(_proc, _pgid):
+        nonlocal published
+        published = True
+
+    try:
+        launch_registered_process(
+            [sys.executable, "-c", "import time; time.sleep(300)"],
+            None,
+            subprocess.DEVNULL,
+            os.environ.copy(),
+            1,
+            reject_publication,
+        )
+    except RuntimeError as error:
+        if "injected post-Popen failure" not in str(error):
+            raise
+    else:
+        raise SystemExit("post-Popen fault injection did not fail")
+    finally:
+        if previous is None:
+            os.environ.pop("KIWI_VECTOR_CLUSTER_TEST_FAIL_AFTER_POPEN_NODE", None)
+        else:
+            os.environ["KIWI_VECTOR_CLUSTER_TEST_FAIL_AFTER_POPEN_NODE"] = previous
+    if published:
+        raise SystemExit("post-Popen fault injection reached PID publication")
+
+
 def main(argv):
     parser = argparse.ArgumentParser()
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--validate-collection")
     group.add_argument("--validate-summary")
     group.add_argument("--validate-cleanup")
+    group.add_argument("--exercise-post-popen-failure-cleanup", action="store_true")
     args = parser.parse_args(argv)
     if args.validate_collection:
         validate_collection(args.validate_collection)
     elif args.validate_summary:
         validate_summary(args.validate_summary)
-    else:
+    elif args.validate_cleanup:
         validate_cleanup(args.validate_cleanup)
+    else:
+        exercise_post_popen_failure_cleanup()
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
 
-
-import signal
-import socket
-import subprocess
-import time
 
 import pytest
 import redis
@@ -123,27 +243,6 @@ def _require_runtime_inputs():
     if os.environ.get("KIWI_RUN_CLUSTER_TESTS") != "1":
         pytest.fail("required cluster mode needs KIWI_RUN_CLUSTER_TESTS=1", pytrace=False)
     return _required_path("KIWI_BINARY"), _required_path("KIWI_GRPCURL")
-
-
-def wait_until(fn, timeout, desc, interval=0.2):
-    deadline = time.monotonic() + timeout
-    while True:
-        result = fn()
-        if result:
-            return result
-        if time.monotonic() > deadline:
-            raise AssertionError(f"timed out after {timeout}s waiting for: {desc}")
-        time.sleep(interval)
-
-
-def process_group_gone(pgid):
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-    return False
 
 
 def grpc_call(grpcurl, addr, service, method, payload, timeout=10):
@@ -271,15 +370,25 @@ class VectorCluster:
     def start_node(self, node, timeout=30):
         self._write_config(node)
         node.log_fd = open(node.log_path, "ab")
-        node.proc = subprocess.Popen(
-            [self.binary, "--config", node.conf_path],
-            cwd=node.dir,
-            stdout=node.log_fd,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-            env=dict(os.environ, RUST_LOG="info"),
-        )
-        self._publish_pid_registry()
+
+        def publish_node(proc, _pgid):
+            node.proc = proc
+            self._publish_pid_registry()
+
+        try:
+            node.proc = launch_registered_process(
+                [self.binary, "--config", node.conf_path],
+                cwd=node.dir,
+                output=node.log_fd,
+                env=dict(os.environ, RUST_LOG="info"),
+                node_id=node.node_id,
+                publish=publish_node,
+            )
+        except BaseException:
+            if node.log_fd is not None:
+                node.log_fd.close()
+                node.log_fd = None
+            raise
 
         def ping_ok():
             if node.proc.poll() is not None:
@@ -299,6 +408,11 @@ class VectorCluster:
             self.start_node(node)
 
     def initialize(self):
+        initialization_nodes = (
+            self.nodes[:1]
+            if os.environ.get("KIWI_VECTOR_CLUSTER_TEST_INITIALIZE_NODE1_ONLY") == "1"
+            else self.nodes
+        )
         payload = {
             "nodes": [
                 {
@@ -306,7 +420,7 @@ class VectorCluster:
                     "raft_addr": node.raft_addr,
                     "resp_addr": node.resp_addr,
                 }
-                for node in self.nodes
+                for node in initialization_nodes
             ]
         }
         wait_until(
@@ -342,21 +456,76 @@ class VectorCluster:
             assert result is not None, f"GetNodeCapabilities failed for node {node.node_id}"
             assert result.get("capabilities") == EXPECTED_CAPABILITIES
 
-    def wait_leader(self, timeout=30):
-        def find_leader():
+    def wait_converged_cluster(self, timeout=30):
+        expected_members = sorted(
+            (node.node_id, node.raft_addr, node.resp_addr) for node in self.nodes
+        )
+
+        def find_converged_cluster():
+            metrics_by_node = {}
             for node in self.nodes:
-                metrics = grpc_call(
+                metrics_by_node[node.node_id] = grpc_call(
                     self.grpcurl,
                     node.raft_addr,
                     "kiwi.raft.v1.RaftMetricsService",
                     "Metrics",
                     {},
                 )
-                if metrics and metrics.get("isLeader"):
-                    return node
-            return None
+            if any(
+                metrics is None or metrics.get("response", {}).get("success") is not True
+                for metrics in metrics_by_node.values()
+            ):
+                return None
 
-        return wait_until(find_leader, timeout, "a leader to be elected")
+            current_leaders = {
+                int(metrics.get("currentLeader", 0)) for metrics in metrics_by_node.values()
+            }
+            if len(current_leaders) != 1:
+                return None
+            leader_id = current_leaders.pop()
+            if leader_id == 0:
+                return None
+            reported_leaders = [
+                node_id
+                for node_id, metrics in metrics_by_node.items()
+                if metrics.get("isLeader") is True
+            ]
+            if reported_leaders != [leader_id]:
+                return None
+            leader = next((node for node in self.nodes if node.node_id == leader_id), None)
+            if leader is None:
+                return None
+
+            membership = grpc_call(
+                self.grpcurl,
+                leader.raft_addr,
+                "kiwi.raft.v1.RaftMetricsService",
+                "Members",
+                {},
+            )
+            if membership is None or membership.get("response", {}).get("success") is not True:
+                return None
+            actual_members = sorted(
+                (
+                    int(member.get("nodeId", 0)),
+                    member.get("raftAddr"),
+                    member.get("respAddr"),
+                )
+                for member in membership.get("members", [])
+            )
+            if actual_members != expected_members or membership.get("learners", []) != []:
+                return None
+
+            self.converged_nodes = tuple(
+                node for node in self.nodes if node.node_id in {member[0] for member in actual_members}
+            )
+            return leader
+
+        return wait_until(
+            find_converged_cluster,
+            timeout,
+            "all three exact members to report one common nonzero leader",
+        )
 
     def shutdown(self, grace_seconds=5):
         for client in self._clients.values():
@@ -423,7 +592,7 @@ def cluster(tmp_path_factory):
         instance.start_all()
         instance.initialize()
         instance.assert_node_capabilities()
-        instance.wait_leader()
+        instance.wait_converged_cluster()
         yield instance
     finally:
         instance.shutdown()
@@ -438,9 +607,9 @@ VECTOR_CASE_PARAMS = [
 
 @pytest.mark.parametrize(("role", "command_name", "command"), VECTOR_CASE_PARAMS)
 def test_vector_command_is_rejected_before_cluster_routing(cluster, role, command_name, command):
-    leader = cluster.wait_leader()
+    leader = cluster.wait_converged_cluster()
     node = leader if role == "leader" else next(
-        candidate for candidate in cluster.nodes if candidate.node_id != leader.node_id
+        candidate for candidate in cluster.converged_nodes if candidate.node_id != leader.node_id
     )
     with pytest.raises(redis.ResponseError) as exc_info:
         cluster.client(node).execute_command(*command)
