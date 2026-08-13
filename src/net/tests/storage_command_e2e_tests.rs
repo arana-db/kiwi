@@ -113,6 +113,24 @@ impl LeaderGate for FollowerGate {
     }
 }
 
+struct UnexpectedClusterRouteGate;
+
+impl LeaderGate for UnexpectedClusterRouteGate {
+    fn is_leader(&self) -> bool {
+        panic!("disabled Vector command reached follower/leader routing")
+    }
+
+    fn leader_resp_addr(&self) -> Option<String> {
+        panic!("disabled Vector command requested a redirect")
+    }
+
+    fn ensure_linearizable_read(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + '_>> {
+        panic!("disabled Vector command reached the leader read barrier")
+    }
+}
+
 /// Leader gate with a controllable linearizable-read barrier outcome.
 struct LeaderBarrierGate {
     barrier_result: Result<(), String>,
@@ -1686,9 +1704,12 @@ async fn storage_command_e2e_rank_nulls_follow_negotiated_wire_protocol() {
 #[tokio::test]
 async fn storage_command_e2e_disabled_cluster_vectors_reject_before_routing() {
     let gates = cmd::table::CommandTableGates::from_flags(true, false, true);
-    let server =
-        TestServer::start_with_leader_gate_and_gates(None, Some(Arc::new(FollowerGate)), gates)
-            .await;
+    let server = TestServer::start_with_leader_gate_and_gates(
+        None,
+        Some(Arc::new(UnexpectedClusterRouteGate)),
+        gates,
+    )
+    .await;
     let mut stream = tokio::net::TcpStream::connect(server.addr)
         .await
         .expect("connect to server");
@@ -1702,9 +1723,20 @@ async fn storage_command_e2e_disabled_cluster_vectors_reject_before_routing() {
         ][..],
         &["VREM", "vectors", "member"][..],
         &["VSIM", "vectors", "VALUES", "2", "1", "0"][..],
+        &["VCARD", "vectors"][..],
+        &["VDIM", "vectors"][..],
+        &["VEMB", "vectors", "member"][..],
+        &["VINFO", "vectors"][..],
+        &["VISMEMBER", "vectors", "member"][..],
     ] {
+        let before = requests_sent(&server).await;
         let reply = send_command(&mut stream, args).await;
         assert_eq!(reply, expected, "disabled vector command {args:?}");
+        assert_eq!(
+            requests_sent(&server).await,
+            before,
+            "disabled vector command reached StorageCommand: {args:?}"
+        );
     }
 
     server.shutdown().await;

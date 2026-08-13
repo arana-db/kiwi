@@ -41,6 +41,10 @@ def _required_vector_mode():
     return _enabled("KIWI_COMPAT_REQUIRE_ORACLE")
 
 
+def _required_cluster_mode():
+    return _enabled("KIWI_RUN_CLUSTER_TESTS")
+
+
 @pytest.fixture(scope="session", autouse=True)
 def required_vector_endpoints():
     """Probe both required endpoints once before any Vector item can run."""
@@ -261,29 +265,44 @@ def pytest_configure(config):
 
 def pytest_collection_modifyitems(items):
     """Required Vector nodes must remain owned and cannot be softened."""
-    if not _required_vector_mode():
-        return
-
-    vector_items = [
-        item
-        for item in items
-        if item.nodeid.startswith("tests/python/test_vector_set_differential.py::")
-    ]
-    for item in vector_items:
-        if item.get_closest_marker("raw_vector_protocol") is None:
-            raise pytest.UsageError(
-                f"required Vector node lost raw_vector_protocol ownership: {item.nodeid}"
-            )
-        for marker in ("skip", "skipif", "xfail"):
-            if item.get_closest_marker(marker) is not None:
+    if _required_vector_mode():
+        vector_items = [
+            item
+            for item in items
+            if item.nodeid.startswith("tests/python/test_vector_set_differential.py::")
+        ]
+        for item in vector_items:
+            if item.get_closest_marker("raw_vector_protocol") is None:
                 raise pytest.UsageError(
-                    f"required Vector node cannot carry {marker}: {item.nodeid}"
+                    f"required Vector node lost raw_vector_protocol ownership: {item.nodeid}"
                 )
+            for marker in ("skip", "skipif", "xfail"):
+                if item.get_closest_marker(marker) is not None:
+                    raise pytest.UsageError(
+                        f"required Vector node cannot carry {marker}: {item.nodeid}"
+                    )
+
+    if _required_cluster_mode():
+        cluster_items = [
+            item
+            for item in items
+            if item.nodeid.startswith("tests/python/test_vector_cluster.py::")
+        ]
+        if len(cluster_items) != 16:
+            raise pytest.UsageError(
+                f"required Vector cluster collection must contain exactly 16 nodes, got {len(cluster_items)}"
+            )
+        for item in cluster_items:
+            for marker in ("skip", "skipif", "xfail"):
+                if item.get_closest_marker(marker) is not None:
+                    raise pytest.UsageError(
+                        f"required Vector cluster node cannot carry {marker}: {item.nodeid}"
+                    )
 
 
 def pytest_sessionfinish(session, exitstatus):
     """Publish fail-closed totals for the trusted runner."""
-    if not _required_vector_mode():
+    if not (_required_vector_mode() or _required_cluster_mode()):
         return
 
     reporter = session.config.pluginmanager.get_plugin("terminalreporter")
@@ -297,7 +316,11 @@ def pytest_sessionfinish(session, exitstatus):
         "xpassed": len(stats.get("xpassed", [])),
         "deselected": len(stats.get("deselected", [])),
     }
-    summary_path = os.environ.get("KIWI_VECTOR_PYTEST_SUMMARY")
+    summary_path = os.environ.get(
+        "KIWI_VECTOR_CLUSTER_PYTEST_SUMMARY"
+        if _required_cluster_mode()
+        else "KIWI_VECTOR_PYTEST_SUMMARY"
+    )
     if not summary_path:
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
         return

@@ -56,6 +56,209 @@ struct Step {
 }
 
 #[test]
+fn vector_cluster_required_job_is_unique_and_fail_closed() {
+    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    assert_eq!(
+        workflow_source
+            .lines()
+            .filter(|line| *line == "  vector-cluster-fail-closed:")
+            .count(),
+        1
+    );
+    assert_eq!(
+        workflow_source
+            .matches("scripts/ci/run-vector-cluster.sh")
+            .count(),
+        1
+    );
+
+    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    let job = workflow
+        .jobs
+        .get("vector-cluster-fail-closed")
+        .expect("required Vector cluster job must exist");
+    assert_eq!(job.runs_on, "ubuntu-latest");
+    assert!(job.continue_on_error.is_none());
+    assert!(
+        job.steps
+            .iter()
+            .all(|step| step.continue_on_error.is_none())
+    );
+    let runner_commands = job
+        .steps
+        .iter()
+        .filter_map(|step| step.run.as_deref())
+        .filter(|command| command.contains("scripts/ci/run-vector-cluster.sh"))
+        .collect::<Vec<_>>();
+    assert_eq!(runner_commands.len(), 1);
+    let command = runner_commands[0];
+    for required in [
+        "KIWI_RUN_CLUSTER_TESTS=1",
+        "KIWI_BINARY=",
+        "KIWI_GRPCURL=",
+        "scripts/ci/run-vector-cluster.sh",
+    ] {
+        assert!(
+            command.contains(required),
+            "cluster job is missing {required}"
+        );
+    }
+}
+
+#[test]
+fn vector_cluster_runner_and_collection_are_fail_closed() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let runner = std::fs::read_to_string(root.join("scripts/ci/run-vector-cluster.sh"))
+        .expect("required Vector cluster runner must exist");
+    for required in [
+        "grpcurl_identity=\"grpcurl ${grpcurl_version}\"",
+        "62e2e4315bb70fab2e27f86c1f7738d09076a097a2dc8e0f701e386251172e40",
+        "--collect-only",
+        "--strict-markers",
+        "--validate-collection",
+        "--validate-summary",
+        "--validate-cleanup",
+        "-version 2>&1",
+        "deselected",
+        "xfailed",
+        "xpassed",
+        "skipped",
+        "trap cleanup EXIT",
+        "trap 'exit 143' TERM",
+        "cleanup_rc",
+    ] {
+        assert!(
+            runner.contains(required),
+            "cluster runner is missing {required}"
+        );
+    }
+    assert!(!runner.contains("command -v grpcurl"));
+
+    let workflow = include_str!("../../../.github/workflows/ci.yml");
+    assert!(workflow.contains("cargo build --locked --bin kiwi"));
+    assert!(workflow.contains("grpcurl_1.9.3_linux_x86_64.tar.gz"));
+    assert!(workflow.contains("a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5"));
+
+    let cluster_tests = include_str!("../../../tests/python/test_vector_cluster.py");
+    assert!(!cluster_tests.contains("pytest.mark.skipif"));
+    assert!(cluster_tests.contains("@pytest.mark.parametrize"));
+    assert!(cluster_tests.contains("signal.SIGTERM"));
+    assert!(cluster_tests.contains("signal.SIGKILL"));
+    assert!(cluster_tests.contains("process_group_gone"));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn vector_cluster_runner_rejects_missing_or_untrusted_grpcurl() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let runner = root.join("scripts/ci/run-vector-cluster.sh");
+    let scratch = std::env::temp_dir().join(format!(
+        "kiwi-vector-cluster-grpcurl-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("contract")
+    ));
+    fs::create_dir_all(&scratch).expect("create cluster runner scratch directory");
+    let fake_kiwi = scratch.join("kiwi");
+    let fake_grpcurl = scratch.join("grpcurl");
+    fs::write(&fake_kiwi, "#!/usr/bin/env bash\nexit 0\n").expect("write fake Kiwi");
+    fs::write(
+        &fake_grpcurl,
+        "#!/usr/bin/env bash\necho 'grpcurl v1.9.3' >&2\n",
+    )
+    .expect("write fake grpcurl");
+    for path in [&fake_kiwi, &fake_grpcurl] {
+        let mut permissions = fs::metadata(path).expect("read fake mode").permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).expect("make fake executable");
+    }
+
+    let missing = Command::new("/usr/bin/bash")
+        .arg(&runner)
+        .env("KIWI_RUN_CLUSTER_TESTS", "1")
+        .env("KIWI_BINARY", &fake_kiwi)
+        .env_remove("KIWI_GRPCURL")
+        .output()
+        .expect("run missing grpcurl mutant");
+    assert!(!missing.status.success());
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("KIWI_GRPCURL must identify"));
+
+    let untrusted = Command::new("/usr/bin/bash")
+        .arg(&runner)
+        .env("KIWI_RUN_CLUSTER_TESTS", "1")
+        .env("KIWI_BINARY", &fake_kiwi)
+        .env("KIWI_GRPCURL", &fake_grpcurl)
+        .output()
+        .expect("run untrusted grpcurl mutant");
+    assert!(!untrusted.status.success());
+    let untrusted_output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&untrusted.stdout),
+        String::from_utf8_lossy(&untrusted.stderr)
+    );
+    assert!(untrusted_output.contains("FAILED"), "{untrusted_output}");
+
+    fs::remove_dir_all(&scratch).expect("remove cluster runner scratch directory");
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn vector_cluster_validators_reject_collection_totals_and_cleanup_drift() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let validator = root.join("tests/python/test_vector_cluster.py");
+    let scratch = std::env::temp_dir().join(format!(
+        "kiwi-vector-cluster-validation-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("contract")
+    ));
+    fs::create_dir_all(&scratch).expect("create cluster validator scratch directory");
+
+    let collection = scratch.join("collection.txt");
+    fs::write(
+        &collection,
+        "tests/python/test_vector_cluster.py::test_vector_command_is_rejected_before_cluster_routing[leader-vadd]\n",
+    )
+    .expect("write collection mutant");
+    let collection_result = Command::new("python3")
+        .arg(&validator)
+        .arg("--validate-collection")
+        .arg(&collection)
+        .output()
+        .expect("run collection mutant");
+    assert!(!collection_result.status.success());
+
+    let summary = scratch.join("summary.json");
+    fs::write(
+        &summary,
+        r#"{"collected":16,"passed":15,"failed":0,"skipped":1,"xfailed":0,"xpassed":0,"deselected":0}"#,
+    )
+    .expect("write totals mutant");
+    let summary_result = Command::new("python3")
+        .arg(&validator)
+        .arg("--validate-summary")
+        .arg(&summary)
+        .output()
+        .expect("run totals mutant");
+    assert!(!summary_result.status.success());
+
+    let cleanup = scratch.join("cleanup.json");
+    fs::write(
+        &cleanup,
+        r#"{"schema":"kiwi-vector-cluster-cleanup/v1","processes":[{"term_sent":true,"waited":true,"process_group_gone":true},{"term_sent":true,"waited":true,"process_group_gone":false},{"term_sent":true,"waited":true,"process_group_gone":true}]}"#,
+    )
+    .expect("write cleanup mutant");
+    let cleanup_result = Command::new("python3")
+        .arg(&validator)
+        .arg("--validate-cleanup")
+        .arg(&cleanup)
+        .output()
+        .expect("run cleanup mutant");
+    assert!(!cleanup_result.status.success());
+
+    fs::remove_dir_all(&scratch).expect("remove cluster validator scratch directory");
+}
+
+#[test]
 fn vector_differential_required_job_is_unique_and_fail_closed() {
     let workflow_source = include_str!("../../../.github/workflows/ci.yml");
     assert_eq!(

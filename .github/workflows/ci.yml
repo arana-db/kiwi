@@ -351,6 +351,57 @@ jobs:
           retention-days: 7
           path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json
 
+  vector-cluster-fail-closed:
+    name: Vector cluster fail-closed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install build and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential protobuf-compiler
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Install cluster test dependencies
+        run: python3 -m pip install 'pytest>=7.0.0' 'redis>=5.0.0'
+
+      - name: Build current Head Kiwi
+        run: cargo build --locked --bin kiwi
+
+      - name: Prepare pinned grpcurl
+        run: |
+          curl -fsSL --proto '=https' --tlsv1.2 \
+            https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_x86_64.tar.gz \
+            -o "$RUNNER_TEMP/grpcurl.tar.gz"
+          echo 'a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5  grpcurl.tar.gz' \
+            | (cd "$RUNNER_TEMP" && sha256sum -c -)
+          tar -xzf "$RUNNER_TEMP/grpcurl.tar.gz" -C "$RUNNER_TEMP" grpcurl
+
+      - name: Run required three-node Vector cluster gate
+        run: |
+          KIWI_RUN_CLUSTER_TESTS=1 \
+          KIWI_BINARY="$GITHUB_WORKSPACE/target/debug/kiwi" \
+          KIWI_GRPCURL="$RUNNER_TEMP/grpcurl" \
+            bash scripts/ci/run-vector-cluster.sh
+
   sanitizers:
     name: Sanitizers (${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
