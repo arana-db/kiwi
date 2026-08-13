@@ -42,6 +42,8 @@ struct Workflow {
 
 #[derive(Clone, Deserialize)]
 struct Job {
+    #[serde(rename = "if")]
+    condition: Option<yaml_serde::Value>,
     #[serde(rename = "runs-on")]
     runs_on: String,
     #[serde(rename = "continue-on-error")]
@@ -52,6 +54,8 @@ struct Job {
 
 #[derive(Clone, Deserialize)]
 struct Step {
+    #[serde(rename = "if")]
+    condition: Option<yaml_serde::Value>,
     uses: Option<String>,
     run: Option<String>,
     #[serde(default)]
@@ -208,6 +212,9 @@ fn validate_rkyv_static_analysis_workflow(workflow: &Workflow) -> Result<(), Str
         .jobs
         .get(STATIC_ANALYSIS_JOB)
         .ok_or_else(|| format!("required job {STATIC_ANALYSIS_JOB} is missing"))?;
+    if job.condition.is_some() {
+        return Err(format!("{STATIC_ANALYSIS_JOB} cannot be conditional"));
+    }
     if job.runs_on != "ubuntu-latest" {
         return Err(format!("{STATIC_ANALYSIS_JOB} must run on ubuntu-latest"));
     }
@@ -235,6 +242,17 @@ fn validate_rkyv_static_analysis_workflow(workflow: &Workflow) -> Result<(), Str
             .as_deref()
             .is_some_and(|command| command.trim() == "cargo audit")
     })?;
+    for (description, index) in [
+        ("locked dependency fetch", fetch),
+        ("rkyv reachability sentinel", sentinel),
+        ("cargo audit", audit),
+    ] {
+        if job.steps[index].condition.is_some() {
+            return Err(format!(
+                "{STATIC_ANALYSIS_JOB} {description} step cannot be conditional"
+            ));
+        }
+    }
     if !(fetch < sentinel && sentinel < audit) {
         return Err(format!(
             "{STATIC_ANALYSIS_JOB} steps must be ordered fetch < sentinel < audit, got {fetch} < {sentinel} < {audit}"
@@ -418,6 +436,63 @@ fn rkyv_static_analysis_contract_rejects_removal_reordering_and_continue_on_erro
             "static-analysis accepted {name} mutant"
         );
     }
+}
+
+#[test]
+fn rkyv_static_analysis_contract_rejects_conditional_job_and_critical_steps() {
+    let source = include_str!("../../../.github/workflows/ci.yml").replace("\r\n", "\n");
+    let mut accepted = Vec::new();
+    for (name, needle, replacement) in [
+        (
+            "static-analysis job",
+            "  static-analysis:\n    name: Static Analysis",
+            "  static-analysis:\n    if: false\n    name: Static Analysis",
+        ),
+        (
+            "locked dependency fetch",
+            "      - name: Fetch locked dependencies\n        run: cargo fetch --locked",
+            "      - name: Fetch locked dependencies\n        if: false\n        run: cargo fetch --locked",
+        ),
+        (
+            "rkyv reachability sentinel",
+            "      - name: Verify rkyv advisory remains unreachable\n        run: bash scripts/ci/check-rkyv-reachability.sh",
+            "      - name: Verify rkyv advisory remains unreachable\n        if: false\n        run: bash scripts/ci/check-rkyv-reachability.sh",
+        ),
+        (
+            "cargo audit",
+            "      - name: Security audit\n        run: cargo audit",
+            "      - name: Security audit\n        if: false\n        run: cargo audit",
+        ),
+    ] {
+        let mutant = source.replacen(needle, replacement, 1);
+        assert_ne!(
+            mutant, source,
+            "failed to construct {name} conditional mutant"
+        );
+        let workflow: Workflow =
+            yaml_serde::from_str(&mutant).expect("conditional CI workflow mutant must parse");
+        if validate_rkyv_static_analysis_workflow(&workflow).is_ok() {
+            accepted.push(name);
+        }
+    }
+    assert!(
+        accepted.is_empty(),
+        "static-analysis accepted conditional mutants: {accepted:?}"
+    );
+
+    let unrelated_condition = source.replacen(
+        "  static-analysis:\n    name: Static Analysis\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n\n      - name: Setup toolchain\n        uses: actions-rust-lang/setup-rust-toolchain@v1",
+        "  static-analysis:\n    name: Static Analysis\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v7\n\n      - name: Setup toolchain\n        if: false\n        uses: actions-rust-lang/setup-rust-toolchain@v1",
+        1,
+    );
+    assert_ne!(
+        unrelated_condition, source,
+        "failed to construct unrelated conditional step mutant"
+    );
+    let workflow: Workflow = yaml_serde::from_str(&unrelated_condition)
+        .expect("unrelated conditional step workflow mutant must parse");
+    validate_rkyv_static_analysis_workflow(&workflow)
+        .expect("unrelated static-analysis step conditions remain outside this contract");
 }
 
 #[test]
