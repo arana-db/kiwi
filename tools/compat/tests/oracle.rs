@@ -23,8 +23,12 @@ use kiwi_compat::oracle::{
 };
 use serde_json::{Map, Value, json};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
+#[cfg(target_os = "linux")]
 use std::process::{Command, Output};
+#[cfg(target_os = "linux")]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const REDIS_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

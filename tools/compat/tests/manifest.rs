@@ -811,7 +811,10 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
                 .all(|node_id| registry.expected_node_ids().contains(node_id))
         }));
     }
-    let vinfo_cases = registry.raw_cases().get("VINFO").unwrap();
+    let vinfo_cases = registry
+        .raw_cases()
+        .get("VINFO")
+        .expect("required registry must contain VINFO raw cases");
     assert!(vinfo_cases.iter().any(|raw_case| {
         raw_case.case_id() == "missing-key" && raw_case.evidence_kind() == "exact-frame"
     }));
@@ -830,9 +833,15 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
 
 #[test]
 fn required_vector_registry_rejects_a_command_without_raw_case_ownership() {
-    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
-    let start = yaml.find("      VCARD:\n").unwrap();
-    let end = yaml[start..].find("      VDIM:\n").unwrap() + start;
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml")
+        .replace("\r\n", "\n");
+    let start = yaml
+        .find("      VCARD:\n")
+        .expect("registry fixture must contain VCARD");
+    let end = yaml[start..]
+        .find("      VDIM:\n")
+        .expect("registry fixture must contain VDIM after VCARD")
+        + start;
     let without_vcard = format!("{}{}", &yaml[..start], &yaml[end..]);
     assert_ne!(
         without_vcard, yaml,
@@ -843,7 +852,8 @@ fn required_vector_registry_rejects_a_command_without_raw_case_ownership() {
 
 #[test]
 fn required_vector_registry_requires_populated_vinfo_raw_schema_evidence() {
-    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml");
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml")
+        .replace("\r\n", "\n");
     let populated = "        - case_id: populated\n          evidence_kind: raw-schema\n          node_ids:\n            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]\n";
     let without_populated = yaml.replace(populated, "");
     assert_ne!(

@@ -84,6 +84,7 @@ const GRPCURL_URL: &str = "https://github.com/fullstorydev/grpcurl/releases/down
 const GRPCURL_ARCHIVE_SHA256: &str =
     "a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5";
 const GRPCURL_OUTPUT: &str = "-o \"$RUNNER_TEMP/grpcurl.tar.gz\"";
+const ORACLE_NAMESPACE_PREFLIGHT: &str = "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0\nunshare --user --map-root-user --mount --pid --fork true";
 const GRPCURL_CHECKSUM_VERIFY: &str = "| (cd \"$RUNNER_TEMP\" && sha256sum -c -)";
 const GRPCURL_EXTRACT: &str =
     "tar -xzf \"$RUNNER_TEMP/grpcurl.tar.gz\" -C \"$RUNNER_TEMP\" grpcurl";
@@ -309,6 +310,11 @@ fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), Stri
         return Err(format!("{TRUSTED_VECTOR_JOB} cannot continue on error"));
     }
 
+    let namespace_preflight = find_only_step(job, "Oracle namespace preflight", |step| {
+        step.run
+            .as_deref()
+            .is_some_and(|command| command.trim_end() == ORACLE_NAMESPACE_PREFLIGHT)
+    })?;
     let runner = find_only_step(job, "verifier-supervised differential runner", |step| {
         step.run.as_deref().is_some_and(|command| {
             [
@@ -340,14 +346,17 @@ fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), Stri
             "{TRUSTED_VECTOR_JOB} may upload only the final post-cleanup provenance file"
         ));
     }
-    if runner >= upload {
+    if namespace_preflight >= runner || runner >= upload {
         return Err(format!(
-            "{TRUSTED_VECTOR_JOB} provenance upload must follow the verifier-supervised runner"
+            "{TRUSTED_VECTOR_JOB} must run the namespace preflight, verifier, and provenance upload in order"
         ));
     }
-    if job.steps[runner].condition.is_some() || job.steps[upload].condition.is_some() {
+    if job.steps[namespace_preflight].condition.is_some()
+        || job.steps[runner].condition.is_some()
+        || job.steps[upload].condition.is_some()
+    {
         return Err(format!(
-            "{TRUSTED_VECTOR_JOB} runner and upload steps cannot be conditional"
+            "{TRUSTED_VECTOR_JOB} namespace preflight, runner, and upload steps cannot be conditional"
         ));
     }
     Ok(())
@@ -1203,6 +1212,33 @@ fn vector_differential_required_job_is_unique_and_fail_closed() {
         .find(|command| command.contains("scripts/compat/run-vector-differential.sh"))
         .expect("required job must invoke the Vector differential runner");
     assert!(runner.contains("KIWI_COMPAT_REQUIRE_ORACLE=1"));
+}
+
+#[test]
+fn vector_differential_requires_user_namespace_preflight_before_runner() {
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let mut workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
+    validate_vector_differential_workflow(&workflow)
+        .expect("trusted differential namespace preflight must be fail closed");
+    let job = workflow
+        .jobs
+        .get_mut(TRUSTED_VECTOR_JOB)
+        .expect("trusted differential job must exist");
+    let preflight = job
+        .steps
+        .iter()
+        .position(|step| {
+            step.run
+                .as_deref()
+                .is_some_and(|command| command.trim_end() == ORACLE_NAMESPACE_PREFLIGHT)
+        })
+        .expect("trusted differential namespace preflight must exist");
+    job.steps.remove(preflight);
+    assert!(
+        validate_vector_differential_workflow(&workflow).is_err(),
+        "trusted differential accepted a missing namespace preflight"
+    );
 }
 
 #[test]
