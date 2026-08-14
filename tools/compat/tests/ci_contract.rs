@@ -115,6 +115,13 @@ fn make_logical_lines(source: &str) -> Vec<String> {
     lines
 }
 
+fn is_make_variable_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+}
+
 fn make_assignment(line: &str) -> Option<(&str, &str, &str)> {
     if line.starts_with('\t') {
         return None;
@@ -125,11 +132,7 @@ fn make_assignment(line: &str) -> Option<(&str, &str, &str)> {
             continue;
         };
         let name = line[..index].trim();
-        if !name.is_empty()
-            && name
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
-        {
+        if is_make_variable_name(name) {
             return Some((name, operator, line[index + operator.len()..].trim()));
         }
     }
@@ -149,6 +152,44 @@ impl MakeVariable {
     }
 }
 
+fn remove_undefined_make_variables(
+    source: &str,
+    variables: &BTreeMap<String, MakeVariable>,
+) -> String {
+    let bytes = source.as_bytes();
+    let mut undefined = Vec::<String>::new();
+    let mut index = 0;
+    while index + 2 < bytes.len() {
+        if bytes[index] != b'$' || !matches!(bytes[index + 1], b'(' | b'{') {
+            index += 1;
+            continue;
+        }
+        let closing = if bytes[index + 1] == b'(' { b')' } else { b'}' };
+        let name_start = index + 2;
+        let Some(relative_end) = bytes[name_start..].iter().position(|byte| *byte == closing)
+        else {
+            index += 1;
+            continue;
+        };
+        let name_end = name_start + relative_end;
+        if let Ok(name) = std::str::from_utf8(&bytes[name_start..name_end])
+            && is_make_variable_name(name)
+            && !variables.contains_key(name)
+            && !undefined.iter().any(|candidate| candidate == name)
+        {
+            undefined.push(name.to_string());
+        }
+        index = name_end + 1;
+    }
+
+    let mut expanded = source.to_string();
+    for name in undefined {
+        expanded = expanded.replace(&format!("$({name})"), "");
+        expanded = expanded.replace(&format!("${{{name}}}"), "");
+    }
+    expanded
+}
+
 fn expand_make_variables(source: &str, variables: &BTreeMap<String, MakeVariable>) -> String {
     let mut expanded = source.to_string();
     for _ in 0..=variables.len().min(32) {
@@ -163,7 +204,7 @@ fn expand_make_variables(source: &str, variables: &BTreeMap<String, MakeVariable
         }
         expanded = next;
     }
-    expanded
+    remove_undefined_make_variables(&expanded, variables)
 }
 
 fn has_vector_differential_path_ignore(source: &str) -> bool {
@@ -1191,6 +1232,24 @@ fn vector_differential_upload_requires_explicit_missing_file_error() {
     assert!(
         validate_vector_differential_workflow(&workflow).is_err(),
         "trusted differential accepted upload-artifact's warn-on-missing default"
+    );
+}
+
+#[test]
+fn vector_differential_make_undefined_variable_cannot_split_path_ignore() {
+    let makefile = include_str!("../../../tests/Makefile");
+    let undetected = [":=", "=", "?=", "+="]
+        .into_iter()
+        .filter(|operator| {
+            let mutant = format!(
+                "{makefile}\nDIFF_IGNORE {operator} --ign$(UNDEFINED)ore=python/test_vector_set_differential.py\ntest-undefined-variable:\n\tpytest $(DIFF_IGNORE)"
+            );
+            !has_vector_differential_path_ignore(&mutant)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        undetected.is_empty(),
+        "fast integration path-ignore split by an undefined variable was not detected for {undetected:?}"
     );
 }
 
