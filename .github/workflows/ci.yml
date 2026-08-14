@@ -439,6 +439,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler llvm
 
+      - name: Enable Oracle user namespace sandbox
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --mount --pid --fork true
+
       - name: Run tests with ${{ matrix.sanitizer }} sanitizer
         env:
           RUSTFLAGS: "-Z sanitizer=${{ matrix.sanitizer }}"

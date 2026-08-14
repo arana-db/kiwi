@@ -77,6 +77,7 @@ struct StepInputs {
 const VECTOR_CLUSTER_JOB: &str = "vector-cluster-fail-closed";
 const TRUSTED_VECTOR_JOB: &str = "trusted-vector-differential";
 const BUILD_AND_TEST_JOB: &str = "build-and-test";
+const SANITIZERS_JOB: &str = "sanitizers";
 const STATIC_ANALYSIS_JOB: &str = "static-analysis";
 const RKYV_TREE_COMMAND: &str =
     "cargo tree --locked --offline --target all --all-features -i rkyv@0.7.46";
@@ -388,6 +389,37 @@ fn validate_build_and_test_oracle_namespace_preflight(workflow: &Workflow) -> Re
     if namespace_preflight >= test {
         return Err(format!(
             "{BUILD_AND_TEST_JOB} Oracle namespace preflight must run before workspace tests"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_sanitizer_oracle_namespace_preflight(workflow: &Workflow) -> Result<(), String> {
+    let job = workflow
+        .jobs
+        .get(SANITIZERS_JOB)
+        .ok_or_else(|| format!("required job {SANITIZERS_JOB} is missing"))?;
+    if job.runs_on != "ubuntu-latest" {
+        return Err(format!("{SANITIZERS_JOB} must run on ubuntu-latest"));
+    }
+    let namespace_preflight = find_only_step(job, "Oracle namespace preflight", |step| {
+        step.run
+            .as_deref()
+            .is_some_and(|command| command.trim_end() == ORACLE_NAMESPACE_PREFLIGHT)
+    })?;
+    if job.steps[namespace_preflight].condition.is_some() {
+        return Err(format!(
+            "{SANITIZERS_JOB} Oracle namespace preflight cannot be conditional"
+        ));
+    }
+    let test = find_only_step(job, "sanitizer test runner", |step| {
+        step.run
+            .as_deref()
+            .is_some_and(|command| command.contains("cargo +${SANITIZER_TOOLCHAIN} test"))
+    })?;
+    if namespace_preflight >= test {
+        return Err(format!(
+            "{SANITIZERS_JOB} Oracle namespace preflight must run before sanitizer tests"
         ));
     }
     Ok(())
@@ -1279,6 +1311,15 @@ fn build_and_test_requires_ubuntu_namespace_preflight_before_workspace_tests() {
         yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
     validate_build_and_test_oracle_namespace_preflight(&workflow)
         .expect("Ubuntu workspace tests must prepare the Oracle namespace sandbox");
+}
+
+#[test]
+fn sanitizers_require_namespace_preflight_before_oracle_tests() {
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
+    validate_sanitizer_oracle_namespace_preflight(&workflow)
+        .expect("sanitizer tests must prepare the Oracle namespace sandbox");
 }
 
 #[test]
