@@ -116,6 +116,9 @@ fn make_logical_lines(source: &str) -> Vec<String> {
 }
 
 fn make_assignment(line: &str) -> Option<(&str, &str, &str)> {
+    if line.starts_with('\t') {
+        return None;
+    }
     let line = line.trim_start();
     for operator in [":=", "?=", "+=", "="] {
         let Some(index) = line.find(operator) else {
@@ -133,11 +136,25 @@ fn make_assignment(line: &str) -> Option<(&str, &str, &str)> {
     None
 }
 
-fn expand_make_variables(source: &str, variables: &BTreeMap<String, String>) -> String {
+enum MakeVariable {
+    Recursive(String),
+    Simple(String),
+}
+
+impl MakeVariable {
+    fn value(&self) -> &str {
+        match self {
+            Self::Recursive(value) | Self::Simple(value) => value,
+        }
+    }
+}
+
+fn expand_make_variables(source: &str, variables: &BTreeMap<String, MakeVariable>) -> String {
     let mut expanded = source.to_string();
     for _ in 0..=variables.len().min(32) {
         let mut next = expanded.clone();
-        for (name, value) in variables {
+        for (name, variable) in variables {
+            let value = variable.value();
             next = next.replace(&format!("$({name})"), value);
             next = next.replace(&format!("${{{name}}}"), value);
         }
@@ -151,23 +168,41 @@ fn expand_make_variables(source: &str, variables: &BTreeMap<String, String>) -> 
 
 fn has_vector_differential_path_ignore(source: &str) -> bool {
     let logical_lines = make_logical_lines(source);
-    let mut variables = BTreeMap::<String, String>::new();
+    let mut variables = BTreeMap::<String, MakeVariable>::new();
     for line in &logical_lines {
         let Some((name, operator, value)) = make_assignment(line) else {
             continue;
         };
         match operator {
             "?=" if variables.contains_key(name) => {}
+            ":=" => {
+                variables.insert(
+                    name.to_string(),
+                    MakeVariable::Simple(expand_make_variables(value, &variables)),
+                );
+            }
             "+=" => {
-                let current = variables.entry(name.to_string()).or_default();
-                if !current.is_empty() && !value.is_empty() {
-                    current.push(' ');
+                let value = if matches!(variables.get(name), Some(MakeVariable::Simple(_))) {
+                    expand_make_variables(value, &variables)
+                } else {
+                    value.to_string()
+                };
+                if let Some(variable) = variables.get_mut(name) {
+                    let current = match variable {
+                        MakeVariable::Recursive(current) | MakeVariable::Simple(current) => current,
+                    };
+                    if !current.is_empty() && !value.is_empty() {
+                        current.push(' ');
+                    }
+                    current.push_str(&value);
+                } else {
+                    variables.insert(name.to_string(), MakeVariable::Recursive(value));
                 }
-                current.push_str(value);
             }
-            _ => {
-                variables.insert(name.to_string(), value.to_string());
+            "=" | "?=" => {
+                variables.insert(name.to_string(), MakeVariable::Recursive(value.to_string()));
             }
+            _ => unreachable!("Make assignment parser returned an unknown operator"),
         }
     }
 
@@ -249,11 +284,7 @@ fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), Stri
         || upload_step.with.name.as_deref() != Some("trusted-vector-oracle-provenance")
         || upload_step.with.path.as_deref()
             != Some("${{ runner.temp }}/kiwi-oracle/oracle-provenance.json")
-        || upload_step
-            .with
-            .if_no_files_found
-            .as_deref()
-            .is_some_and(|behavior| behavior != "error")
+        || upload_step.with.if_no_files_found.as_deref() != Some("error")
     {
         return Err(format!(
             "{TRUSTED_VECTOR_JOB} may upload only the final post-cleanup provenance file"
@@ -1143,6 +1174,51 @@ fn required_jobs_reject_unversioned_actions() {
 }
 
 #[test]
+fn vector_differential_upload_requires_explicit_missing_file_error() {
+    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow: Workflow =
+        yaml_serde::from_str(workflow_source).expect("CI workflow must remain valid YAML");
+    validate_vector_differential_workflow(&workflow)
+        .expect("explicit error-on-missing provenance must remain accepted");
+
+    let missing_policy = workflow_source.replacen("\n          if-no-files-found: error", "", 1);
+    assert_ne!(
+        missing_policy, workflow_source,
+        "failed to construct missing upload policy mutant"
+    );
+    let workflow: Workflow = yaml_serde::from_str(&missing_policy)
+        .expect("missing upload policy mutant must remain valid YAML");
+    assert!(
+        validate_vector_differential_workflow(&workflow).is_err(),
+        "trusted differential accepted upload-artifact's warn-on-missing default"
+    );
+}
+
+#[test]
+fn vector_differential_make_simple_assignment_freezes_earlier_value() {
+    let makefile = include_str!("../../../tests/Makefile");
+    let mutant = format!(
+        "{makefile}\nDIFF_TEST := python/test_vector_set_differential.py\nDIFF_IGNORE := --ignore=$(DIFF_TEST)\nDIFF_TEST := python/test_other.py\ntest-immediate:\n\tpytest $(DIFF_IGNORE)"
+    );
+    assert!(
+        has_vector_differential_path_ignore(&mutant),
+        "fast integration path-ignore hidden by immediate Make expansion was not detected"
+    );
+}
+
+#[test]
+fn vector_differential_make_tab_recipe_scans_env_prefixed_command() {
+    let makefile = include_str!("../../../tests/Makefile");
+    let mutant = format!(
+        "{makefile}\ntest-env-ignore:\n\tPYTEST_ADDOPTS=--ignore=python/test_vector_set_differential.py pytest python/"
+    );
+    assert!(
+        has_vector_differential_path_ignore(&mutant),
+        "fast integration path-ignore in an environment-prefixed recipe was not detected"
+    );
+}
+
+#[test]
 fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
     let workflow_source = include_str!("../../../.github/workflows/ci.yml");
     let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
@@ -1184,10 +1260,8 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
     );
     let missing_upload_mutants = ["ignore", "warn"].map(|behavior| {
         let mutant = workflow_source.replacen(
-            "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json",
-            &format!(
-                "          path: ${{{{ runner.temp }}}}/kiwi-oracle/oracle-provenance.json\n          if-no-files-found: {behavior}"
-            ),
+            "          if-no-files-found: error",
+            &format!("          if-no-files-found: {behavior}"),
             1,
         );
         assert_ne!(
@@ -1196,16 +1270,6 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
         );
         (format!("{behavior} missing provenance"), mutant)
     });
-    let explicit_error_upload = workflow_source.replacen(
-        "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json",
-        "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json\n          if-no-files-found: error",
-        1,
-    );
-    let workflow: Workflow = yaml_serde::from_str(&explicit_error_upload)
-        .expect("explicit fail-closed upload mutant must remain valid YAML");
-    validate_vector_differential_workflow(&workflow)
-        .expect("explicit error-on-missing provenance must remain accepted");
-
     for (name, mutant) in [
         ("supervisor bypass".to_string(), runner_bypass),
         ("upload before cleanup".to_string(), upload_before_cleanup),
