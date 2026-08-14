@@ -261,6 +261,9 @@ def pytest_configure(config):
         "markers",
         "raw_vector_protocol: owns function-scoped raw RESP connections and fails closed",
     )
+    config.addinivalue_line(
+        "markers", "required_vector_cluster: dedicated three-node fail-closed gate"
+    )
 
 
 def pytest_collection_modifyitems(items):
@@ -293,6 +296,10 @@ def pytest_collection_modifyitems(items):
                 f"required Vector cluster collection must contain exactly 16 nodes, got {len(cluster_items)}"
             )
         for item in cluster_items:
+            if item.get_closest_marker("required_vector_cluster") is None:
+                raise pytest.UsageError(
+                    f"required Vector cluster node lost marker ownership: {item.nodeid}"
+                )
             for marker in ("skip", "skipif", "xfail"):
                 if item.get_closest_marker(marker) is not None:
                     raise pytest.UsageError(

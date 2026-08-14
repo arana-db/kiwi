@@ -1073,6 +1073,28 @@ fn vector_cluster_runner_and_collection_are_fail_closed() {
 }
 
 #[test]
+fn standard_python_integration_excludes_required_vector_cluster_gate() {
+    let makefile = normalized_fixture(include_str!("../../../tests/Makefile"));
+    assert!(
+        makefile.contains("-m \"not raw_vector_protocol and not required_vector_cluster\""),
+        "standard Python integration must not collect the dedicated cluster gate"
+    );
+
+    let cluster_tests =
+        normalized_fixture(include_str!("../../../tests/python/test_vector_cluster.py"));
+    assert!(
+        cluster_tests.contains("pytest.mark.required_vector_cluster"),
+        "cluster tests must own the dedicated required marker"
+    );
+
+    let conftest = normalized_fixture(include_str!("../../../tests/python/conftest.py"));
+    assert!(
+        conftest.contains("required_vector_cluster: dedicated three-node fail-closed gate"),
+        "the dedicated cluster marker must remain registered for strict collection"
+    );
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn vector_cluster_runner_rejects_missing_or_untrusted_grpcurl() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -1540,7 +1562,7 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
 fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
     let makefile = normalized_fixture(include_str!("../../../tests/Makefile"));
     assert!(!has_vector_differential_path_ignore(&makefile));
-    assert!(makefile.contains("-m \"not raw_vector_protocol\""));
+    assert!(makefile.contains("-m \"not raw_vector_protocol and not required_vector_cluster\""));
     for mutant in [
         format!("{makefile}\npytest --ignore=python/test_vector_set_differential.py"),
         format!("{makefile}\npytest --ignore-glob='*vector_set_differential.py'"),

@@ -226,7 +226,11 @@ if __name__ == "__main__":
 import pytest
 import redis
 
-pytestmark = [pytest.mark.integration, pytest.mark.slow]
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.slow,
+    pytest.mark.required_vector_cluster,
+]
 
 
 def _required_path(name):
