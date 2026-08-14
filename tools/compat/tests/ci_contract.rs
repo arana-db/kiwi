@@ -69,6 +69,8 @@ struct StepInputs {
     name: Option<String>,
     path: Option<String>,
     r#ref: Option<String>,
+    #[serde(rename = "if-no-files-found")]
+    if_no_files_found: Option<String>,
 }
 
 const VECTOR_CLUSTER_JOB: &str = "vector-cluster-fail-closed";
@@ -84,6 +86,100 @@ const GRPCURL_OUTPUT: &str = "-o \"$RUNNER_TEMP/grpcurl.tar.gz\"";
 const GRPCURL_CHECKSUM_VERIFY: &str = "| (cd \"$RUNNER_TEMP\" && sha256sum -c -)";
 const GRPCURL_EXTRACT: &str =
     "tar -xzf \"$RUNNER_TEMP/grpcurl.tar.gz\" -C \"$RUNNER_TEMP\" grpcurl";
+
+fn make_logical_lines(source: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut logical_line = String::new();
+    for physical_line in source.lines() {
+        let physical_line = physical_line.trim_end_matches('\r');
+        let trimmed = physical_line.trim_end();
+        let continued = trimmed.ends_with('\\');
+        let fragment = if continued {
+            trimmed
+                .strip_suffix('\\')
+                .expect("continued Make line must end with a backslash")
+        } else {
+            physical_line
+        };
+        if !logical_line.is_empty() {
+            logical_line.push(' ');
+        }
+        logical_line.push_str(fragment);
+        if !continued {
+            lines.push(std::mem::take(&mut logical_line));
+        }
+    }
+    if !logical_line.is_empty() {
+        lines.push(logical_line);
+    }
+    lines
+}
+
+fn make_assignment(line: &str) -> Option<(&str, &str, &str)> {
+    let line = line.trim_start();
+    for operator in [":=", "?=", "+=", "="] {
+        let Some(index) = line.find(operator) else {
+            continue;
+        };
+        let name = line[..index].trim();
+        if !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"_.-".contains(&byte))
+        {
+            return Some((name, operator, line[index + operator.len()..].trim()));
+        }
+    }
+    None
+}
+
+fn expand_make_variables(source: &str, variables: &BTreeMap<String, String>) -> String {
+    let mut expanded = source.to_string();
+    for _ in 0..=variables.len().min(32) {
+        let mut next = expanded.clone();
+        for (name, value) in variables {
+            next = next.replace(&format!("$({name})"), value);
+            next = next.replace(&format!("${{{name}}}"), value);
+        }
+        if next == expanded {
+            break;
+        }
+        expanded = next;
+    }
+    expanded
+}
+
+fn has_vector_differential_path_ignore(source: &str) -> bool {
+    let logical_lines = make_logical_lines(source);
+    let mut variables = BTreeMap::<String, String>::new();
+    for line in &logical_lines {
+        let Some((name, operator, value)) = make_assignment(line) else {
+            continue;
+        };
+        match operator {
+            "?=" if variables.contains_key(name) => {}
+            "+=" => {
+                let current = variables.entry(name.to_string()).or_default();
+                if !current.is_empty() && !value.is_empty() {
+                    current.push(' ');
+                }
+                current.push_str(value);
+            }
+            _ => {
+                variables.insert(name.to_string(), value.to_string());
+            }
+        }
+    }
+
+    logical_lines
+        .iter()
+        .filter(|line| make_assignment(line).is_none())
+        .map(|line| expand_make_variables(line, &variables).to_ascii_lowercase())
+        .any(|line| {
+            (line.contains("--ignore") || line.contains("--ignore-glob"))
+                && line.contains("vector_set_differential.py")
+        })
+}
 
 fn validate_required_job_action_versions(workflow: &Workflow) -> Result<(), String> {
     for job_id in [TRUSTED_VECTOR_JOB, VECTOR_CLUSTER_JOB, STATIC_ANALYSIS_JOB] {
@@ -153,6 +249,11 @@ fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), Stri
         || upload_step.with.name.as_deref() != Some("trusted-vector-oracle-provenance")
         || upload_step.with.path.as_deref()
             != Some("${{ runner.temp }}/kiwi-oracle/oracle-provenance.json")
+        || upload_step
+            .with
+            .if_no_files_found
+            .as_deref()
+            .is_some_and(|behavior| behavior != "error")
     {
         return Err(format!(
             "{TRUSTED_VECTOR_JOB} may upload only the final post-cleanup provenance file"
@@ -1081,12 +1182,38 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
         unsafe_upload, workflow_source,
         "failed to construct broad upload mutant"
     );
+    let missing_upload_mutants = ["ignore", "warn"].map(|behavior| {
+        let mutant = workflow_source.replacen(
+            "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json",
+            &format!(
+                "          path: ${{{{ runner.temp }}}}/kiwi-oracle/oracle-provenance.json\n          if-no-files-found: {behavior}"
+            ),
+            1,
+        );
+        assert_ne!(
+            mutant, workflow_source,
+            "failed to construct {behavior} missing upload mutant"
+        );
+        (format!("{behavior} missing provenance"), mutant)
+    });
+    let explicit_error_upload = workflow_source.replacen(
+        "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json",
+        "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json\n          if-no-files-found: error",
+        1,
+    );
+    let workflow: Workflow = yaml_serde::from_str(&explicit_error_upload)
+        .expect("explicit fail-closed upload mutant must remain valid YAML");
+    validate_vector_differential_workflow(&workflow)
+        .expect("explicit error-on-missing provenance must remain accepted");
 
     for (name, mutant) in [
-        ("supervisor bypass", runner_bypass),
-        ("upload before cleanup", upload_before_cleanup),
-        ("broad live/candidate upload", unsafe_upload),
-    ] {
+        ("supervisor bypass".to_string(), runner_bypass),
+        ("upload before cleanup".to_string(), upload_before_cleanup),
+        ("broad live/candidate upload".to_string(), unsafe_upload),
+    ]
+    .into_iter()
+    .chain(missing_upload_mutants)
+    {
         let workflow: Workflow =
             yaml_serde::from_str(&mutant).expect("differential mutant must remain valid YAML");
         assert!(
@@ -1151,24 +1278,30 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
 #[test]
 fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
     let makefile = include_str!("../../../tests/Makefile");
-    let differential_path_ignore = |source: &str| {
-        source.lines().any(|line| {
-            let lower = line.to_ascii_lowercase();
-            (lower.contains("--ignore") || lower.contains("--ignore-glob"))
-                && lower.contains("vector_set_differential")
-        })
-    };
-    assert!(!differential_path_ignore(makefile));
+    assert!(!has_vector_differential_path_ignore(makefile));
     assert!(makefile.contains("-m \"not raw_vector_protocol\""));
     for mutant in [
         format!("{makefile}\npytest --ignore=python/test_vector_set_differential.py"),
         format!("{makefile}\npytest --ignore-glob='*vector_set_differential.py'"),
+        format!(
+            "{makefile}\nDIFF_TEST := python/test_vector_set_differential.py\npytest --ignore=$(DIFF_TEST)"
+        ),
+        format!(
+            "{makefile}\nDIFF_TEST = python/test_vector_set_differential.py\nDIFF_IGNORE = --ignore=$(DIFF_TEST)\ntest-indirect:\n\tpytest \\\n\t  $(DIFF_IGNORE)"
+        ),
     ] {
         assert!(
-            differential_path_ignore(&mutant),
+            has_vector_differential_path_ignore(&mutant),
             "fast integration path-ignore mutant was not detected"
         );
     }
+    let marker_only = format!(
+        "{makefile}\nDIFF_TEST := python/test_vector_set_differential.py\nDIFF_MARKER := -m \"not raw_vector_protocol\"\ntest-marker-only:\n\tpytest $(DIFF_MARKER)"
+    );
+    assert!(
+        !has_vector_differential_path_ignore(&marker_only),
+        "marker-only ownership must not be treated as a path ignore"
+    );
 
     let runner = include_str!("../../../scripts/compat/run-vector-differential.sh");
     for required in [
