@@ -236,6 +236,12 @@ jobs:
       - name: Build runtime baseline tool
         run: cargo build -p runtime-baseline --bin kiwi-runtime-baseline
 
+      - name: Enable Oracle user namespace sandbox
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --mount --pid --fork true
+
       - name: Run Unit Test with retry
         uses: nick-fields/retry@v4
         with:
