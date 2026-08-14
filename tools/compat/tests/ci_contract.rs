@@ -1544,14 +1544,14 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("clock must be after the Unix epoch")
             .as_nanos()
     ));
-    fs::create_dir(&scratch).unwrap();
+    fs::create_dir(&scratch).expect("create differential validator scratch directory");
     let collection = scratch.join("collection.log");
     let summary = scratch.join("summary.json");
     let passing = r#"{"collected":40,"passed":40,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
-    let yaml = fs::read_to_string(&registry).unwrap();
+    let yaml = fs::read_to_string(&registry).expect("read required job registry");
     let node_ids = yaml
         .lines()
         .filter_map(|line| line.strip_prefix("      - tests/python/"))
@@ -1559,15 +1559,16 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         .collect::<Vec<_>>();
     assert_eq!(node_ids.len(), 40);
 
-    fs::write(&collection, format!("{}\n", node_ids.join("\n"))).unwrap();
-    fs::write(&summary, passing).unwrap();
+    fs::write(&collection, format!("{}\n", node_ids.join("\n")))
+        .expect("write exact collection evidence");
+    fs::write(&summary, passing).expect("write passing summary evidence");
     assert!(
         runner_command(&runner)
             .arg("--validate-collection")
             .arg(&registry)
             .arg(&collection)
             .status()
-            .unwrap()
+            .expect("collection validator must start")
             .success()
     );
     for (name, mutant) in [
@@ -1589,14 +1590,14 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         ),
     ] {
         let mutant_registry = scratch.join(format!("{name}.yaml"));
-        fs::write(&mutant_registry, mutant).unwrap();
+        fs::write(&mutant_registry, mutant).expect("write registry mutant");
         assert!(
             !runner_command(&runner)
                 .arg("--validate-collection")
                 .arg(&mutant_registry)
                 .arg(&collection)
                 .status()
-                .unwrap()
+                .expect("collection validator mutant must start")
                 .success(),
             "runner accepted {name} registry mutant"
         );
@@ -1606,32 +1607,33 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
                 .arg(&mutant_registry)
                 .arg(&summary)
                 .status()
-                .unwrap()
+                .expect("summary validator mutant must start")
                 .success(),
             "summary validator accepted {name} registry mutant"
         );
     }
-    fs::write(&collection, "27 tests collected\n").unwrap();
+    fs::write(&collection, "27 tests collected\n").expect("write collection count mutant");
     assert!(
         !runner_command(&runner)
             .arg("--validate-collection")
             .arg(&registry)
             .arg(&collection)
             .status()
-            .unwrap()
+            .expect("collection count mutant validator must start")
             .success()
     );
     let mut drifted_node_ids = node_ids.clone();
     drifted_node_ids[0] =
         "tests/python/test_vector_set_differential.py::test_unregistered_node".to_string();
-    fs::write(&collection, format!("{}\n", drifted_node_ids.join("\n"))).unwrap();
+    fs::write(&collection, format!("{}\n", drifted_node_ids.join("\n")))
+        .expect("write collection identity mutant");
     assert!(
         !runner_command(&runner)
             .arg("--validate-collection")
             .arg(&registry)
             .arg(&collection)
             .status()
-            .unwrap()
+            .expect("collection identity mutant validator must start")
             .success()
     );
 
@@ -1641,7 +1643,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             .arg(&registry)
             .arg(&summary)
             .status()
-            .unwrap()
+            .expect("summary validator must start")
             .success()
     );
     for mutant in [
@@ -1652,14 +1654,14 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         passing.replace("\"xpassed\":0", "\"xpassed\":1"),
         passing.replace("\"deselected\":0", "\"deselected\":1"),
     ] {
-        fs::write(&summary, mutant).unwrap();
+        fs::write(&summary, mutant).expect("write summary mutant");
         assert!(
             !runner_command(&runner)
                 .arg("--validate-summary")
                 .arg(&registry)
                 .arg(&summary)
                 .status()
-                .unwrap()
+                .expect("summary mutant validator must start")
                 .success()
         );
     }
@@ -1669,7 +1671,7 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         .env("OSTYPE", "linux-gnu")
         .env("KIWI_COMPAT_REQUIRE_ORACLE", "1")
         .status()
-        .unwrap();
+        .expect("unavailable runner probe must start");
     assert!(!unavailable.success());
     let identity_mismatch = runner_command(&runner)
         .arg("--callback")
@@ -1683,17 +1685,17 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
             "/runtime-evidence.json",
         )
         .status()
-        .unwrap();
+        .expect("identity mismatch runner probe must start");
     assert!(!identity_mismatch.success());
     let runtime_evidence = scratch.join("runtime-evidence.json");
     let valid_runtime = r#"{"build_role":"rebuild","binary_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","binary_identity":{"device":1,"inode":2,"mode":33261,"size":3,"nlink":1},"held_fd":true,"pid":42,"info_redis_versions":["8.8.1"]}"#;
-    fs::write(&runtime_evidence, valid_runtime).unwrap();
+    fs::write(&runtime_evidence, valid_runtime).expect("write valid runtime evidence");
     assert!(
         runner_command(&runner)
             .arg("--validate-runtime-evidence")
             .arg(&runtime_evidence)
             .status()
-            .unwrap()
+            .expect("runtime evidence validator must start")
             .success()
     );
     for mutant in [
@@ -1707,13 +1709,13 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         ),
         valid_runtime.replace("\"inode\":2", "\"inode\":0"),
     ] {
-        fs::write(&runtime_evidence, mutant).unwrap();
+        fs::write(&runtime_evidence, mutant).expect("write runtime evidence mutant");
         assert!(
             !runner_command(&runner)
                 .arg("--validate-runtime-evidence")
                 .arg(&runtime_evidence)
                 .status()
-                .unwrap()
+                .expect("runtime evidence mutant validator must start")
                 .success()
         );
     }
@@ -1721,11 +1723,11 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
         !runner_command(&runner)
             .args(["--validate-callback-result", "0", "1"])
             .status()
-            .unwrap()
+            .expect("callback result validator must start")
             .success()
     );
 
-    fs::remove_dir_all(&scratch).unwrap();
+    fs::remove_dir_all(&scratch).expect("remove differential validator scratch directory");
 }
 
 #[test]
@@ -1739,10 +1741,10 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("clock must be after the Unix epoch")
             .as_nanos()
     ));
-    fs::create_dir(&scratch).unwrap();
+    fs::create_dir(&scratch).expect("create raw coverage scratch directory");
     let coverage = scratch.join("raw-coverage.jsonl");
     let node_ids = [
         "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]",
@@ -1776,18 +1778,18 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
             "b".repeat(64)
         ));
     }
-    fs::write(&coverage, &records).unwrap();
+    fs::write(&coverage, &records).expect("write valid raw coverage evidence");
     let validate = |registry_path: &std::path::Path, coverage_path: &std::path::Path| {
         runner_command(&runner)
             .arg("--validate-raw-coverage")
             .arg(registry_path)
             .arg(coverage_path)
             .status()
-            .unwrap()
+            .expect("raw coverage validator must start")
             .success()
     };
     assert!(validate(&registry, &coverage));
-    let yaml = fs::read_to_string(&registry).unwrap();
+    let yaml = fs::read_to_string(&registry).expect("read required job registry");
     for (name, mutant) in [
         (
             "unknown-field",
@@ -1807,7 +1809,7 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         ),
     ] {
         let mutant_registry = scratch.join(format!("{name}.yaml"));
-        fs::write(&mutant_registry, mutant).unwrap();
+        fs::write(&mutant_registry, mutant).expect("write raw coverage registry mutant");
         assert!(
             !validate(&mutant_registry, &coverage),
             "raw coverage validator accepted {name} registry mutant"
@@ -1819,7 +1821,8 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         .filter(|line| !(line.contains("\"command\":\"VCARD\"") && line.contains("[resp3]")))
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(&coverage, format!("{missing_vcard}\n")).unwrap();
+    fs::write(&coverage, format!("{missing_vcard}\n"))
+        .expect("write missing command coverage mutant");
     assert!(!validate(&registry, &coverage));
 
     let typed_equivalence = records.replacen(
@@ -1835,7 +1838,7 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         ),
         1,
     );
-    fs::write(&coverage, typed_equivalence).unwrap();
+    fs::write(&coverage, typed_equivalence).expect("write frame hash mismatch mutant");
     assert!(!validate(&registry, &coverage));
 
     let without_populated_vinfo = records
@@ -1847,7 +1850,8 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         })
         .collect::<Vec<_>>()
         .join("\n");
-    fs::write(&coverage, format!("{without_populated_vinfo}\n")).unwrap();
+    fs::write(&coverage, format!("{without_populated_vinfo}\n"))
+        .expect("write missing populated VINFO mutant");
     assert!(!validate(&registry, &coverage));
 
     let wrong_evidence_kind = records.replacen(
@@ -1855,8 +1859,8 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         "\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"exact-frame\"",
         1,
     );
-    fs::write(&coverage, wrong_evidence_kind).unwrap();
+    fs::write(&coverage, wrong_evidence_kind).expect("write evidence kind mutant");
     assert!(!validate(&registry, &coverage));
 
-    fs::remove_dir_all(&scratch).unwrap();
+    fs::remove_dir_all(&scratch).expect("remove raw coverage scratch directory");
 }
