@@ -15,6 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]
 use std::fs;
@@ -86,6 +87,14 @@ const GRPCURL_OUTPUT: &str = "-o \"$RUNNER_TEMP/grpcurl.tar.gz\"";
 const GRPCURL_CHECKSUM_VERIFY: &str = "| (cd \"$RUNNER_TEMP\" && sha256sum -c -)";
 const GRPCURL_EXTRACT: &str =
     "tar -xzf \"$RUNNER_TEMP/grpcurl.tar.gz\" -C \"$RUNNER_TEMP\" grpcurl";
+
+fn normalized_fixture(source: &str) -> Cow<'_, str> {
+    if source.contains("\r\n") {
+        Cow::Owned(source.replace("\r\n", "\n"))
+    } else {
+        Cow::Borrowed(source)
+    }
+}
 
 fn make_logical_lines(source: &str) -> Vec<String> {
     let mut lines = Vec::new();
@@ -637,7 +646,7 @@ fn validate_rkyv_audit_governance(source: &str) -> Result<(), String> {
 
 #[test]
 fn vector_cluster_required_job_is_unique_and_fail_closed() {
-    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
     assert_eq!(
         workflow_source
             .lines()
@@ -652,7 +661,8 @@ fn vector_cluster_required_job_is_unique_and_fail_closed() {
         1
     );
 
-    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    let workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
     validate_vector_cluster_workflow(&workflow).expect("required Vector cluster job must be exact");
 
     for (name, from, to) in [
@@ -668,7 +678,11 @@ fn vector_cluster_required_job_is_unique_and_fail_closed() {
         ),
     ] {
         let mutant = workflow_source.replacen(from, to, 1);
-        assert_ne!(mutant, workflow_source, "failed to construct {name} mutant");
+        assert_ne!(
+            mutant,
+            workflow_source.as_ref(),
+            "failed to construct {name} mutant"
+        );
         let workflow: Workflow =
             yaml_serde::from_str(&mutant).expect("cluster condition mutant must parse");
         assert!(
@@ -680,7 +694,7 @@ fn vector_cluster_required_job_is_unique_and_fail_closed() {
 
 #[test]
 fn rkyv_static_analysis_gate_is_pr_blocking_and_ordered() {
-    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
     assert_eq!(
         workflow_source
             .lines()
@@ -688,15 +702,16 @@ fn rkyv_static_analysis_gate_is_pr_blocking_and_ordered() {
             .count(),
         1
     );
-    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    let workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
     validate_rkyv_static_analysis_workflow(&workflow)
         .expect("static analysis must contain the required fail-closed rkyv gate");
 }
 
 #[test]
 fn rkyv_static_analysis_contract_rejects_removal_reordering_and_continue_on_error() {
-    let source = include_str!("../../../.github/workflows/ci.yml");
-    let workflow: Workflow = yaml_serde::from_str(source).expect("CI workflow must parse");
+    let source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let workflow: Workflow = yaml_serde::from_str(&source).expect("CI workflow must parse");
 
     let mut no_pull_request = workflow.clone();
     no_pull_request.triggers.remove("pull_request");
@@ -778,7 +793,7 @@ fn rkyv_static_analysis_contract_rejects_removal_reordering_and_continue_on_erro
 
 #[test]
 fn rkyv_static_analysis_contract_rejects_conditional_job_and_critical_steps() {
-    let source = include_str!("../../../.github/workflows/ci.yml").replace("\r\n", "\n");
+    let source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
     let mut accepted = Vec::new();
     for (name, needle, replacement) in [
         (
@@ -835,8 +850,10 @@ fn rkyv_static_analysis_contract_rejects_conditional_job_and_critical_steps() {
 
 #[test]
 fn rkyv_sentinel_contract_rejects_ignored_stdout() {
-    let source = include_str!("../../../scripts/ci/check-rkyv-reachability.sh");
-    validate_rkyv_sentinel_source(source).expect("rkyv sentinel source must be fail closed");
+    let source = normalized_fixture(include_str!(
+        "../../../scripts/ci/check-rkyv-reachability.sh"
+    ));
+    validate_rkyv_sentinel_source(&source).expect("rkyv sentinel source must be fail closed");
 
     let ignored_stdout = source.replacen(
         "if [[ -s \"$stdout_file\" ]]; then",
@@ -848,8 +865,8 @@ fn rkyv_sentinel_contract_rejects_ignored_stdout() {
 
 #[test]
 fn rkyv_audit_ignore_has_owner_path_status_and_removal_condition() {
-    let source = include_str!("../../../.cargo/audit.toml");
-    validate_rkyv_audit_governance(source)
+    let source = normalized_fixture(include_str!("../../../.cargo/audit.toml"));
+    validate_rkyv_audit_governance(&source)
         .expect("rkyv advisory ignore must carry accurate governance");
 
     let removed_advisory = source.replacen("  \"RUSTSEC-2026-0235\",\n", "", 1);
@@ -861,9 +878,9 @@ fn rkyv_audit_ignore_has_owner_path_status_and_removal_condition() {
 
 #[test]
 fn rkyv_security_workflow_remains_scheduled_visibility() {
-    let source = include_str!("../../../.github/workflows/security.yml");
+    let source = normalized_fixture(include_str!("../../../.github/workflows/security.yml"));
     assert!(source.contains("  schedule:"));
-    let workflow: Workflow = yaml_serde::from_str(source).expect("security workflow must parse");
+    let workflow: Workflow = yaml_serde::from_str(&source).expect("security workflow must parse");
     let job = workflow
         .jobs
         .get("cargo-audit")
@@ -878,9 +895,8 @@ fn rkyv_security_workflow_remains_scheduled_visibility() {
 
 #[test]
 fn vector_cluster_workflow_rejects_grpcurl_moved_to_unrelated_job() {
-    let mut workflow: Workflow =
-        yaml_serde::from_str(include_str!("../../../.github/workflows/ci.yml"))
-            .expect("CI workflow must parse");
+    let source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let mut workflow: Workflow = yaml_serde::from_str(&source).expect("CI workflow must parse");
     let grpcurl_step = {
         let required_job = workflow
             .jobs
@@ -907,9 +923,8 @@ fn vector_cluster_workflow_rejects_grpcurl_moved_to_unrelated_job() {
 
 #[test]
 fn vector_cluster_workflow_rejects_grpcurl_extraction_before_checksum() {
-    let mut workflow: Workflow =
-        yaml_serde::from_str(include_str!("../../../.github/workflows/ci.yml"))
-            .expect("CI workflow must parse");
+    let source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let mut workflow: Workflow = yaml_serde::from_str(&source).expect("CI workflow must parse");
     mutate_grpcurl_command(&mut workflow, |command| {
         let without_extract = command.replacen(&format!("{GRPCURL_EXTRACT}\n"), "", 1);
         without_extract.replacen(
@@ -926,9 +941,8 @@ fn vector_cluster_workflow_rejects_grpcurl_extraction_before_checksum() {
 
 #[test]
 fn vector_cluster_workflow_rejects_checksum_literal_without_verification() {
-    let mut workflow: Workflow =
-        yaml_serde::from_str(include_str!("../../../.github/workflows/ci.yml"))
-            .expect("CI workflow must parse");
+    let source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let mut workflow: Workflow = yaml_serde::from_str(&source).expect("CI workflow must parse");
     mutate_grpcurl_command(&mut workflow, |command| {
         command.replacen(
             GRPCURL_CHECKSUM_VERIFY,
@@ -971,7 +985,8 @@ fn vector_cluster_runner_and_collection_are_fail_closed() {
     }
     assert!(!runner.contains("command -v grpcurl"));
 
-    let cluster_tests = include_str!("../../../tests/python/test_vector_cluster.py");
+    let cluster_tests =
+        normalized_fixture(include_str!("../../../tests/python/test_vector_cluster.py"));
     assert!(!cluster_tests.contains("pytest.mark.skipif"));
     assert!(cluster_tests.contains("@pytest.mark.parametrize"));
     assert!(cluster_tests.contains("signal.SIGTERM"));
@@ -1141,7 +1156,7 @@ fn vector_cluster_validators_reject_collection_totals_and_cleanup_drift() {
 
 #[test]
 fn vector_differential_required_job_is_unique_and_fail_closed() {
-    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
     assert_eq!(
         workflow_source
             .lines()
@@ -1155,7 +1170,8 @@ fn vector_differential_required_job_is_unique_and_fail_closed() {
             .count(),
         1
     );
-    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    let workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
     let matching = workflow
         .jobs
         .iter()
@@ -1191,8 +1207,9 @@ fn vector_differential_required_job_is_unique_and_fail_closed() {
 
 #[test]
 fn required_jobs_reject_unversioned_actions() {
-    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
-    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
     validate_required_job_action_versions(&workflow)
         .expect("required jobs must use versioned action runners");
 
@@ -1216,15 +1233,16 @@ fn required_jobs_reject_unversioned_actions() {
 
 #[test]
 fn vector_differential_upload_requires_explicit_missing_file_error() {
-    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
     let workflow: Workflow =
-        yaml_serde::from_str(workflow_source).expect("CI workflow must remain valid YAML");
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must remain valid YAML");
     validate_vector_differential_workflow(&workflow)
         .expect("explicit error-on-missing provenance must remain accepted");
 
     let missing_policy = workflow_source.replacen("\n          if-no-files-found: error", "", 1);
     assert_ne!(
-        missing_policy, workflow_source,
+        missing_policy,
+        workflow_source.as_ref(),
         "failed to construct missing upload policy mutant"
     );
     let workflow: Workflow = yaml_serde::from_str(&missing_policy)
@@ -1237,7 +1255,7 @@ fn vector_differential_upload_requires_explicit_missing_file_error() {
 
 #[test]
 fn vector_differential_make_undefined_variable_cannot_split_path_ignore() {
-    let makefile = include_str!("../../../tests/Makefile");
+    let makefile = normalized_fixture(include_str!("../../../tests/Makefile"));
     let undetected = [":=", "=", "?=", "+="]
         .into_iter()
         .filter(|operator| {
@@ -1255,7 +1273,7 @@ fn vector_differential_make_undefined_variable_cannot_split_path_ignore() {
 
 #[test]
 fn vector_differential_make_simple_assignment_freezes_earlier_value() {
-    let makefile = include_str!("../../../tests/Makefile");
+    let makefile = normalized_fixture(include_str!("../../../tests/Makefile"));
     let mutant = format!(
         "{makefile}\nDIFF_TEST := python/test_vector_set_differential.py\nDIFF_IGNORE := --ignore=$(DIFF_TEST)\nDIFF_TEST := python/test_other.py\ntest-immediate:\n\tpytest $(DIFF_IGNORE)"
     );
@@ -1267,7 +1285,7 @@ fn vector_differential_make_simple_assignment_freezes_earlier_value() {
 
 #[test]
 fn vector_differential_make_tab_recipe_scans_env_prefixed_command() {
-    let makefile = include_str!("../../../tests/Makefile");
+    let makefile = normalized_fixture(include_str!("../../../tests/Makefile"));
     let mutant = format!(
         "{makefile}\ntest-env-ignore:\n\tPYTEST_ADDOPTS=--ignore=python/test_vector_set_differential.py pytest python/"
     );
@@ -1279,13 +1297,16 @@ fn vector_differential_make_tab_recipe_scans_env_prefixed_command() {
 
 #[test]
 fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
-    let workflow_source = include_str!("../../../.github/workflows/ci.yml");
-    let workflow: Workflow = yaml_serde::from_str(workflow_source).expect("CI workflow must parse");
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
     validate_vector_differential_workflow(&workflow)
         .expect("trusted differential workflow must be fail closed");
 
-    let runner_source = include_str!("../../../scripts/compat/run-vector-differential.sh");
-    validate_vector_differential_runner_source(runner_source)
+    let runner_source = normalized_fixture(include_str!(
+        "../../../scripts/compat/run-vector-differential.sh"
+    ));
+    validate_vector_differential_runner_source(&runner_source)
         .expect("trusted differential runner must obtain its runtime from the verifier");
 
     let runner_bypass = workflow_source.replacen(
@@ -1400,8 +1421,8 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
 
 #[test]
 fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
-    let makefile = include_str!("../../../tests/Makefile");
-    assert!(!has_vector_differential_path_ignore(makefile));
+    let makefile = normalized_fixture(include_str!("../../../tests/Makefile"));
+    assert!(!has_vector_differential_path_ignore(&makefile));
     assert!(makefile.contains("-m \"not raw_vector_protocol\""));
     for mutant in [
         format!("{makefile}\npytest --ignore=python/test_vector_set_differential.py"),
@@ -1426,7 +1447,9 @@ fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
         "marker-only ownership must not be treated as a path ignore"
     );
 
-    let runner = include_str!("../../../scripts/compat/run-vector-differential.sh");
+    let runner = normalized_fixture(include_str!(
+        "../../../scripts/compat/run-vector-differential.sh"
+    ));
     for required in [
         "KIWI_COMPAT_REQUIRE_ORACLE",
         "kiwi-required-vector-jobs",
