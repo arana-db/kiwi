@@ -743,8 +743,9 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         // Persist the applied frontier derived from the installed snapshot
         // before removing the install marker, so crash recovery sees a
         // consistent position.
-        self.persist_durable_meta()
-            .map_err(|error| post_marker_error("persisting durable meta after snapshot install", &error))?;
+        self.persist_durable_meta().map_err(|error| {
+            post_marker_error("persisting durable meta after snapshot install", &error)
+        })?;
 
         persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes).map_err(|error| {
             let context = format!(
@@ -782,22 +783,53 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
 
         if self.last_applied.is_none() {
-            // Try durable meta first (most authoritative — written after every apply).
-            if let Some(meta) = self.log_store.load_durable_meta()? {
-                self.last_applied = meta.last_applied;
-                self.last_membership = meta.last_membership;
-                log::info!(
-                    "Recovered last_applied={:?} from durable state machine meta",
-                    self.last_applied
-                );
-            } else if let Some(snap) = load_current_snapshot(&self.snapshot_work_dir)? {
-                // Fall back to snapshot metadata (legacy installations or first start).
-                self.last_applied = snap.meta.last_log_id;
-                self.last_membership = snap.meta.last_membership.clone();
-                log::info!(
-                    "Recovered last_applied={:?} from persisted snapshot (no durable meta)",
-                    self.last_applied
-                );
+            let durable = self.log_store.load_durable_meta()?;
+            let snapshot = load_current_snapshot(&self.snapshot_work_dir)?;
+
+            match (durable, snapshot) {
+                (Some(meta), Some(snap)) => {
+                    // Both exist — cross-validate. Durable meta must not be
+                    // behind the snapshot, since the snapshot represents a
+                    // committed checkpoint.
+                    let durable_idx = meta.last_applied.map(|l| l.index).unwrap_or(0);
+                    let snap_idx = snap.meta.last_log_id.map(|l| l.index).unwrap_or(0);
+                    if durable_idx < snap_idx {
+                        log::warn!(
+                            "Durable meta last_applied={} is behind snapshot last_log_id={}; \
+                             using snapshot frontier",
+                            durable_idx,
+                            snap_idx
+                        );
+                        self.last_applied = snap.meta.last_log_id;
+                        self.last_membership = snap.meta.last_membership.clone();
+                    } else {
+                        self.last_applied = meta.last_applied;
+                        self.last_membership = meta.last_membership;
+                    }
+                    log::info!(
+                        "Recovered last_applied={:?} (cross-validated durable meta + snapshot)",
+                        self.last_applied
+                    );
+                }
+                (Some(meta), None) => {
+                    self.last_applied = meta.last_applied;
+                    self.last_membership = meta.last_membership;
+                    log::info!(
+                        "Recovered last_applied={:?} from durable state machine meta",
+                        self.last_applied
+                    );
+                }
+                (None, Some(snap)) => {
+                    self.last_applied = snap.meta.last_log_id;
+                    self.last_membership = snap.meta.last_membership.clone();
+                    log::info!(
+                        "Recovered last_applied={:?} from persisted snapshot (no durable meta)",
+                        self.last_applied
+                    );
+                }
+                (None, None) => {
+                    log::info!("No durable meta or snapshot found; starting from scratch");
+                }
             }
         }
 
@@ -1773,14 +1805,18 @@ mod durable_meta_tests {
 
         // After install, durable meta should reflect the snapshot's last_log_id.
         let meta = ls2.load_durable_meta().unwrap();
-        assert!(meta.is_some(), "durable meta should exist after snapshot install");
+        assert!(
+            meta.is_some(),
+            "durable meta should exist after snapshot install"
+        );
         let meta = meta.unwrap();
         assert_eq!(
             meta.last_applied, snap_meta.last_log_id,
             "durable meta last_applied should match snapshot last_log_id"
         );
 
-        // Close the state machine and storage to release RocksDB locks.
+        // Close the state machine, storage, and log store to release all
+        // RocksDB locks before reopening.
         drop(sm2);
         let dst_storage = dst_swap.load_full();
         drop(dst_swap);
@@ -1789,6 +1825,8 @@ mod durable_meta_tests {
             .expect("dst storage should have no remaining references");
         dst_storage.shutdown().await;
         dst_storage.close();
+        drop(ls2);
+        drop(ls2_dir);
 
         // Reopen from the same log store directory — applied_state should
         // recover the installed snapshot's frontier from durable meta.
@@ -1816,7 +1854,6 @@ mod durable_meta_tests {
 
         drop(sm3);
         drop(swap);
-        drop(ls2_dir);
         safe_cleanup_test_db(&dst_db);
         safe_cleanup_test_db(&src_db);
     }

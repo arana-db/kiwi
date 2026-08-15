@@ -223,7 +223,8 @@ pub async fn create_raft_node(
     let legacy_log_store_path = config.data_dir.join("raft_logs");
     if legacy_log_store_path.try_exists()? {
         return Err(anyhow::anyhow!(
-            "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
+            "cannot safely migrate legacy in-memory Raft log state in place at {}; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader",
+            legacy_log_store_path.display()
         ));
     }
 

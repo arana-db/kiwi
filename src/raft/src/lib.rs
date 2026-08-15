@@ -20,9 +20,9 @@
 //! Re-exports logindex types from storage::logindex to avoid code duplication.
 
 pub mod capabilities;
-pub mod durable_meta;
 pub mod conversion;
 pub mod db_access; // Shim for backward compatibility with tests
+pub mod durable_meta;
 pub mod grpc;
 pub mod leader_gate;
 pub mod log_store_rocksdb;

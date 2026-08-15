@@ -84,8 +84,8 @@ fn noop_pause_controller() -> Arc<dyn PauseController> {
 
 fn test_log_store() -> (raft::log_store_rocksdb::RocksdbLogStore, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("temp dir for log store");
-    let store =
-        raft::log_store_rocksdb::RocksdbLogStore::open(dir.path()).expect("test log store should open");
+    let store = raft::log_store_rocksdb::RocksdbLogStore::open(dir.path())
+        .expect("test log store should open");
     (store, dir)
 }
 

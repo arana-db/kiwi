@@ -351,8 +351,10 @@ impl RocksdbLogStore {
     ) -> Result<(), StorageError<u64>> {
         let state_cf = self.cf_write(STATE_CF)?;
         let value = serialize(meta)?;
+        let mut opts = rocksdb::WriteOptions::default();
+        opts.set_sync(true);
         self.db
-            .put_cf(&state_cf, DURABLE_META_KEY, &value)
+            .put_cf_opt(&state_cf, DURABLE_META_KEY, &value, &opts)
             .map_err(io_write_err)?;
         Ok(())
     }
