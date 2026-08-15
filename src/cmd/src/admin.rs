@@ -27,9 +27,7 @@ use storage::storage::Storage;
 use crate::server_info::{NoopServerInfoProvider, ServerInfoProviderRef, ServerInfoSnapshot};
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
-/// INFO VECTOR section: the Phase 1 index kind plus the FLAT query counters.
-/// vector_sets / vector_elements are omitted on purpose: counting them needs
-/// a full keyspace scan and INFO must stay O(1).
+/// INFO VECTOR: FLAT index kind and query counters. Skip set/element counts to stay O(1).
 fn vector_section(storage: &Storage) -> String {
     let metrics = storage.vector_metrics();
     format!(
@@ -49,17 +47,6 @@ fn vector_section(storage: &Storage) -> String {
         metrics.flat_query_duration_count,
     )
 }
-
-const INFO_SECTIONS: [&str; 8] = [
-    "server",
-    "clients",
-    "stats",
-    "persistence",
-    "replication",
-    "cluster",
-    "keyspace",
-    "vector",
-];
 
 fn server_section(snapshot: &ServerInfoSnapshot) -> String {
     format!(
@@ -91,39 +78,28 @@ fn server_section(snapshot: &ServerInfoSnapshot) -> String {
     )
 }
 
-fn clients_section(snapshot: &ServerInfoSnapshot) -> String {
-    format!(
-        "# Clients\r\nconnected_clients:{}\r\n",
-        snapshot.connected_clients
-    )
+fn clients_section() -> String {
+    String::from("# Clients\r\nkiwi_clients:unavailable\r\n")
 }
 
-fn stats_section(snapshot: &ServerInfoSnapshot) -> String {
-    format!(
-        "# Stats\r\n\
-         total_connections_received:{}\r\n\
-         total_commands_processed:{}\r\n",
-        snapshot.total_connections_received, snapshot.total_commands_processed
-    )
+fn stats_section() -> String {
+    String::from("# Stats\r\nkiwi_stats:unavailable\r\n")
 }
 
-fn persistence_section(snapshot: &ServerInfoSnapshot) -> String {
-    format!(
-        "# Persistence\r\n\
-         loading:0\r\n\
-         rdb_bgsave_in_progress:{}\r\n\
-         rdb_changes_since_last_save:{}\r\n",
-        snapshot.rdb_bgsave_in_progress, snapshot.rdb_changes_since_last_save,
-    )
+fn persistence_section() -> String {
+    String::from("# Persistence\r\nkiwi_persistence:unavailable\r\n")
 }
 
 fn replication_section(snapshot: &ServerInfoSnapshot) -> String {
-    let role = match snapshot.raft_role.as_deref() {
-        Some("leader") => "master",
-        Some(_) => "slave",
-        None => "master",
-    };
-    format!("# Replication\r\nrole:{}\r\nconnected_slaves:0\r\n", role)
+    let mut out = String::from("# Replication\r\n");
+    match snapshot.raft_role.as_deref() {
+        Some("leader") => out.push_str("role:master\r\n"),
+        Some("follower") => out.push_str("role:slave\r\n"),
+        Some(_) => out.push_str("kiwi_replication_role:unavailable\r\n"),
+        None if !snapshot.cluster_enabled => out.push_str("role:master\r\n"),
+        None => out.push_str("kiwi_replication_role:unavailable\r\n"),
+    }
+    out
 }
 
 fn cluster_section(snapshot: &ServerInfoSnapshot) -> String {
@@ -151,18 +127,26 @@ fn cluster_section(snapshot: &ServerInfoSnapshot) -> String {
     out
 }
 
-/// note(guozhihao-224) Real key count would need a full keyspace scan, which INFO
-/// must avoid; RocksDB's estimate-num-keys is O(1) and approximate.
+/// O(1) RocksDB key estimate. Omit the count if any instance fails.
 fn keyspace_section(storage: &Storage) -> String {
-    let keys: u64 = storage
-        .insts
-        .iter()
-        .filter_map(|instance| instance.get_property("rocksdb.estimate-num-keys").ok())
-        .sum();
-    format!("# Keyspace\r\ndb0:keys={}\r\n", keys)
+    let mut keys = 0u64;
+    let mut estimate_failed = false;
+    for instance in &storage.insts {
+        match instance.get_property("rocksdb.estimate-num-keys") {
+            Ok(count) => keys += count,
+            Err(_) => estimate_failed = true,
+        }
+    }
+    let mut out = String::from("# Keyspace\r\n");
+    if estimate_failed {
+        out.push_str("kiwi_keyspace_estimate:unavailable\r\n");
+    } else {
+        out.push_str(&format!("db0:keys={}\r\n", keys));
+    }
+    out
 }
 
-/// INFO command - Show real server information including cluster status.
+/// INFO command.
 #[derive(Clone)]
 pub struct InfoCmd {
     meta: CmdMeta,
@@ -205,6 +189,7 @@ impl Cmd for InfoCmd {
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         let snapshot = self.info_provider.snapshot();
 
+        // Unknown sections are ignored; the reply stays a bulk string.
         let sections: Vec<String> = if client.argv().len() > 1 {
             client.argv()[1..]
                 .iter()
@@ -214,47 +199,34 @@ impl Cmd for InfoCmd {
             vec!["default".to_string()]
         };
 
-        for section in &sections {
-            if section != "default"
-                && section != "all"
-                && section != "everything"
-                && !INFO_SECTIONS.contains(&section.as_str())
-            {
-                client.set_reply(RespData::Error(
-                    format!("ERR Unrecognized INFO section: '{}'", section).into(),
-                ));
-                return;
-            }
-        }
-
         let wants = |name: &str| sections.iter().any(|s| s == name);
         let all = wants("all") || wants("everything");
         let default = all || wants("default");
 
         let mut info = String::new();
 
-        if default || all || wants("server") {
+        if default || wants("server") {
             info.push_str(&server_section(&snapshot));
         }
-        if default || all || wants("clients") {
-            info.push_str(&clients_section(&snapshot));
+        if default || wants("clients") {
+            info.push_str(&clients_section());
         }
-        if default || all || wants("stats") {
-            info.push_str(&stats_section(&snapshot));
+        if default || wants("stats") {
+            info.push_str(&stats_section());
         }
-        if default || all || wants("persistence") {
-            info.push_str(&persistence_section(&snapshot));
+        if default || wants("persistence") {
+            info.push_str(&persistence_section());
         }
-        if default || all || wants("replication") {
+        if default || wants("replication") {
             info.push_str(&replication_section(&snapshot));
         }
-        if default || all || wants("cluster") {
+        if default || wants("cluster") {
             info.push_str(&cluster_section(&snapshot));
         }
-        if all || wants("keyspace") {
+        if default || wants("keyspace") {
             info.push_str(&keyspace_section(&storage));
         }
-        if default || all || wants("vector") {
+        if default || wants("vector") {
             info.push_str(&vector_section(&storage));
         }
 
@@ -351,6 +323,8 @@ impl Cmd for ConfigCmd {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use client::{Client, StreamTrait};
 
     use super::*;
@@ -380,7 +354,7 @@ mod tests {
     }
 
     impl TestServerInfoProvider {
-        fn new(raft_enabled: bool) -> Self {
+        fn standalone() -> Self {
             let mut snapshot = ServerInfoSnapshot::empty();
             snapshot.version = "9.9.9".to_string();
             snapshot.process_id = 4242;
@@ -388,14 +362,43 @@ mod tests {
             snapshot.os = "testos".to_string();
             snapshot.executable = "/opt/kiwi/kiwi".to_string();
             snapshot.config_file = "/etc/kiwi.conf".to_string();
-            snapshot.cluster_enabled = raft_enabled;
-            snapshot.cluster_state = if raft_enabled { "ok" } else { "disabled" }.to_string();
-            if raft_enabled {
-                snapshot.raft_node_id = Some(1);
-                snapshot.raft_term = Some(3);
-                snapshot.raft_role = Some("leader".to_string());
-            }
+            snapshot.cluster_enabled = false;
+            snapshot.cluster_state = "disabled".to_string();
             Self { snapshot }
+        }
+
+        fn raft_leader() -> Self {
+            let mut provider = Self::standalone();
+            provider.snapshot.cluster_enabled = true;
+            provider.snapshot.cluster_state = "ok".to_string();
+            provider.snapshot.raft_node_id = Some(1);
+            provider.snapshot.raft_term = Some(3);
+            provider.snapshot.raft_leader = Some(1);
+            provider.snapshot.raft_role = Some("leader".to_string());
+            provider
+        }
+
+        fn raft_follower() -> Self {
+            let mut provider = Self::raft_leader();
+            provider.snapshot.raft_node_id = Some(2);
+            provider.snapshot.raft_leader = Some(1);
+            provider.snapshot.raft_role = Some("follower".to_string());
+            provider
+        }
+
+        fn raft_no_leader() -> Self {
+            let mut provider = Self::raft_leader();
+            provider.snapshot.cluster_state = "fail".to_string();
+            provider.snapshot.raft_leader = None;
+            provider.snapshot.raft_role = None;
+            provider
+        }
+
+        fn raft_unavailable() -> Self {
+            let mut provider = Self::standalone();
+            provider.snapshot.cluster_enabled = true;
+            provider.snapshot.cluster_state = "unavailable".to_string();
+            provider
         }
     }
 
@@ -405,13 +408,17 @@ mod tests {
         }
     }
 
-    fn run_info(info_cmd: &InfoCmd, argv: &[&str]) -> String {
+    fn run_info_reply(info_cmd: &InfoCmd, argv: &[&str]) -> RespData {
         let client = Client::new(Box::new(TestStream { _marker: 0 }));
         client.set_cmd_name(b"info");
         let argv: Vec<Vec<u8>> = argv.iter().map(|arg| arg.as_bytes().to_vec()).collect();
         client.set_argv(&argv);
         info_cmd.execute(&client, test_storage());
-        match client.take_reply() {
+        client.take_reply()
+    }
+
+    fn run_info(info_cmd: &InfoCmd, argv: &[&str]) -> String {
+        match run_info_reply(info_cmd, argv) {
             RespData::BulkString(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
             other => panic!("expected bulk reply, got {other:?}"),
         }
@@ -419,7 +426,7 @@ mod tests {
 
     #[test]
     fn server_section_uses_real_values() {
-        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::new(false)));
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
         let out = run_info(&cmd, &["info", "server"]);
         assert!(out.contains("redis_version:9.9.9\r\n"), "{out}");
         assert!(out.contains("process_id:4242\r\n"), "{out}");
@@ -438,44 +445,103 @@ mod tests {
     }
 
     #[test]
-    fn cluster_section_reflects_raft_enabled() {
-        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::new(true)));
+    fn cluster_section_reflects_live_leader() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::raft_leader()));
         let out = run_info(&cmd, &["info", "cluster"]);
         assert!(out.contains("cluster_enabled:1\r\n"), "{out}");
         assert!(out.contains("cluster_state:ok\r\n"), "{out}");
         assert!(out.contains("kiwi_raft_node_id:1\r\n"), "{out}");
         assert!(out.contains("kiwi_raft_current_term:3\r\n"), "{out}");
+        assert!(out.contains("kiwi_raft_current_leader:1\r\n"), "{out}");
     }
 
     #[test]
     fn cluster_section_disabled_when_no_raft() {
-        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::new(false)));
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
         let out = run_info(&cmd, &["info", "cluster"]);
         assert!(out.contains("cluster_enabled:0\r\n"), "{out}");
         assert!(out.contains("cluster_state:disabled\r\n"), "{out}");
     }
 
     #[test]
-    fn unknown_section_returns_error() {
-        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::new(false)));
-        let client = Client::new(Box::new(TestStream { _marker: 0 }));
-        client.set_cmd_name(b"info");
-        client.set_argv(&[b"info".to_vec(), b"nosuch".to_vec()]);
-        cmd.execute(&client, test_storage());
-        assert!(matches!(client.take_reply(), RespData::Error(_)));
+    fn cluster_section_fail_when_leader_missing() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::raft_no_leader()));
+        let out = run_info(&cmd, &["info", "cluster"]);
+        assert!(out.contains("cluster_enabled:1\r\n"), "{out}");
+        assert!(out.contains("cluster_state:fail\r\n"), "{out}");
+        assert!(!out.contains("kiwi_raft_current_leader:"), "{out}");
+        let repl = run_info(&cmd, &["info", "replication"]);
+        assert!(
+            repl.contains("kiwi_replication_role:unavailable\r\n"),
+            "{repl}"
+        );
+        assert!(!repl.contains("role:master"), "{repl}");
     }
 
     #[test]
-    fn default_section_includes_server_and_cluster() {
-        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::new(false)));
+    fn cluster_section_unavailable_without_metrics() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::raft_unavailable()));
+        let out = run_info(&cmd, &["info", "cluster"]);
+        assert!(out.contains("cluster_enabled:1\r\n"), "{out}");
+        assert!(out.contains("cluster_state:unavailable\r\n"), "{out}");
+        assert!(!out.contains("cluster_state:ok\r\n"), "{out}");
+    }
+
+    #[test]
+    fn replication_section_maps_follower_role() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::raft_follower()));
+        let out = run_info(&cmd, &["info", "replication"]);
+        assert!(out.contains("role:slave\r\n"), "{out}");
+        assert!(!out.contains("connected_slaves:"), "{out}");
+    }
+
+    #[test]
+    fn unwired_sections_do_not_emit_fake_zeros() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
+        let out = run_info(&cmd, &["info", "clients", "stats", "persistence"]);
+        assert!(out.contains("kiwi_clients:unavailable\r\n"), "{out}");
+        assert!(out.contains("kiwi_stats:unavailable\r\n"), "{out}");
+        assert!(out.contains("kiwi_persistence:unavailable\r\n"), "{out}");
+        assert!(!out.contains("connected_clients:"), "{out}");
+        assert!(!out.contains("total_commands_processed:"), "{out}");
+        assert!(!out.contains("rdb_bgsave_in_progress:"), "{out}");
+        assert!(!out.contains("loading:"), "{out}");
+    }
+
+    #[test]
+    fn unknown_section_returns_empty_bulk() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
+        let reply = run_info_reply(&cmd, &["info", "nosuch"]);
+        match reply {
+            RespData::BulkString(Some(bytes)) => {
+                assert!(bytes.is_empty(), "unknown-only INFO must be empty bulk");
+            }
+            other => panic!("expected bulk reply, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unknown_section_does_not_drop_known_sections() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
+        let out = run_info(&cmd, &["info", "server", "nosuch", "cluster"]);
+        assert!(out.contains("# Server\r\n"), "{out}");
+        assert!(out.contains("# Cluster\r\n"), "{out}");
+        assert!(!out.contains("# Clients\r\n"), "{out}");
+    }
+
+    #[test]
+    fn default_section_includes_keyspace() {
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
         let out = run_info(&cmd, &["info"]);
         assert!(out.contains("# Server\r\n"), "{out}");
         assert!(out.contains("# Cluster\r\n"), "{out}");
+        assert!(out.contains("# Keyspace\r\n"), "{out}");
+        assert!(out.contains("# Clients\r\n"), "{out}");
     }
 
     #[test]
     fn all_section_includes_keyspace_and_vector() {
-        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::new(false)));
+        let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
         let out = run_info(&cmd, &["info", "all"]);
         assert!(out.contains("# Keyspace\r\n"), "{out}");
         assert!(out.contains("# Vector\r\n"), "{out}");

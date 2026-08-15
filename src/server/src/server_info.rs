@@ -50,9 +50,8 @@ impl KiwiServerInfoProvider {
     }
 
     pub fn set_raft(&self, app: Arc<RaftApp>) {
-        if let Ok(mut slot) = self.raft.write() {
-            *slot = Some(app);
-        }
+        let mut slot = self.raft.write().unwrap_or_else(|err| err.into_inner());
+        *slot = Some(app);
     }
 }
 
@@ -77,9 +76,18 @@ impl ServerInfoProvider for KiwiServerInfoProvider {
         snapshot.executable = self.executable.clone();
         snapshot.config_file = self.config_file.clone();
         snapshot.cluster_enabled = self.raft_enabled;
-        snapshot.cluster_state = if self.raft_enabled { "ok" } else { "disabled" }.to_string();
+        snapshot.cluster_state = if self.raft_enabled {
+            "unavailable"
+        } else {
+            "disabled"
+        }
+        .to_string();
 
-        let raft = self.raft.read().ok().and_then(|guard| guard.clone());
+        let raft = self
+            .raft
+            .read()
+            .unwrap_or_else(|err| err.into_inner())
+            .clone();
         if let Some(app) = raft {
             let metrics = app.raft.metrics();
             let guard = metrics.borrow();
@@ -88,11 +96,20 @@ impl ServerInfoProvider for KiwiServerInfoProvider {
             snapshot.raft_leader = guard.current_leader;
             snapshot.raft_last_applied = guard.last_applied.map(|log_id| log_id.index);
             snapshot.raft_last_log_index = guard.last_log_index;
-            snapshot.raft_role = if app.is_leader() {
-                Some("leader".to_string())
-            } else {
-                Some("follower".to_string())
-            };
+            match guard.current_leader {
+                Some(leader_id) => {
+                    snapshot.cluster_state = "ok".to_string();
+                    snapshot.raft_role = Some(if leader_id == app.node_id {
+                        "leader".to_string()
+                    } else {
+                        "follower".to_string()
+                    });
+                }
+                None => {
+                    snapshot.cluster_state = "fail".to_string();
+                    snapshot.raft_role = None;
+                }
+            }
         }
 
         snapshot

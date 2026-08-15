@@ -15,9 +15,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Read-only snapshot of real server state used by the INFO command.
-//! note(guozhihao-224) InfoCmd must never fall back to fabricated constants;
-//! fields without a real source report zero or a diagnosable state.
+//! Read-only INFO snapshot. Missing sources are omitted or marked unavailable.
 
 use std::sync::Arc;
 
@@ -43,11 +41,6 @@ pub struct ServerInfoSnapshot {
     pub raft_leader: Option<u64>,
     pub raft_last_applied: Option<u64>,
     pub raft_last_log_index: Option<u64>,
-    pub connected_clients: u64,
-    pub total_connections_received: u64,
-    pub total_commands_processed: u64,
-    pub rdb_bgsave_in_progress: u64,
-    pub rdb_changes_since_last_save: u64,
 }
 
 impl ServerInfoSnapshot {
@@ -73,11 +66,6 @@ impl ServerInfoSnapshot {
             raft_leader: None,
             raft_last_applied: None,
             raft_last_log_index: None,
-            connected_clients: 0,
-            total_connections_received: 0,
-            total_commands_processed: 0,
-            rdb_bgsave_in_progress: 0,
-            rdb_changes_since_last_save: 0,
         }
     }
 }
@@ -86,8 +74,7 @@ pub trait ServerInfoProvider: Send + Sync {
     fn snapshot(&self) -> ServerInfoSnapshot;
 }
 
-/// Provider that reports empty state; used by the network-runtime command
-/// table (which only runs pre-route admission, never INFO do_cmd) and tests.
+/// Empty snapshot for the network-runtime command table and tests.
 #[derive(Clone, Default)]
 pub struct NoopServerInfoProvider;
 
