@@ -335,7 +335,54 @@ impl RocksdbLogStore {
     }
 }
 
+const DURABLE_META_KEY: &[u8] = b"durable_state_machine_meta";
+
 impl RocksdbLogStore {
+    /// Persist the state machine's applied frontier and membership.
+    ///
+    /// Called after each successful apply and after snapshot install.
+    /// The value is stored in the same `state_cf` that holds vote and
+    /// committed. This is a standalone write (not part of a WriteBatch
+    /// with the log store's own append/truncate operations) because the
+    /// state machine apply writes to a separate RocksDB instance.
+    pub fn save_durable_meta(
+        &self,
+        meta: &crate::durable_meta::DurableStateMachineMeta,
+    ) -> Result<(), StorageError<u64>> {
+        let state_cf = self.cf_write(STATE_CF)?;
+        let value = serialize(meta)?;
+        self.db
+            .put_cf(&state_cf, DURABLE_META_KEY, &value)
+            .map_err(io_write_err)?;
+        Ok(())
+    }
+
+    /// Load the persisted state machine metadata.
+    ///
+    /// Returns `Ok(None)` if no metadata has been persisted yet (first
+    /// start or legacy installation). Returns `Err` if the stored bytes
+    /// are corrupt or from an unsupported future version.
+    pub fn load_durable_meta(
+        &self,
+    ) -> Result<Option<crate::durable_meta::DurableStateMachineMeta>, StorageError<u64>> {
+        let state_cf = self.cf_read(STATE_CF)?;
+        let Some(bytes) = self
+            .db
+            .get_cf(&state_cf, DURABLE_META_KEY)
+            .map_err(io_read_err)?
+        else {
+            return Ok(None);
+        };
+        let meta: crate::durable_meta::DurableStateMachineMeta = deserialize(&bytes)?;
+        meta.validate().map_err(|msg| {
+            let io_err = std::io::Error::other(msg);
+            StorageError::IO {
+                source: openraft::StorageIOError::read(&io_err),
+            }
+        })?;
+        Ok(Some(meta))
+    }
+
     /// 从已有的 RocksDB 数据库创建日志存储实例
     pub fn new(db: Arc<DB>) -> Result<Self, StorageError<u64>> {
         for cf_name in [LOGS_CF, META_CF, STATE_CF] {

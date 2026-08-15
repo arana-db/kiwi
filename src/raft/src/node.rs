@@ -218,20 +218,8 @@ pub async fn create_raft_node(
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
 
-    // Per-instance LogIndex collectors / cf_trackers live in the Storage; the state
-    // machine looks them up through storage_swap so it sees the right ones after a
-    // snapshot install hot-swaps Storage.
-    let state_machine = KiwiStateMachine::new(
-        config.node_id,
-        storage_swap.clone(),
-        config.db_path.clone(),
-        snapshot_work_dir,
-        Arc::clone(&pause_controller),
-        append_log_fn,
-    );
-
-    let network = KiwiNetworkFactory::new();
-
+    // Open the log store first so the state machine can persist and load
+    // durable applied metadata through it.
     let legacy_log_store_path = config.data_dir.join("raft_logs");
     if legacy_log_store_path.try_exists()? {
         return Err(anyhow::anyhow!(
@@ -242,6 +230,21 @@ pub async fn create_raft_node(
     let log_store_path = config.data_dir.join("raft_logs_rocksdb");
     std::fs::create_dir_all(&log_store_path)?;
     let log_store = RocksdbLogStore::open(&log_store_path)?;
+
+    // Per-instance LogIndex collectors / cf_trackers live in the Storage; the state
+    // machine looks them up through storage_swap so it sees the right ones after a
+    // snapshot install hot-swaps Storage.
+    let state_machine = KiwiStateMachine::new(
+        config.node_id,
+        storage_swap.clone(),
+        config.db_path.clone(),
+        snapshot_work_dir,
+        Arc::clone(&pause_controller),
+        append_log_fn,
+        log_store.clone(),
+    );
+
+    let network = KiwiNetworkFactory::new();
 
     let raft = Raft::new(
         config.node_id,
