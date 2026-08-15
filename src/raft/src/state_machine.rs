@@ -53,6 +53,8 @@ use storage::{
 
 use conf::raft_type::{Binlog, BinlogResponse, KiwiNode, KiwiTypeConfig};
 
+use crate::durable_meta::DurableStateMachineMeta;
+use crate::log_store_rocksdb::RocksdbLogStore;
 use crate::snapshot_archive::{pack_dir_to_vec, unpack_tar_to_dir, unpacked_checkpoint_root};
 
 fn storage_err_to_raft(e: storage::error::Error) -> StorageError<u64> {
@@ -415,6 +417,8 @@ pub struct KiwiStateMachine {
     snapshot_publication_gate: Arc<tokio::sync::Mutex<()>>,
     /// Shared Raft append-log callback used to re-arm restored Storage after snapshot install.
     append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
+    /// Raft log store for persisting durable state machine metadata.
+    log_store: RocksdbLogStore,
 }
 
 impl KiwiStateMachine {
@@ -430,6 +434,7 @@ impl KiwiStateMachine {
         snapshot_work_dir: PathBuf,
         pause_controller: Arc<dyn PauseController>,
         append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
+        log_store: RocksdbLogStore,
     ) -> Self {
         Self {
             _node_id: node_id,
@@ -443,6 +448,7 @@ impl KiwiStateMachine {
             snapshot_state_gate: Arc::new(tokio::sync::Mutex::new(())),
             snapshot_publication_gate: Arc::new(tokio::sync::Mutex::new(())),
             append_log_fn,
+            log_store,
         }
     }
 
@@ -457,6 +463,16 @@ impl KiwiStateMachine {
         if let Some(append_log_fn) = self.append_log_fn.as_ref().and_then(|holder| holder.get()) {
             storage.set_append_log_fn(append_log_fn.clone());
         }
+    }
+
+    /// Persist the current applied frontier and membership to the Raft log
+    /// store so that the state machine can recover its position after restart
+    /// without relying on snapshot metadata alone.
+    fn persist_durable_meta(&self) -> Result<(), io::Error> {
+        let meta = DurableStateMachineMeta::new(self.last_applied, self.last_membership.clone());
+        self.log_store
+            .save_durable_meta(&meta)
+            .map_err(|e| io::Error::other(format!("Failed to persist durable meta: {}", e)))
     }
 
     /// Apply binlog to storage.
@@ -518,6 +534,12 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             // Reached only after the entry has been durably applied.
             self.last_applied = Some(log_id);
             responses.push(response);
+        }
+
+        // Persist the applied frontier so restart can recover without
+        // relying on snapshot metadata alone.
+        if !responses.is_empty() {
+            self.persist_durable_meta().map_err(io_err_to_raft)?;
         }
 
         Ok(responses)
@@ -718,6 +740,13 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         self.last_applied = meta.last_log_id;
         self.last_membership = meta.last_membership.clone();
 
+        // Persist the applied frontier derived from the installed snapshot
+        // before removing the install marker, so crash recovery sees a
+        // consistent position.
+        self.persist_durable_meta().map_err(|error| {
+            post_marker_error("persisting durable meta after snapshot install", &error)
+        })?;
+
         persist_current_snapshot(&self.snapshot_work_dir, meta, &bytes).map_err(|error| {
             let context = format!(
                 "persisting the installed current snapshot under {}",
@@ -752,18 +781,58 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             .lock_owned()
             .await;
         let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
-        // On first access, lazily load from persisted snapshot to recover last_applied
-        // after restart (otherwise openraft would scan from index 0 and fail if logs were purged).
-        if self.last_applied.is_none()
-            && let Some(snap) = load_current_snapshot(&self.snapshot_work_dir)?
-        {
-            self.last_applied = snap.meta.last_log_id;
-            self.last_membership = snap.meta.last_membership.clone();
-            log::info!(
-                "Recovered last_applied={:?} from persisted snapshot",
-                self.last_applied
-            );
+
+        if self.last_applied.is_none() {
+            let durable = self.log_store.load_durable_meta()?;
+            let snapshot = load_current_snapshot(&self.snapshot_work_dir)?;
+
+            match (durable, snapshot) {
+                (Some(meta), Some(snap)) => {
+                    // Both exist — cross-validate. Durable meta must not be
+                    // behind the snapshot, since the snapshot represents a
+                    // committed checkpoint.
+                    let durable_idx = meta.last_applied.map(|l| l.index).unwrap_or(0);
+                    let snap_idx = snap.meta.last_log_id.map(|l| l.index).unwrap_or(0);
+                    if durable_idx < snap_idx {
+                        log::warn!(
+                            "Durable meta last_applied={} is behind snapshot last_log_id={}; \
+                             using snapshot frontier",
+                            durable_idx,
+                            snap_idx
+                        );
+                        self.last_applied = snap.meta.last_log_id;
+                        self.last_membership = snap.meta.last_membership.clone();
+                    } else {
+                        self.last_applied = meta.last_applied;
+                        self.last_membership = meta.last_membership;
+                    }
+                    log::info!(
+                        "Recovered last_applied={:?} (cross-validated durable meta + snapshot)",
+                        self.last_applied
+                    );
+                }
+                (Some(meta), None) => {
+                    self.last_applied = meta.last_applied;
+                    self.last_membership = meta.last_membership;
+                    log::info!(
+                        "Recovered last_applied={:?} from durable state machine meta",
+                        self.last_applied
+                    );
+                }
+                (None, Some(snap)) => {
+                    self.last_applied = snap.meta.last_log_id;
+                    self.last_membership = snap.meta.last_membership.clone();
+                    log::info!(
+                        "Recovered last_applied={:?} from persisted snapshot (no durable meta)",
+                        self.last_applied
+                    );
+                }
+                (None, None) => {
+                    log::info!("No durable meta or snapshot found; starting from scratch");
+                }
+            }
         }
+
         Ok((self.last_applied, self.last_membership.clone()))
     }
 }
@@ -902,6 +971,8 @@ mod snapshot_gate_tests {
 
     impl StorageAccessPermit for TestStorageAccessPermit {}
 
+    use crate::test_util::test_log_store;
+
     impl PauseController for CountingPauseController {
         fn request_pause(
             &self,
@@ -961,6 +1032,7 @@ mod snapshot_gate_tests {
             .expect("test storage should open");
         let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
         let controller = Arc::new(CountingPauseController::default());
+        let (log_store, _log_store_dir) = test_log_store();
         let mut state_machine = KiwiStateMachine::new(
             1,
             Arc::clone(&storage_swap),
@@ -968,6 +1040,7 @@ mod snapshot_gate_tests {
             snapshot_work_dir.clone(),
             controller,
             None,
+            log_store,
         );
 
         let mut builder = state_machine.get_snapshot_builder().await;
@@ -1024,6 +1097,7 @@ mod snapshot_gate_tests {
             .expect("test storage should open");
         let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
         let controller = Arc::new(CountingPauseController::default());
+        let (log_store, _log_store_dir) = test_log_store();
         let mut state_machine = KiwiStateMachine::new(
             1,
             Arc::clone(&storage_swap),
@@ -1031,6 +1105,7 @@ mod snapshot_gate_tests {
             snapshot_work_dir.clone(),
             controller,
             None,
+            log_store,
         );
 
         let mut builder = state_machine.get_snapshot_builder().await;
@@ -1085,6 +1160,7 @@ mod snapshot_gate_tests {
             .expect("live data should be written");
         let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
         let controller = Arc::new(CountingPauseController::default());
+        let (log_store, _log_store_dir) = test_log_store();
         let mut state_machine = KiwiStateMachine::new(
             1,
             Arc::clone(&storage_swap),
@@ -1092,6 +1168,7 @@ mod snapshot_gate_tests {
             snapshot_work_dir.clone(),
             controller.clone(),
             None,
+            log_store,
         );
 
         let mut builder = state_machine.get_snapshot_builder().await;
@@ -1224,6 +1301,7 @@ mod apply_ordering_tests {
     };
 
     use super::*;
+    use crate::test_util::test_log_store;
 
     struct NoopPermit;
     impl StorageAccessPermit for NoopPermit {}
@@ -1252,6 +1330,7 @@ mod apply_ordering_tests {
         db_path: PathBuf,
         snapshot_work_dir: PathBuf,
         storage_rx: Box<dyn std::any::Any + Send>,
+        _log_store_dir: tempfile::TempDir,
     }
 
     struct ClosedFixture {
@@ -1272,6 +1351,7 @@ mod apply_ordering_tests {
                 .open(options, &db_path)
                 .expect("test storage should open");
             let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+            let (log_store, log_store_dir) = test_log_store();
             let state_machine = KiwiStateMachine::new(
                 1,
                 Arc::clone(&storage_swap),
@@ -1279,6 +1359,7 @@ mod apply_ordering_tests {
                 snapshot_work_dir.clone(),
                 Arc::new(NoopPauseController),
                 None,
+                log_store,
             );
 
             Self {
@@ -1287,6 +1368,7 @@ mod apply_ordering_tests {
                 db_path,
                 snapshot_work_dir,
                 storage_rx: Box::new(storage_rx),
+                _log_store_dir: log_store_dir,
             }
         }
 
@@ -1297,6 +1379,7 @@ mod apply_ordering_tests {
                 db_path,
                 snapshot_work_dir,
                 storage_rx,
+                _log_store_dir,
             } = self;
             drop(state_machine);
             let storage = storage_swap.load_full();
@@ -1509,5 +1592,279 @@ mod apply_ordering_tests {
                 (b"after-failure", None),
             ])
             .await;
+    }
+}
+
+#[cfg(test)]
+mod durable_meta_tests {
+    //! Covers issue #334: DurableStateMachineMeta must persist last_applied
+    //! and membership so that restart recovery does not rely on snapshot
+    //! metadata alone.
+    #![allow(clippy::unwrap_used)]
+
+    use conf::raft_type::{BinlogEntry, OperateType};
+    use openraft::{Entry, LeaderId};
+    use storage::BaseMetaKey;
+    use storage::format_strings_value::StringValue;
+    use storage::slot_indexer::key_to_slot_id;
+    use storage::{ColumnFamilyIndex, safe_cleanup_test_db, unique_test_db_path};
+
+    use super::*;
+    use crate::log_store_rocksdb::RocksdbLogStore;
+
+    struct NoopPauseController;
+    struct NoopPermit;
+    impl StorageAccessPermit for NoopPermit {}
+
+    impl PauseController for NoopPauseController {
+        fn request_pause(
+            &self,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
+            Box::pin(async {})
+        }
+        fn enter(
+            self: std::sync::Arc<Self>,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Box<dyn StorageAccessPermit>> + Send + 'static>,
+        > {
+            Box::pin(async { Box::new(NoopPermit) as Box<dyn StorageAccessPermit> })
+        }
+        fn resume(&self) {}
+    }
+
+    use crate::test_util::test_log_store;
+
+    /// Helper: build a Normal entry with a single Put for the given key/value.
+    fn put_entry(index: u64, term: u64, key: &[u8], value: &[u8]) -> Entry<KiwiTypeConfig> {
+        let slot = key_to_slot_id(key) as u32;
+        let encoded_key = BaseMetaKey::new(key).encode().unwrap();
+        let encoded_value = StringValue::new(value.to_vec()).encode();
+        Entry {
+            log_id: openraft::LogId::new(LeaderId::new(1, term), index),
+            payload: openraft::EntryPayload::Normal(conf::raft_type::Binlog {
+                db_id: 0,
+                slot_idx: slot,
+                entries: vec![BinlogEntry {
+                    cf_idx: ColumnFamilyIndex::MetaCF as u32,
+                    op_type: OperateType::Put,
+                    key: encoded_key.into(),
+                    value: Some(encoded_value.into()),
+                }],
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn durable_meta_persists_last_applied_across_restart() {
+        let db_path = unique_test_db_path();
+        let snap_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snap_dir).unwrap();
+
+        let log_store_dir;
+        let db_path_clone = db_path.clone();
+
+        // Phase 1: apply entries and verify durable meta is written.
+        {
+            let mut storage = Storage::new(1, 0);
+            let storage_rx = storage
+                .open(Arc::new(StorageOptions::default()), &db_path)
+                .unwrap();
+            let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+            let (log_store, dir) = test_log_store();
+            log_store_dir = dir;
+
+            let mut sm = KiwiStateMachine::new(
+                1,
+                Arc::clone(&storage_swap),
+                db_path.clone(),
+                snap_dir.clone(),
+                Arc::new(NoopPauseController),
+                None,
+                log_store.clone(),
+            );
+
+            // Apply 3 entries.
+            let entries = vec![
+                put_entry(1, 1, b"k1", b"v1"),
+                put_entry(2, 1, b"k2", b"v2"),
+                put_entry(3, 1, b"k3", b"v3"),
+            ];
+            let responses = sm.apply(entries).await.unwrap();
+            assert_eq!(responses.len(), 3);
+
+            // Verify durable meta was persisted.
+            let meta = log_store.load_durable_meta().unwrap();
+            assert!(meta.is_some(), "durable meta should exist after apply");
+            let meta = meta.unwrap();
+            assert_eq!(meta.last_applied.map(|l| l.index), Some(3));
+
+            drop(sm);
+            let storage = storage_swap.load_full();
+            drop(storage_swap);
+            let mut storage = Arc::try_unwrap(storage)
+                .ok()
+                .expect("storage should have no remaining references");
+            storage.shutdown().await;
+            storage.close();
+            drop(storage_rx);
+        }
+
+        // Phase 2: reopen from the same log store — durable meta should
+        // restore last_applied without needing a snapshot.
+        {
+            let log_store = RocksdbLogStore::open(log_store_dir.path()).unwrap();
+            let mut storage = Storage::new(1, 0);
+            let _rx = storage
+                .open(Arc::new(StorageOptions::default()), &db_path_clone)
+                .unwrap();
+            let storage_swap = Arc::new(ArcSwap::from_pointee(storage));
+
+            let mut sm = KiwiStateMachine::new(
+                1,
+                Arc::clone(&storage_swap),
+                db_path_clone.clone(),
+                snap_dir.clone(),
+                Arc::new(NoopPauseController),
+                None,
+                log_store.clone(),
+            );
+
+            // applied_state should recover from durable meta.
+            let (last_applied, _membership) = sm.applied_state().await.unwrap();
+            assert_eq!(
+                last_applied.map(|l| l.index),
+                Some(3),
+                "restarted state machine should recover last_applied=3 from durable meta"
+            );
+
+            drop(sm);
+            drop(storage_swap);
+        }
+
+        safe_cleanup_test_db(&db_path_clone);
+    }
+
+    #[tokio::test]
+    async fn durable_meta_survives_snapshot_install() {
+        let src_db = unique_test_db_path();
+        let dst_db = unique_test_db_path();
+        let snap_dir = unique_test_db_path();
+        std::fs::create_dir_all(&snap_dir).unwrap();
+
+        // Build a snapshot from source.
+        let (snap_meta, snap_bytes) = {
+            let mut src = Storage::new(1, 0);
+            let _rx = src
+                .open(Arc::new(StorageOptions::default()), &src_db)
+                .unwrap();
+            src.set(b"src-key", b"src-val").unwrap();
+            let swap = Arc::new(ArcSwap::from_pointee(src));
+            let (ls, _d) = test_log_store();
+            let mut sm = KiwiStateMachine::new(
+                1,
+                Arc::clone(&swap),
+                src_db.clone(),
+                snap_dir.clone(),
+                Arc::new(NoopPauseController),
+                None,
+                ls,
+            );
+
+            // Apply one entry so last_applied = 1.
+            sm.apply(vec![put_entry(1, 1, b"src-key", b"src-val")])
+                .await
+                .unwrap();
+
+            let mut builder = sm.get_snapshot_builder().await;
+            let snap = builder.build_snapshot().await.unwrap();
+            let meta = snap.meta.clone();
+            let bytes = snap.snapshot.into_inner();
+            drop(builder);
+            drop(sm);
+            drop(swap);
+            (meta, bytes)
+        };
+
+        // Install snapshot into target, then verify restart recovery.
+        // Keep the TempDir alive through both phases.
+        let (ls2, ls2_dir) = test_log_store();
+        let ls2_path = ls2_dir.path().to_path_buf();
+        let dst_swap = Arc::new(ArcSwap::from_pointee(Storage::new(1, 0)));
+        let mut sm2 = KiwiStateMachine::new(
+            2,
+            Arc::clone(&dst_swap),
+            dst_db.clone(),
+            snap_dir.clone(),
+            Arc::new(NoopPauseController),
+            None,
+            ls2.clone(),
+        );
+
+        let cursor = Box::new(std::io::Cursor::new(snap_bytes));
+        sm2.install_snapshot(&snap_meta, cursor).await.unwrap();
+
+        // After install, durable meta should reflect the snapshot's last_log_id.
+        let meta = ls2.load_durable_meta().unwrap();
+        assert!(
+            meta.is_some(),
+            "durable meta should exist after snapshot install"
+        );
+        let meta = meta.unwrap();
+        assert_eq!(
+            meta.last_applied, snap_meta.last_log_id,
+            "durable meta last_applied should match snapshot last_log_id"
+        );
+
+        // Close the state machine, storage, and log store to release all
+        // RocksDB locks before reopening.
+        drop(sm2);
+        let dst_storage = dst_swap.load_full();
+        drop(dst_swap);
+        let mut dst_storage = Arc::try_unwrap(dst_storage)
+            .ok()
+            .expect("dst storage should have no remaining references");
+        dst_storage.shutdown().await;
+        dst_storage.close();
+        drop(ls2);
+        drop(ls2_dir);
+
+        // Reopen from the same log store directory — applied_state should
+        // recover the installed snapshot's frontier from durable meta.
+        let ls3 = RocksdbLogStore::open(&ls2_path).unwrap();
+        let mut storage = Storage::new(1, 0);
+        let _rx = storage
+            .open(Arc::new(StorageOptions::default()), &dst_db)
+            .unwrap();
+        let swap = Arc::new(ArcSwap::from_pointee(storage));
+        let mut sm3 = KiwiStateMachine::new(
+            2,
+            Arc::clone(&swap),
+            dst_db.clone(),
+            snap_dir.clone(),
+            Arc::new(NoopPauseController),
+            None,
+            ls3,
+        );
+
+        let (last_applied, _membership) = sm3.applied_state().await.unwrap();
+        assert_eq!(
+            last_applied, snap_meta.last_log_id,
+            "restarted state machine should recover snapshot frontier from durable meta"
+        );
+
+        drop(sm3);
+        drop(swap);
+        safe_cleanup_test_db(&dst_db);
+        safe_cleanup_test_db(&src_db);
+    }
+
+    #[tokio::test]
+    async fn durable_meta_absent_on_fresh_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let ls = RocksdbLogStore::open(dir.path()).unwrap();
+        assert!(
+            ls.load_durable_meta().unwrap().is_none(),
+            "fresh log store should have no durable meta"
+        );
     }
 }

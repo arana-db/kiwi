@@ -82,6 +82,13 @@ fn noop_pause_controller() -> Arc<dyn PauseController> {
     Arc::new(NoopPauseController)
 }
 
+fn test_log_store() -> (raft::log_store_rocksdb::RocksdbLogStore, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("temp dir for log store");
+    let store = raft::log_store_rocksdb::RocksdbLogStore::open(dir.path())
+        .expect("test log store should open");
+    (store, dir)
+}
+
 #[tokio::test]
 async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
     let src_db_path = unique_test_db_path();
@@ -135,6 +142,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
 
         // Create state machine and build snapshot
         let storage_swap = Arc::new(ArcSwap::from(Arc::clone(&storage)));
+        let (log_store, _log_store_dir) = test_log_store();
         let mut sm = KiwiStateMachine::new(
             1,
             storage_swap,
@@ -142,6 +150,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
             snap_root.clone(),
             noop_pause_controller(),
             None,
+            log_store,
         );
 
         let mut builder = sm.get_snapshot_builder().await;
@@ -175,6 +184,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage));
 
+    let (log_store2, _log_store_dir2) = test_log_store();
     let mut sm2 = KiwiStateMachine::new(
         2,
         target_swap.clone(),
@@ -182,6 +192,7 @@ async fn test_snapshot_with_logindex_state() -> anyhow::Result<()> {
         snap_root,
         noop_pause_controller(),
         None,
+        log_store2,
     );
 
     sm2.install_snapshot(&meta, Box::new(std::io::Cursor::new(bytes)))

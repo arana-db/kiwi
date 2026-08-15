@@ -162,6 +162,37 @@ fn noop_pause_controller() -> Arc<dyn PauseController> {
     Arc::new(NoopPauseController)
 }
 
+fn test_log_store() -> (raft::log_store_rocksdb::RocksdbLogStore, tempfile::TempDir) {
+    let dir = tempfile::tempdir().expect("temp dir for log store");
+    let store = raft::log_store_rocksdb::RocksdbLogStore::open(dir.path())
+        .expect("test log store should open");
+    (store, dir)
+}
+
+/// Create a `KiwiStateMachine` with a temporary log store for testing.
+/// Returns `(state_machine, log_store_dir)` — the caller must keep
+/// `log_store_dir` alive for the duration of the test.
+fn test_state_machine(
+    node_id: u64,
+    storage_swap: Arc<ArcSwap<Storage>>,
+    db_path: std::path::PathBuf,
+    snapshot_work_dir: std::path::PathBuf,
+    pause_controller: Arc<dyn PauseController>,
+    append_log_fn: Option<Arc<OnceLock<storage::AppendLogFn>>>,
+) -> (KiwiStateMachine, tempfile::TempDir) {
+    let (log_store, log_store_dir) = test_log_store();
+    let sm = KiwiStateMachine::new(
+        node_id,
+        storage_swap,
+        db_path,
+        snapshot_work_dir,
+        pause_controller,
+        append_log_fn,
+        log_store,
+    );
+    (sm, log_store_dir)
+}
+
 #[tokio::test]
 async fn active_storage_access_permit_blocks_pause() {
     let controller = Arc::new(TestPauseController::default());
@@ -236,7 +267,7 @@ async fn snapshot_builder_blocks_install_operation() {
         .expect("test should write snapshot data");
     let target_swap = Arc::new(ArcSwap::from_pointee(storage));
     let controller = Arc::new(TestPauseController::default());
-    let mut state_machine = KiwiStateMachine::new(
+    let (mut state_machine, _log_store_dir1) = test_state_machine(
         1,
         Arc::clone(&target_swap),
         db_path.clone(),
@@ -325,7 +356,7 @@ async fn aborted_install_before_marker_resumes_and_preserves_live_storage() -> a
 
     let target_swap = Arc::new(ArcSwap::from_pointee(storage));
     let controller = Arc::new(TestPauseController::default());
-    let mut state_machine = KiwiStateMachine::new(
+    let (mut state_machine, _log_store_dir2) = test_state_machine(
         1,
         Arc::clone(&target_swap),
         db_path.clone(),
@@ -421,7 +452,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
 
     let storage_swap = Arc::new(ArcSwap::from(storage.clone()));
 
-    let mut sm = KiwiStateMachine::new(
+    let (mut sm, _log_store_dir3) = test_state_machine(
         1,
         storage_swap.clone(),
         src_db_path.clone(),
@@ -455,7 +486,7 @@ async fn cursor_snapshot_roundtrip() -> anyhow::Result<()> {
     // the normal open flow. The storage is opened after install_snapshot completes.
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
-    let mut sm2 = KiwiStateMachine::new(
+    let (mut sm2, _log_store_dir4) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -510,7 +541,7 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
 
     // Build snapshot from source
     let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
-    let mut sm_source = KiwiStateMachine::new(
+    let (mut sm_source, _log_store_dir5) = test_state_machine(
         1,
         source_swap.clone(),
         src_db_path.clone(),
@@ -541,7 +572,7 @@ async fn install_snapshot_with_existing_data() -> anyhow::Result<()> {
     // Install the snapshot - this should REPLACE the old data.
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
-    let mut sm_target = KiwiStateMachine::new(
+    let (mut sm_target, _log_store_dir6) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -592,7 +623,7 @@ async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
     source_storage.set(b"snap_key", b"snap_value")?;
 
     let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
-    let mut source_sm = KiwiStateMachine::new(
+    let (mut source_sm, _log_store_dir7) = test_state_machine(
         1,
         source_swap.clone(),
         src_db_path.clone(),
@@ -622,7 +653,7 @@ async fn install_snapshot_rearms_append_log_hook() -> anyhow::Result<()> {
 
     let target_storage = Arc::new(Storage::new(1, 0));
     let target_swap = Arc::new(ArcSwap::from(target_storage.clone()));
-    let mut target_sm = KiwiStateMachine::new(
+    let (mut target_sm, _log_store_dir8) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -675,7 +706,7 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
     source_storage.set(b"snapshot_key", b"snapshot_value")?;
 
     let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
-    let mut source_sm = KiwiStateMachine::new(
+    let (mut source_sm, _log_store_dir9) = test_state_machine(
         1,
         source_swap.clone(),
         src_db_path.clone(),
@@ -706,7 +737,7 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
 
     let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let pause_controller = Arc::new(TestPauseController::default());
-    let mut target_sm = KiwiStateMachine::new(
+    let (mut target_sm, _log_store_dir10) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -768,7 +799,7 @@ async fn install_snapshot_replaces_open_target_storage() -> anyhow::Result<()> {
     assert!(reopened.get(b"stale_key").is_err());
 
     let reopened_swap = Arc::new(ArcSwap::from(reopened.clone()));
-    let mut reopened_sm = KiwiStateMachine::new(
+    let (mut reopened_sm, _log_store_dir11) = test_state_machine(
         2,
         reopened_swap.clone(),
         restore_db_path.clone(),
@@ -815,7 +846,7 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
     source_storage.set(b"snapshot_key", b"snapshot_value")?;
 
     let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
-    let mut source_sm = KiwiStateMachine::new(
+    let (mut source_sm, _log_store_dir12) = test_state_machine(
         1,
         source_swap.clone(),
         src_db_path.clone(),
@@ -845,7 +876,7 @@ async fn install_snapshot_stays_paused_after_destructive_failure() -> anyhow::Re
 
     let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let pause_controller = Arc::new(TestPauseController::default());
-    let mut target_sm = KiwiStateMachine::new(
+    let (mut target_sm, _log_store_dir13) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -964,7 +995,7 @@ async fn install_snapshot_stays_paused_when_restore_parent_sync_fails_after_rena
     source_storage.set(b"snapshot_key", b"snapshot_value")?;
 
     let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
-    let mut source_sm = KiwiStateMachine::new(
+    let (mut source_sm, _log_store_dir14) = test_state_machine(
         1,
         source_swap.clone(),
         src_db_path.clone(),
@@ -990,7 +1021,7 @@ async fn install_snapshot_stays_paused_when_restore_parent_sync_fails_after_rena
 
     let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let pause_controller = Arc::new(TestPauseController::default());
-    let mut target_sm = KiwiStateMachine::new(
+    let (mut target_sm, _log_store_dir15) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -1100,7 +1131,7 @@ async fn install_snapshot_resumes_after_pre_restore_failure() -> anyhow::Result<
 
     let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let pause_controller = Arc::new(TestPauseController::default());
-    let mut target_sm = KiwiStateMachine::new(
+    let (mut target_sm, _log_store_dir16) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -1163,7 +1194,7 @@ async fn snapshot_incarnation_mismatch_does_not_pause_or_replace_live_storage() 
     };
     source_storage.set(b"snapshot_key", b"snapshot_value")?;
     let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
-    let mut source_sm = KiwiStateMachine::new(
+    let (mut source_sm, _log_store_dir17) = test_state_machine(
         1,
         source_swap.clone(),
         src_db_path.clone(),
@@ -1195,7 +1226,7 @@ async fn snapshot_incarnation_mismatch_does_not_pause_or_replace_live_storage() 
     target_storage.set(b"stale_key", b"stale_value")?;
     let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let pause_controller = Arc::new(TestPauseController::default());
-    let mut target_sm = KiwiStateMachine::new(
+    let (mut target_sm, _log_store_dir18) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),
@@ -1252,7 +1283,7 @@ async fn missing_checkpoint_instance_does_not_pause_or_replace_live_storage() ->
     };
     source_storage.set(b"snapshot_key", b"snapshot_value")?;
     let source_swap = Arc::new(ArcSwap::from(source_storage.clone()));
-    let mut source_sm = KiwiStateMachine::new(
+    let (mut source_sm, _log_store_dir19) = test_state_machine(
         1,
         source_swap.clone(),
         src_db_path.clone(),
@@ -1275,7 +1306,7 @@ async fn missing_checkpoint_instance_does_not_pause_or_replace_live_storage() ->
     target_storage.set(b"stale_key", b"stale_value")?;
     let target_swap = Arc::new(ArcSwap::from_pointee(target_storage));
     let pause_controller = Arc::new(TestPauseController::default());
-    let mut target_sm = KiwiStateMachine::new(
+    let (mut target_sm, _log_store_dir20) = test_state_machine(
         2,
         target_swap.clone(),
         restore_db_path.clone(),

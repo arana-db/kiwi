@@ -218,6 +218,20 @@ pub async fn create_raft_node(
     let snapshot_work_dir = config.data_dir.join("snapshots");
     fs::create_dir_all(&snapshot_work_dir)?;
 
+    // Open the log store first so the state machine can persist and load
+    // durable applied metadata through it.
+    let legacy_log_store_path = config.data_dir.join("raft_logs");
+    if legacy_log_store_path.try_exists()? {
+        return Err(anyhow::anyhow!(
+            "cannot safely migrate legacy in-memory Raft log state in place at {}; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader",
+            legacy_log_store_path.display()
+        ));
+    }
+
+    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
+    std::fs::create_dir_all(&log_store_path)?;
+    let log_store = RocksdbLogStore::open(&log_store_path)?;
+
     // Per-instance LogIndex collectors / cf_trackers live in the Storage; the state
     // machine looks them up through storage_swap so it sees the right ones after a
     // snapshot install hot-swaps Storage.
@@ -228,20 +242,10 @@ pub async fn create_raft_node(
         snapshot_work_dir,
         Arc::clone(&pause_controller),
         append_log_fn,
+        log_store.clone(),
     );
 
     let network = KiwiNetworkFactory::new();
-
-    let legacy_log_store_path = config.data_dir.join("raft_logs");
-    if legacy_log_store_path.try_exists()? {
-        return Err(anyhow::anyhow!(
-            "cannot safely migrate legacy in-memory Raft log state in place; use a new node ID and clean data-dir/raft-data-dir to rejoin from a healthy leader"
-        ));
-    }
-
-    let log_store_path = config.data_dir.join("raft_logs_rocksdb");
-    std::fs::create_dir_all(&log_store_path)?;
-    let log_store = RocksdbLogStore::open(&log_store_path)?;
 
     let raft = Raft::new(
         config.node_id,

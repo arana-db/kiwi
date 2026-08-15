@@ -22,6 +22,7 @@
 pub mod capabilities;
 pub mod conversion;
 pub mod db_access; // Shim for backward compatibility with tests
+pub mod durable_meta;
 pub mod grpc;
 pub mod leader_gate;
 pub mod log_store_rocksdb;
@@ -67,6 +68,21 @@ const _: () = assert!(
     CF_NAMES.len() == storage::ColumnFamilyIndex::COUNT,
     "CF_NAMES length must match storage::ColumnFamilyIndex::COUNT"
 );
+
+/// Shared test utilities for the raft crate.
+#[cfg(test)]
+pub mod test_util {
+    use crate::log_store_rocksdb::RocksdbLogStore;
+
+    /// Create a `RocksdbLogStore` backed by a temporary directory.
+    /// Returns `(store, dir)` — the caller must keep `dir` alive for the
+    /// duration of the test.
+    pub fn test_log_store() -> (RocksdbLogStore, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("temp dir for log store");
+        let store = RocksdbLogStore::open(dir.path()).expect("test log store should open");
+        (store, dir)
+    }
+}
 
 #[cfg(test)]
 mod tests {
