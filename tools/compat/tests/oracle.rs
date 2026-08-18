@@ -2293,6 +2293,122 @@ if accepted:
 
 #[test]
 #[cfg(target_os = "linux")]
+fn oracle_verifier_runtime_log_includes_shutdown_output_after_redis_reap() {
+    let test_dir = TestDir::new("verifier-readable-redis-log");
+    let body = format!(
+        r##"import os
+import pathlib
+import subprocess
+
+root = pathlib.Path({root:?})
+runtime_path = root / "runtime"
+logs_path = root / "logs"
+runtime_path.mkdir()
+logs_path.mkdir()
+source = root / "fake-redis.c"
+binary_path = root / "fake-redis"
+source.write_text(r'''
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+static void handle_term(int signal_number) {{
+    (void)signal_number;
+    static const char message[] = "fake redis shutdown log\n";
+    (void)write(STDERR_FILENO, message, sizeof(message) - 1);
+    _exit(0);
+}}
+
+int main(int argc, char **argv) {{
+    int port = 0;
+    for (int index = 1; index + 1 < argc; ++index) {{
+        if (strcmp(argv[index], "--port") == 0) {{
+            port = atoi(argv[index + 1]);
+        }}
+    }}
+    if (port <= 0) {{
+        return 2;
+    }}
+    struct sigaction action = {{0}};
+    action.sa_handler = handle_term;
+    sigemptyset(&action.sa_mask);
+    if (sigaction(SIGTERM, &action, NULL) != 0) {{
+        return 5;
+    }}
+    int listener = socket(AF_INET, SOCK_STREAM, 0);
+    int reuse = 1;
+    setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    struct sockaddr_in address = {{0}};
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    address.sin_port = htons((unsigned short)port);
+    if (bind(listener, (struct sockaddr *)&address, sizeof(address)) != 0 || listen(listener, 8) != 0) {{
+        return 3;
+    }}
+    dprintf(2, "fake redis runtime log\n");
+    for (;;) {{
+        int connection = accept(listener, NULL, NULL);
+        if (connection < 0) {{
+            return 4;
+        }}
+        char request[4096];
+        (void)read(connection, request, sizeof(request));
+        char payload[256];
+        int payload_size = snprintf(
+            payload,
+            sizeof(payload),
+            "# Server\r\nredis_version:8.8.1\r\nprocess_id:%ld\r\n",
+            (long)getpid()
+        );
+        dprintf(connection, "$%d\r\n", payload_size);
+        (void)write(connection, payload, (size_t)payload_size);
+        (void)write(connection, "\r\n", 2);
+        close(connection);
+    }}
+}}
+''', encoding="ascii")
+compile_result = subprocess.run(
+    ["/usr/bin/cc", "-O2", "-o", str(binary_path), str(source)],
+    check=False,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+)
+assert compile_result.returncode == 0, compile_result.stderr
+
+runtime = controller.HeldDirectory.open(runtime_path)
+logs = controller.HeldDirectory.open(logs_path)
+held = controller.HeldExecutable.open("fake-redis", binary_path)
+process = None
+log_fd = -1
+try:
+    process, _port, _document, log_fd = controller._start_redis_runtime(
+        held, runtime, logs
+    )
+    try:
+        payload = controller._cleanup_redis_runtime(process, log_fd)
+    finally:
+        process = None
+        log_fd = -1
+    assert payload == b"fake redis runtime log\nfake redis shutdown log\n"
+finally:
+    if process is not None:
+        controller._cleanup_redis_runtime(process, log_fd)
+    held.close()
+    logs.close()
+    runtime.close()
+"##,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_verifier_redis_log_close_failure_reaps_the_spawned_process() {
     let test_dir = TestDir::new("verifier-redis-log-close");
     let body = format!(
@@ -2323,7 +2439,7 @@ logs = controller.HeldDirectory.open(logs_path)
 held = controller.HeldExecutable.open("log-close-sleeper", binary_path)
 log_fd = os.open(
     "redis.log",
-    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+    os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
     0o600,
     dir_fd=logs.fd,
 )
@@ -4687,6 +4803,9 @@ fn frozen_callback_controller_contract_is_wired() {
     let collect = verifier
         .find("differential_evidence_document = _collect_differential_evidence(")
         .expect("controller must collect callback evidence");
+    let redis_cleanup = verifier
+        .find("cleanup(\"Redis runtime and log cleanup\", stop_redis)")
+        .expect("controller must stop Redis and capture its final log");
     let after_collect = &verifier[collect..];
     let cleanup_frozen_revalidation = after_collect
         .find("_revalidate_callback_input(")
@@ -4707,6 +4826,8 @@ fn frozen_callback_controller_contract_is_wired() {
         .find("publish_evidence_then_provenance(")
         .expect("controller must publish evidence transactionally");
     assert!(materialize < callback);
+    assert!(callback < redis_cleanup);
+    assert!(redis_cleanup < collect);
     assert!(callback < evidence_publish);
     assert!(collect < evidence_publish);
     assert!(cleanup_frozen_revalidation < temp_removal);
@@ -5386,9 +5507,7 @@ for index, relative in enumerate((".git", ".git/config", "nested/artifact")):
     artifact.write_text("unexpected", encoding="utf-8")
     with controller.HeldDirectory.open(work) as held_work:
         try:
-            controller._collect_differential_evidence(
-                held_work, -1, None, {}, {}, []
-            )
+            controller._collect_differential_evidence(held_work, b"", None, {}, {}, [])
         except controller.OracleError as error:
             if relative not in str(error):
                 raise AssertionError(

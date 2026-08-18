@@ -2137,7 +2137,7 @@ def _parse_json_lines(payload: bytes, label: str) -> list[dict[str, object]]:
 
 def _collect_differential_evidence(
     work_root: HeldDirectory,
-    redis_log_fd: int,
+    redis_log: bytes,
     callback_input: CallbackInputSnapshot,
     callback_document: Mapping[str, object],
     runtime_document: Mapping[str, object],
@@ -2163,7 +2163,6 @@ def _collect_differential_evidence(
             raise OracleError(f"callback evidence is unexpectedly empty: {name}")
         payloads[name] = payload
         total += len(payload)
-    redis_log = _read_bounded_fd(redis_log_fd, 8 * 1024 * 1024, "Redis runtime log")
     total += len(redis_log)
     if total > MAX_DIFFERENTIAL_EVIDENCE_BYTES:
         raise OracleError("callback evidence inputs exceed the aggregate bound")
@@ -4991,15 +4990,25 @@ def _start_redis_runtime(
     runtime_root: HeldDirectory,
     logs_root: HeldDirectory,
 ) -> tuple[subprocess.Popen[bytes], int, dict[str, object], int]:
-    log_fd = os.open(
+    log_writer_fd = os.open(
         "redis.log",
         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
         0o600,
         dir_fd=logs_root.fd,
     )
+    log_reader_fd = -1
     process: subprocess.Popen[bytes] | None = None
     port = 0
     try:
+        log_reader_fd = logs_root.open_regular("redis.log")
+        writer_identity = os.fstat(log_writer_fd)
+        reader_identity = os.fstat(log_reader_fd)
+        if (
+            not stat.S_ISREG(writer_identity.st_mode)
+            or writer_identity.st_nlink != 1
+            or not _same_identity(writer_identity, reader_identity)
+        ):
+            raise OracleError("Redis runtime log reader does not match its held writer")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as reservation:
             reservation.bind(("127.0.0.1", 0))
             port = int(reservation.getsockname()[1])
@@ -5027,8 +5036,8 @@ def _start_redis_runtime(
             ],
             executable=f"/proc/self/fd/{binary.fd}",
             stdin=subprocess.DEVNULL,
-            stdout=log_fd,
-            stderr=log_fd,
+            stdout=log_writer_fd,
+            stderr=log_writer_fd,
             env={
                 "PATH": "/usr/bin:/bin",
                 "HOME": f"/proc/self/fd/{runtime_root.fd}",
@@ -5042,8 +5051,26 @@ def _start_redis_runtime(
             pass_fds=(binary.fd, runtime_root.fd),
             start_new_session=True,
         )
-    except BaseException:
-        os.close(log_fd)
+        os.close(log_writer_fd)
+        log_writer_fd = -1
+    except BaseException as business_error:
+        cleanup_errors: list[BaseException] = []
+        actions: list[Callable[[], None]] = []
+        if process is not None:
+            actions.append(lambda: _stop_process_group(process, "failed Redis spawn"))
+        if log_writer_fd >= 0:
+            actions.append(lambda: os.close(log_writer_fd))
+        if log_reader_fd >= 0:
+            actions.append(lambda: os.close(log_reader_fd))
+        for action in actions:
+            try:
+                action()
+            except BaseException as error:
+                cleanup_errors.append(error)
+        if cleanup_errors:
+            raise OracleError(
+                f"{business_error}; Redis spawn cleanup failed: {cleanup_errors}"
+            ) from business_error
         raise
     assert process is not None
     try:
@@ -5083,12 +5110,12 @@ def _start_redis_runtime(
             "held_fd": True,
             "pid": process.pid,
             "info_redis_versions": info_versions,
-        }, log_fd
+        }, log_reader_fd
     except BaseException as business_error:
         cleanup_errors: list[BaseException] = []
         for action in (
             lambda: _stop_process_group(process, "failed Redis startup"),
-            lambda: os.close(log_fd),
+            lambda: os.close(log_reader_fd),
         ):
             try:
                 action()
@@ -5116,21 +5143,29 @@ def _stop_process_group(process: subprocess.Popen[bytes], label: str) -> None:
         raise OracleError(f"{label} process was not reaped")
 
 
-def _cleanup_redis_runtime(process: subprocess.Popen[bytes], log_fd: int) -> None:
+def _cleanup_redis_runtime(process: subprocess.Popen[bytes], log_fd: int) -> bytes:
     errors: list[tuple[str, BaseException]] = []
-    for label, action in (
-        ("process", lambda: _stop_process_group(process, "Redis runtime")),
-        ("log fd", lambda: os.close(log_fd)),
-    ):
+    redis_log: bytes | None = None
+    try:
+        _stop_process_group(process, "Redis runtime")
+    except BaseException as error:
+        errors.append(("process", error))
+    if not errors:
         try:
-            action()
+            redis_log = _read_bounded_fd(log_fd, 8 * 1024 * 1024, "Redis runtime log")
         except BaseException as error:
-            errors.append((label, error))
+            errors.append(("log read", error))
+    try:
+        os.close(log_fd)
+    except BaseException as error:
+        errors.append(("log fd", error))
     if errors:
         details = "; ".join(
             f"{label}: {type(error).__name__}: {error}" for label, error in errors
         )
         raise OracleError(f"Redis runtime cleanup failed: {details}")
+    assert redis_log is not None
+    return redis_log
 
 
 def _write_runtime_evidence(
@@ -5372,6 +5407,7 @@ def verify_oracle(
     callback_input_snapshot: CallbackInputSnapshot | None = None
     runtime_evidence_fd = -1
     redis_log_fd = -1
+    redis_log: bytes | None = None
     redis_process: subprocess.Popen[bytes] | None = None
     primary_document: dict[str, object] | None = None
     rebuild_document: dict[str, object] | None = None
@@ -5570,27 +5606,15 @@ def verify_oracle(
         _revalidate_callback_input(
             callback_input_snapshot, callback_repository_root, git, env
         )
-        callback_work_root = callback_root.open_directory("work")
-        try:
-            differential_evidence_document = _collect_differential_evidence(
-                callback_work_root,
-                redis_log_fd,
-                callback_input_snapshot,
-                callback_document,
-                runtime_document,
-                tool_evidence,
-            )
-        finally:
-            callback_work_root.close()
     except BaseException as error:
         business_error = error
 
     if redis_process is not None:
         def stop_redis() -> None:
-            nonlocal redis_log_fd
+            nonlocal redis_log_fd, redis_log
             assert redis_process is not None
             try:
-                _cleanup_redis_runtime(redis_process, redis_log_fd)
+                redis_log = _cleanup_redis_runtime(redis_process, redis_log_fd)
             finally:
                 redis_log_fd = -1
             cleanup_state["redis_process_reaped"] = True
@@ -5600,6 +5624,31 @@ def verify_oracle(
     elif redis_log_fd >= 0:
         cleanup("Redis log close", lambda: os.close(redis_log_fd))
         redis_log_fd = -1
+    if business_error is None and not cleanup_errors:
+        def collect_differential_evidence() -> None:
+            nonlocal differential_evidence_document
+            assert callback_root is not None
+            assert callback_input_snapshot is not None
+            assert callback_document is not None
+            assert runtime_document is not None
+            assert redis_log is not None
+            callback_work_root = callback_root.open_directory("work")
+            try:
+                differential_evidence_document = _collect_differential_evidence(
+                    callback_work_root,
+                    redis_log,
+                    callback_input_snapshot,
+                    callback_document,
+                    runtime_document,
+                    tool_evidence,
+                )
+            finally:
+                callback_work_root.close()
+
+        cleanup(
+            "post-Redis differential evidence collection",
+            collect_differential_evidence,
+        )
     if runtime_evidence_fd >= 0:
         cleanup("runtime evidence close", lambda: os.close(runtime_evidence_fd))
         runtime_evidence_fd = -1
