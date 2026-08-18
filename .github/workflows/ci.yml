@@ -245,7 +245,7 @@ jobs:
       - name: Run Unit Test with retry
         uses: nick-fields/retry@v4
         with:
-          timeout_minutes: 30
+          timeout_minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
           max_attempts: 2
           command: bash -o pipefail -c "make test 2>&1 | tee cargo-test.log"
 

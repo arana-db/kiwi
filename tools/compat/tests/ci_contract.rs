@@ -282,6 +282,7 @@ struct StepInputs {
     name: Option<String>,
     path: Option<String>,
     r#ref: Option<String>,
+    timeout_minutes: Option<yaml_serde::Value>,
     #[serde(rename = "retention-days")]
     retention_days: Option<u64>,
     #[serde(rename = "if-no-files-found")]
@@ -627,6 +628,15 @@ fn validate_build_and_test_oracle_namespace_preflight(workflow: &Workflow) -> Re
     let test = find_only_step(job, "workspace test runner", |step| {
         step.uses.as_deref() == Some("nick-fields/retry@v4")
     })?;
+    if job.steps[test].with.timeout_minutes
+        != Some(yaml_serde::Value::String(
+            "${{ matrix.os == 'windows-latest' && 45 || 30 }}".to_string(),
+        ))
+    {
+        return Err(format!(
+            "{BUILD_AND_TEST_JOB} workspace tests must give only Windows the extended timeout"
+        ));
+    }
     if namespace_preflight >= test {
         return Err(format!(
             "{BUILD_AND_TEST_JOB} Oracle namespace preflight must run before workspace tests"
@@ -1601,7 +1611,30 @@ fn build_and_test_requires_ubuntu_namespace_preflight_before_workspace_tests() {
     let workflow: Workflow =
         yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
     validate_build_and_test_oracle_namespace_preflight(&workflow)
-        .expect("Ubuntu workspace tests must prepare the Oracle namespace sandbox");
+        .expect("workspace tests must preserve the namespace and platform timeout contracts");
+
+    for (name, timeout_minutes) in [
+        ("missing workspace timeout", None),
+        (
+            "uniformly extended workspace timeout",
+            Some(yaml_serde::Value::String("45".to_string())),
+        ),
+    ] {
+        let mut mutant = workflow.clone();
+        let retry = mutant
+            .jobs
+            .get_mut(BUILD_AND_TEST_JOB)
+            .expect("build-and-test job must exist")
+            .steps
+            .iter_mut()
+            .find(|step| step.uses.as_deref() == Some("nick-fields/retry@v4"))
+            .expect("workspace retry step must exist");
+        retry.with.timeout_minutes = timeout_minutes;
+        assert!(
+            validate_build_and_test_oracle_namespace_preflight(&mutant).is_err(),
+            "build-and-test accepted {name}"
+        );
+    }
 }
 
 #[test]
