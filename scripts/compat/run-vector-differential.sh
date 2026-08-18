@@ -1045,6 +1045,12 @@ callback_exit_cleanup() {
         fi
     fi
     if [[ $callback_status -eq 0 && $cleanup_status -eq 0 ]]; then
+        /usr/bin/rmdir -- /work/home /work/tmp || cleanup_status=$?
+        if [[ $cleanup_status -ne 0 ]]; then
+            failure_stage=cleanup
+        fi
+    fi
+    if [[ $callback_status -eq 0 && $cleanup_status -eq 0 ]]; then
         callback_stage=cleanup-evidence
         /usr/bin/python3 -I -B - /work /work/callback-cleanup.json <<'PY' \
             || callback_status=$?

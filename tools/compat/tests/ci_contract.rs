@@ -710,6 +710,22 @@ fn validate_vector_differential_runner_source(source: &str) -> Result<(), String
                 .to_string(),
         );
     }
+    let scratch_cleanup = "/usr/bin/rmdir -- /work/home /work/tmp || cleanup_status=$?";
+    let scratch_cleanup_lines = source
+        .lines()
+        .enumerate()
+        .filter_map(|(index, line)| (line.trim() == scratch_cleanup).then_some(index))
+        .collect::<Vec<_>>();
+    let cleanup_evidence_index = source
+        .lines()
+        .position(|line| line.trim() == "callback_stage=cleanup-evidence")
+        .ok_or_else(|| "callback cleanup-evidence stage is missing".to_string())?;
+    if scratch_cleanup_lines.len() != 1 || scratch_cleanup_lines[0] >= cleanup_evidence_index {
+        return Err(
+            "callback must remove empty controller scratch directories before cleanup evidence"
+                .to_string(),
+        );
+    }
     Ok(())
 }
 
@@ -1948,6 +1964,36 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
                 1,
             ),
         ),
+        (
+            "controller scratch residue",
+            runner_source.replacen(
+                "/usr/bin/rmdir -- /work/home /work/tmp || cleanup_status=$?",
+                ": # leave controller scratch directories behind",
+                1,
+            ),
+        ),
+        (
+            "commented safe scratch cleanup",
+            runner_source.replacen(
+                "        /usr/bin/rmdir -- /work/home /work/tmp || cleanup_status=$?",
+                "        # /usr/bin/rmdir -- /work/home /work/tmp || cleanup_status=$?\n        rm -d -- /work/home /work/tmp || cleanup_status=$?",
+                1,
+            ),
+        ),
+        (
+            "shadowed bare rmdir",
+            runner_source
+                .replacen(
+                    "/usr/bin/rmdir -- /work/home /work/tmp || cleanup_status=$?",
+                    "rmdir -- /work/home /work/tmp || cleanup_status=$?",
+                    1,
+                )
+                .replacen(
+                    "callback_exit_cleanup() {",
+                    "rmdir() { rm -d \"$@\"; }\n\ncallback_exit_cleanup() {",
+                    1,
+                ),
+        ),
     ] {
         assert_ne!(mutant, runner_source, "failed to construct {name} runner mutant");
         assert!(
@@ -1955,6 +2001,78 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
             "trusted differential runner accepted {name} mutant"
         );
     }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn vector_differential_scratch_cleanup_rejects_non_directory_replacements() {
+    use std::os::unix::fs::{FileTypeExt, symlink};
+
+    let scratch = std::env::temp_dir().join(format!(
+        "kiwi-vector-scratch-cleanup-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock must be after the Unix epoch")
+            .as_nanos()
+    ));
+    fs::create_dir(&scratch).expect("create scratch cleanup test directory");
+
+    let home = scratch.join("home");
+    let temporary = scratch.join("tmp");
+    fs::create_dir(&home).expect("create empty HOME fixture");
+    fs::create_dir(&temporary).expect("create empty TMPDIR fixture");
+    let empty_status = Command::new("/usr/bin/rmdir")
+        .arg("--")
+        .args([&home, &temporary])
+        .status()
+        .expect("rmdir empty scratch directories");
+    assert!(empty_status.success());
+    assert!(!home.exists() && !temporary.exists());
+
+    let nonempty = scratch.join("nonempty");
+    fs::create_dir(&nonempty).expect("create nonempty directory fixture");
+    fs::write(nonempty.join("residue"), "unexpected").expect("write nested residue fixture");
+    let regular = scratch.join("regular");
+    fs::write(&regular, "unexpected").expect("write regular-file replacement fixture");
+    let symlink_target = scratch.join("symlink-target");
+    fs::create_dir(&symlink_target).expect("create symlink target fixture");
+    let link = scratch.join("link");
+    symlink(&symlink_target, &link).expect("create symlink replacement fixture");
+    let fifo = scratch.join("fifo");
+    assert!(
+        Command::new("/usr/bin/mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo replacement fixture must start")
+            .success()
+    );
+
+    for (kind, path) in [
+        ("nonempty directory", &nonempty),
+        ("regular file", &regular),
+        ("symlink", &link),
+        ("FIFO", &fifo),
+    ] {
+        let status = Command::new("/usr/bin/rmdir")
+            .arg("--")
+            .arg(path)
+            .status()
+            .expect("rmdir replacement mutant must start");
+        assert!(!status.success(), "rmdir accepted {kind} replacement");
+        assert!(
+            fs::symlink_metadata(path).is_ok(),
+            "rmdir removed {kind} replacement"
+        );
+    }
+    assert!(
+        fs::symlink_metadata(&fifo)
+            .expect("FIFO fixture must remain")
+            .file_type()
+            .is_fifo()
+    );
+
+    fs::remove_dir_all(&scratch).expect("remove scratch cleanup test directory");
 }
 
 #[test]
