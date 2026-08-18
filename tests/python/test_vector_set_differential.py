@@ -43,6 +43,8 @@ import os
 import random
 import socket
 import struct
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 import redis
@@ -627,9 +629,7 @@ def assert_same_raw(kiwi, reference, *command, coverage=None, case_id="zero-vect
     return kiwi_frame
 
 
-def test_raw_comparator_rejects_equal_typed_values_with_different_frames(
-    monkeypatch, tmp_path
-):
+def test_raw_comparator_rejects_equal_typed_values_with_different_frames(monkeypatch):
     class FrameClient:
         def __init__(self, frame):
             self.frame = frame
@@ -651,30 +651,37 @@ def test_raw_comparator_rejects_equal_typed_values_with_different_frames(
             b"member",
         )
 
-    transcript = tmp_path / "raw-transcript.jsonl"
-    monkeypatch.setenv("KIWI_VECTOR_RAW_TRANSCRIPT", str(transcript))
-    monkeypatch.setenv(
-        "PYTEST_CURRENT_TEST",
-        "tests/python/test_vector_set_differential.py::"
-        "test_raw_comparator_rejects_equal_typed_values_with_different_frames (call)",
-    )
-    parts = (b"VADD", b"nul\x00key", b"FP32", b"\x00\x01\x00", b"member\x00")
-    recorder = raw_transcript_recorder(2)
-    recorder(
-        parts,
-        b":1\r\n",
-        b":1\r\n",
-        case_id="zero-vector",
-        comparison_kind="exact-frame",
-        registered_difference_ids=(),
-    )
-    record = json.loads(transcript.read_text(encoding="utf-8"))
-    request = base64.b64decode(record["request_base64"], validate=True)
-    assert request == encode_command(*parts)
-    assert b"\x00" in request
-    assert record["request_sha256"] == hashlib.sha256(request).hexdigest()
-    assert base64.b64decode(record["kiwi_response_base64"], validate=True) == b":1\r\n"
-    assert base64.b64decode(record["redis_response_base64"], validate=True) == b":1\r\n"
+    with TemporaryDirectory() as scratch:
+        transcript = Path(scratch) / "raw-transcript.jsonl"
+        monkeypatch.setenv("KIWI_VECTOR_RAW_TRANSCRIPT", str(transcript))
+        monkeypatch.setenv(
+            "PYTEST_CURRENT_TEST",
+            "tests/python/test_vector_set_differential.py::"
+            "test_raw_comparator_rejects_equal_typed_values_with_different_frames (call)",
+        )
+        parts = (b"VADD", b"nul\x00key", b"FP32", b"\x00\x01\x00", b"member\x00")
+        recorder = raw_transcript_recorder(2)
+        recorder(
+            parts,
+            b":1\r\n",
+            b":1\r\n",
+            case_id="zero-vector",
+            comparison_kind="exact-frame",
+            registered_difference_ids=(),
+        )
+        record = json.loads(transcript.read_text(encoding="utf-8"))
+        request = base64.b64decode(record["request_base64"], validate=True)
+        assert request == encode_command(*parts)
+        assert b"\x00" in request
+        assert record["request_sha256"] == hashlib.sha256(request).hexdigest()
+        assert (
+            base64.b64decode(record["kiwi_response_base64"], validate=True)
+            == b":1\r\n"
+        )
+        assert (
+            base64.b64decode(record["redis_response_base64"], validate=True)
+            == b":1\r\n"
+        )
 
 
 test_raw_comparator_rejects_equal_typed_values_with_different_frames.transcript = True
@@ -947,7 +954,7 @@ def test_raw_cleanup_requires_a_nonnegative_integer_frame():
         reset_raw_client_keys(ErrorFrameClient(), [b"key"], "fake endpoint")
 
 
-def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch, tmp_path):
+def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch):
     assert _normalize_raw_vemb(b"$-1\r\n", 2) is None
     assert _normalize_raw_vemb(b"_\r\n", 3) is None
     with pytest.raises(AssertionError):
@@ -1020,16 +1027,17 @@ def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch, tmp
             StateClient(pttl_frame=b":-2\r\n"),
         )
 
-    duplicate_registry = tmp_path / "duplicate-required-jobs.json"
-    duplicate_registry.write_text(
-        '{"schema":"invalid","schema":"kiwi-vector-required-jobs/canonical-v1",'
-        '"final_state":{"fake":{"applicability":"not-applicable",'
-        '"reason":"comparator"}}}\n',
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("KIWI_VECTOR_REQUIRED_JOBS", str(duplicate_registry))
-    with pytest.raises(pytest.fail.Exception, match="duplicate JSON object key"):
-        _required_final_state_contract("fake")
+    with TemporaryDirectory() as scratch:
+        duplicate_registry = Path(scratch) / "duplicate-required-jobs.json"
+        duplicate_registry.write_text(
+            '{"schema":"invalid","schema":"kiwi-vector-required-jobs/canonical-v1",'
+            '"final_state":{"fake":{"applicability":"not-applicable",'
+            '"reason":"comparator"}}}\n',
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("KIWI_VECTOR_REQUIRED_JOBS", str(duplicate_registry))
+        with pytest.raises(pytest.fail.Exception, match="duplicate JSON object key"):
+            _required_final_state_contract("fake")
 
 
 test_raw_endpoint_separation_and_cleanup_idempotency_guards.final_state = True

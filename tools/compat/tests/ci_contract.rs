@@ -2004,6 +2004,50 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
 }
 
 #[test]
+fn trusted_vector_differential_reaps_test_owned_temporary_directories() {
+    let differential = normalized_fixture(include_str!(
+        "../../../tests/python/test_vector_set_differential.py"
+    ));
+    let owns_and_reaps_scratch = |source: &str| {
+        !source.contains("tmp_path")
+            && source
+                .lines()
+                .filter(|line| line.trim() == "with TemporaryDirectory() as scratch:")
+                .count()
+                == 2
+    };
+    assert!(
+        owns_and_reaps_scratch(&differential),
+        "local filesystem probes must own and reap their callback TMPDIR entries"
+    );
+
+    for (name, mutant) in [
+        (
+            "pytest-managed tmp_path",
+            differential.replacen(
+                "def test_raw_comparator_rejects_equal_typed_values_with_different_frames(monkeypatch):",
+                "def test_raw_comparator_rejects_equal_typed_values_with_different_frames(monkeypatch, tmp_path):",
+                1,
+            ),
+        ),
+        (
+            "commented temporary-directory context",
+            differential.replacen(
+                "    with TemporaryDirectory() as scratch:",
+                "    # with TemporaryDirectory() as scratch:",
+                1,
+            ),
+        ),
+    ] {
+        assert_ne!(mutant, differential, "failed to construct {name} mutant");
+        assert!(
+            !owns_and_reaps_scratch(&mutant),
+            "trusted differential accepted {name} mutant"
+        );
+    }
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn vector_differential_scratch_cleanup_rejects_non_directory_replacements() {
     use std::os::unix::fs::{FileTypeExt, symlink};
