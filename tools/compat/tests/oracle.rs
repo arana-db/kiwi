@@ -418,6 +418,213 @@ with controller.HeldExecutable.open("probe", tool) as probe:
 
 #[test]
 #[cfg(target_os = "linux")]
+fn oracle_controlled_path_keeps_placeholder_when_open_returns_reserved_fd() {
+    let test_dir = TestDir::new("controlled-path-reserved-fd");
+    let body = format!(
+        r#"import errno
+import os
+import pathlib
+
+root = pathlib.Path({root:?})
+aliases = controller.FrozenToolDirectory.create(root / "tools", {{}})
+padding = []
+try:
+    with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as shell:
+        while True:
+            fd = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC)
+            if fd == controller.CONTROLLED_PATH_FD:
+                os.close(fd)
+                break
+            if fd > controller.CONTROLLED_PATH_FD:
+                raise AssertionError("unable to reserve the controlled PATH descriptor")
+            padding.append(fd)
+        result = controller.run_bounded(
+            shell,
+            ["bash", "-c", "exit 0"],
+            env={{"PATH": aliases.child_path, "HOME": str(root), "TMPDIR": str(root)}},
+            timeout_ms=2000,
+            term_grace_ms=100,
+            stdout_limit_bytes=64,
+            stderr_limit_bytes=4096,
+            readonly_bind_directories=(aliases,),
+        )
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        try:
+            os.fstat(controller.CONTROLLED_PATH_FD)
+        except OSError as error:
+            assert error.errno == errno.EBADF
+        else:
+            raise AssertionError("controlled PATH descriptor leaked after command completion")
+finally:
+    for fd in reversed(padding):
+        os.close(fd)
+    aliases.remove()
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_supervised_setup_keeps_devnull_when_open_returns_stdin_fd() {
+    let test_dir = TestDir::new("supervised-setup-stdin-fd");
+    let body = format!(
+        r#"import errno
+import os
+import pathlib
+
+root = pathlib.Path({root:?})
+aliases = controller.FrozenToolDirectory.create(root / "tools", {{}})
+saved_stdin = os.dup(0)
+try:
+    with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as shell:
+        os.close(0)
+        try:
+            result = controller.run_bounded(
+                shell,
+                [
+                    "bash",
+                    "-c",
+                    "[[ $(/usr/bin/readlink /proc/self/fd/0) == /dev/null ]]",
+                ],
+                env={{"PATH": aliases.child_path, "HOME": str(root), "TMPDIR": str(root)}},
+                timeout_ms=2000,
+                term_grace_ms=100,
+                stdout_limit_bytes=64,
+                stderr_limit_bytes=4096,
+                readonly_bind_directories=(aliases,),
+            )
+            try:
+                os.fstat(0)
+            except OSError as error:
+                assert error.errno == errno.EBADF
+            else:
+                raise AssertionError("run_bounded changed the parent stdin descriptor")
+        finally:
+            os.dup2(saved_stdin, 0)
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+finally:
+    os.close(saved_stdin)
+    aliases.remove()
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_supervised_setup_keeps_pipe_when_write_end_is_stdout_fd() {
+    let test_dir = TestDir::new("supervised-setup-stdout-fd");
+    let body = format!(
+        r#"import errno
+import os
+import pathlib
+
+root = pathlib.Path({root:?})
+aliases = controller.FrozenToolDirectory.create(root / "tools", {{}})
+saved_stdin = os.dup(0)
+saved_stdout = os.dup(1)
+try:
+    with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as shell:
+        os.close(0)
+        os.close(1)
+        try:
+            result = controller.run_bounded(
+                shell,
+                [
+                    "bash",
+                    "-c",
+                    "[[ $(/usr/bin/readlink /proc/self/fd/0) == /dev/null ]] && printf probe",
+                ],
+                env={{"PATH": aliases.child_path, "HOME": str(root), "TMPDIR": str(root)}},
+                timeout_ms=2000,
+                term_grace_ms=100,
+                stdout_limit_bytes=64,
+                stderr_limit_bytes=4096,
+                readonly_bind_directories=(aliases,),
+            )
+            for fd in (0, 1):
+                try:
+                    os.fstat(fd)
+                except OSError as error:
+                    assert error.errno == errno.EBADF
+                else:
+                    raise AssertionError(f"run_bounded changed parent descriptor {{fd}}")
+        finally:
+            os.dup2(saved_stdin, 0)
+            os.dup2(saved_stdout, 1)
+        assert result.exit_code == 0, (result.stdout, result.stderr)
+        assert result.stdout == b"probe"
+finally:
+    os.close(saved_stdout)
+    os.close(saved_stdin)
+    aliases.remove()
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn oracle_pid_namespace_keeps_control_pipe_off_standard_fds() {
+    let test_dir = TestDir::new("pid-namespace-control-standard-fds");
+    let body = format!(
+        r#"import errno
+import os
+import pathlib
+
+root = pathlib.Path({root:?})
+def run_case(closed_fds):
+    saved = {{fd: os.dup(fd) for fd in closed_fds}}
+    try:
+        with controller.HeldExecutable.open("shell", pathlib.Path("/usr/bin/bash")) as shell:
+            for fd in closed_fds:
+                os.close(fd)
+            try:
+                result = controller.run_bounded(
+                    shell,
+                    [
+                        "bash",
+                        "-c",
+                        "[[ $(/usr/bin/readlink /proc/self/fd/0) == /dev/null ]] && printf probe",
+                    ],
+                    env={{"PATH": "/usr/bin:/bin", "HOME": str(root), "TMPDIR": str(root)}},
+                    timeout_ms=2000,
+                    term_grace_ms=100,
+                    stdout_limit_bytes=64,
+                    stderr_limit_bytes=4096,
+                    pid_namespace=True,
+                )
+                for fd in closed_fds:
+                    try:
+                        os.fstat(fd)
+                    except OSError as error:
+                        assert error.errno == errno.EBADF
+                    else:
+                        raise AssertionError(f"run_bounded changed parent descriptor {{fd}}")
+            finally:
+                for fd in closed_fds:
+                    os.dup2(saved[fd], fd)
+            assert result.exit_code == 0, (result.stdout, result.stderr)
+            assert result.stdout == b"probe"
+            assert result.namespace_init_pid is not None
+    finally:
+        for saved_fd in saved.values():
+            os.close(saved_fd)
+
+run_case((0, 1))
+run_case((0, 2))
+"#,
+        root = test_dir.path().to_string_lossy(),
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_build_runtime_fd_keeps_command_environment_live_and_cleanup_detects_writes() {
     let test_dir = TestDir::new("runtime-fd");
     let body = format!(

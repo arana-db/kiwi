@@ -1314,6 +1314,24 @@ def _close_child_fds(except_fds: set[int]) -> None:
             pass
 
 
+def _cloexec_pipe_above_standard_fds() -> tuple[int, int]:
+    read_fd, write_fd = os.pipe2(os.O_CLOEXEC)
+    try:
+        if read_fd <= 2:
+            replacement = fcntl.fcntl(read_fd, fcntl.F_DUPFD_CLOEXEC, 3)
+            os.close(read_fd)
+            read_fd = replacement
+        if write_fd <= 2:
+            replacement = fcntl.fcntl(write_fd, fcntl.F_DUPFD_CLOEXEC, 3)
+            os.close(write_fd)
+            write_fd = replacement
+        return read_fd, write_fd
+    except BaseException:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise
+
+
 def _spawn_with_supervised_setup(
     executable: HeldExecutable,
     argv: Sequence[str],
@@ -1338,12 +1356,21 @@ def _spawn_with_supervised_setup(
             os.close(stderr_read)
             os.setsid()
             null_fd = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC)
-            try:
-                os.dup2(null_fd, 0)
-            finally:
-                os.close(null_fd)
-            os.dup2(stdout_write, 1)
-            os.dup2(stderr_write, 2)
+            if null_fd == 0:
+                os.set_inheritable(null_fd, True)
+            else:
+                try:
+                    os.dup2(null_fd, 0, inheritable=True)
+                finally:
+                    os.close(null_fd)
+            if stdout_write == 1:
+                os.set_inheritable(1, True)
+            else:
+                os.dup2(stdout_write, 1, inheritable=True)
+            if stderr_write == 2:
+                os.set_inheritable(2, True)
+            else:
+                os.dup2(stderr_write, 2, inheritable=True)
             keep = {0, 1, 2, executable.fd, *inherited_fds}
             _close_child_fds(keep)
             if cwd is not None:
@@ -1447,16 +1474,17 @@ def run_bounded(
         else:
             raise OracleError("controlled PATH fd is already open")
         placeholder = os.open("/dev/null", os.O_RDONLY | os.O_CLOEXEC)
-        try:
-            os.dup2(placeholder, CONTROLLED_PATH_FD, inheritable=True)
-        finally:
-            os.close(placeholder)
+        if placeholder != CONTROLLED_PATH_FD:
+            try:
+                os.dup2(placeholder, CONTROLLED_PATH_FD, inheritable=True)
+            finally:
+                os.close(placeholder)
         reserved_path_fd = CONTROLLED_PATH_FD
     path_fds = (reserved_path_fd,) if reserved_path_fd >= 0 else ()
     report_read_fd = -1
     report_write_fd = -1
     if pid_namespace:
-        report_read_fd, report_write_fd = os.pipe2(os.O_CLOEXEC)
+        report_read_fd, report_write_fd = _cloexec_pipe_above_standard_fds()
     report_fds = (report_write_fd,) if report_write_fd >= 0 else ()
     passed_fds = tuple(
         dict.fromkeys((executable.fd, *extra_fds, *path_fds, *report_fds))
