@@ -38,6 +38,7 @@ than producing a skipped test result. All datasets use a fixed seed.
 import base64
 import hashlib
 import json
+import math
 import os
 import random
 import socket
@@ -141,28 +142,35 @@ def _execute_same_raw(kiwi, reference, *command):
     return _wire_exchange(command, kiwi_frame, redis_frame)
 
 
-def _normalize_raw_vemb(frame):
+def _normalize_raw_vemb(frame, protocol):
     parsed, consumed = _read_resp_frame(frame)
     assert consumed == len(frame), "VEMB final-state frame has trailing bytes"
     prefix, payload, children = parsed
-    if (prefix in {b"$", b"_"} and payload is None) or (
-        prefix == b"_" and payload == b""
+    if (protocol == 2 and prefix == b"$" and payload is None) or (
+        protocol == 3 and prefix == b"_" and payload == b""
     ):
         return None
     assert prefix in {b"*", b"~"}, "VEMB final-state reply must be an aggregate"
+    expected_component_prefix = b"$" if protocol == 2 else b","
     values = []
     for child_prefix, child_payload, grandchildren in children:
-        assert child_prefix == b"$" and child_payload is not None and not grandchildren
-        values.append(float(child_payload))
+        assert (
+            child_prefix == expected_component_prefix
+            and child_payload is not None
+            and not grandchildren
+        ), "VEMB final-state component does not match the RESP protocol"
+        value = float(child_payload)
+        assert math.isfinite(value), "VEMB final-state components must be finite"
+        values.append(value)
     return values
 
 
-def _execute_final_observation(kiwi, reference, *command):
+def _execute_final_observation(kiwi, reference, protocol, *command):
     kiwi_frame = kiwi.execute_raw(*command)
     redis_frame = reference.execute_raw(*command)
     if command[0] == b"VEMB":
-        kiwi_vector = _normalize_raw_vemb(kiwi_frame)
-        redis_vector = _normalize_raw_vemb(redis_frame)
+        kiwi_vector = _normalize_raw_vemb(kiwi_frame, protocol)
+        redis_vector = _normalize_raw_vemb(redis_frame, protocol)
         if redis_vector is None:
             assert kiwi_vector is None
         else:
@@ -252,21 +260,21 @@ def _capture_server_final_state(
         observations = []
         if key_type == b"vectorset":
             observations.append(
-                _execute_final_observation(kiwi, reference, b"VCARD", key)
+                _execute_final_observation(kiwi, reference, protocol, b"VCARD", key)
             )
             if contract is not None:
                 observations.append(
-                    _execute_final_observation(kiwi, reference, b"VDIM", key)
+                    _execute_final_observation(kiwi, reference, protocol, b"VDIM", key)
                 )
                 for member in FINAL_STATE_VECTOR_MEMBERS[role]:
                     observations.append(
                         _execute_final_observation(
-                            kiwi, reference, b"VEMB", key, member
+                            kiwi, reference, protocol, b"VEMB", key, member
                         )
                     )
         elif key_type == b"string":
             observations.append(
-                _execute_final_observation(kiwi, reference, b"GET", key)
+                _execute_final_observation(kiwi, reference, protocol, b"GET", key)
             )
 
         first_del = _execute_same_raw(kiwi, reference, b"DEL", key)
@@ -940,6 +948,28 @@ def test_raw_cleanup_requires_a_nonnegative_integer_frame():
 
 
 def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch, tmp_path):
+    assert _normalize_raw_vemb(b"$-1\r\n", 2) is None
+    assert _normalize_raw_vemb(b"_\r\n", 3) is None
+    with pytest.raises(AssertionError):
+        _normalize_raw_vemb(b"_\r\n", 2)
+    with pytest.raises(AssertionError):
+        _normalize_raw_vemb(b"$-1\r\n", 3)
+    assert _normalize_raw_vemb(b"*2\r\n$3\r\n1.0\r\n$4\r\n-2.5\r\n", 2) == [
+        1.0,
+        -2.5,
+    ]
+    assert _normalize_raw_vemb(b"*2\r\n,1.0\r\n,-2.5\r\n", 3) == [1.0, -2.5]
+    with pytest.raises(AssertionError, match="RESP protocol"):
+        _normalize_raw_vemb(b"*1\r\n:1\r\n", 2)
+    with pytest.raises(AssertionError, match="RESP protocol"):
+        _normalize_raw_vemb(b"*1\r\n,1.0\r\n", 2)
+    with pytest.raises(AssertionError, match="RESP protocol"):
+        _normalize_raw_vemb(b"*1\r\n$3\r\n1.0\r\n", 3)
+    with pytest.raises(AssertionError, match="finite"):
+        _normalize_raw_vemb(b"*1\r\n,inf\r\n", 3)
+    with pytest.raises(ValueError):
+        _normalize_raw_vemb(b"*1\r\n$3\r\nbad\r\n", 2)
+
     address = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 6379))
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [address])
     with pytest.raises(pytest.fail.Exception, match="different endpoints"):

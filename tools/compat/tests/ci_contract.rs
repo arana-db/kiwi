@@ -84,10 +84,14 @@ fn resp_integer(value: i64) -> Vec<u8> {
 }
 
 #[cfg(target_os = "linux")]
-fn resp_vector(dimension: usize) -> Vec<u8> {
+fn resp_vector(dimension: usize, protocol: u8) -> Vec<u8> {
     let mut response = format!("*{dimension}\r\n").into_bytes();
     for _ in 0..dimension {
-        response.extend_from_slice(b"$1\r\n0\r\n");
+        response.extend_from_slice(if protocol == 2 {
+            b"$1\r\n0\r\n"
+        } else {
+            b",0\r\n"
+        });
     }
     response
 }
@@ -97,6 +101,7 @@ fn final_state_key_record(
     role: &str,
     key: &[u8],
     key_type: &str,
+    protocol: u8,
     dimension: Option<usize>,
     members: &[&[u8]],
     populated_member_count: usize,
@@ -119,9 +124,11 @@ fn final_state_key_record(
         ));
         for (index, member) in members.iter().enumerate() {
             let response = if index < populated_member_count {
-                resp_vector(dimension)
-            } else {
+                resp_vector(dimension, protocol)
+            } else if protocol == 2 {
                 b"$-1\r\n".to_vec()
+            } else {
+                b"_\r\n".to_vec()
             };
             observations.push(final_state_exchange("VEMB", key, &[*member], &response));
         }
@@ -221,6 +228,7 @@ fn final_state_keys(state_profile: &str, protocol: u8) -> Vec<Value> {
                 role,
                 &key,
                 key_type,
+                protocol,
                 dimension,
                 members,
                 populated_member_count,
@@ -2576,6 +2584,100 @@ fn vector_differential_runner_rejects_unreplayable_or_unbounded_evidence() {
         .iter()
         .position(|key| key["key_role"] == "main")
         .expect("repeated VADD fixture must expose the main role");
+    let repeated_resp3_node = "tests/python/test_vector_set_differential.py::test_repeated_vadd_and_vsim_options_match[resp3]";
+    let repeated_resp3_index = final_records
+        .iter()
+        .position(|record| record["node_id"] == repeated_resp3_node)
+        .expect("fixture must contain the repeated VADD RESP3 node");
+    let repeated_resp3_main_index = final_records[repeated_resp3_index]["known_keys"]
+        .as_array()
+        .expect("known_keys must be an array")
+        .iter()
+        .position(|key| key["key_role"] == "main")
+        .expect("repeated VADD RESP3 fixture must expose the main role");
+    let mut resp2_double_component = final_records.clone();
+    replace_exchange_response(
+        &mut resp2_double_component[repeated_index]["known_keys"][repeated_main_index]["before_cleanup"]
+            ["observations"][2],
+        &resp_vector(4, 3),
+    );
+    assert!(
+        !validate_final_state(&{
+            let mutant = scratch.join("final-state-resp2-double-component.jsonl");
+            write_jsonl(&mutant, &resp2_double_component);
+            mutant
+        }),
+        "accepted RESP3 double components in a RESP2 final-state record"
+    );
+    let mut resp3_bulk_component = final_records.clone();
+    replace_exchange_response(
+        &mut resp3_bulk_component[repeated_resp3_index]["known_keys"][repeated_resp3_main_index]["before_cleanup"]
+            ["observations"][2],
+        &resp_vector(4, 2),
+    );
+    assert!(
+        !validate_final_state(&{
+            let mutant = scratch.join("final-state-resp3-bulk-component.jsonl");
+            write_jsonl(&mutant, &resp3_bulk_component);
+            mutant
+        }),
+        "accepted RESP2 bulk components in a RESP3 final-state record"
+    );
+    let mut resp2_resp3_null = final_records.clone();
+    let resp2_ghost = resp2_resp3_null[repeated_index]["known_keys"][repeated_main_index]
+        ["before_cleanup"]["observations"]
+        .as_array_mut()
+        .expect("RESP2 observations must be an array")
+        .last_mut()
+        .expect("RESP2 observations must include a ghost member");
+    replace_exchange_response(resp2_ghost, b"_\r\n");
+    assert!(
+        !validate_final_state(&{
+            let mutant = scratch.join("final-state-resp2-resp3-null.jsonl");
+            write_jsonl(&mutant, &resp2_resp3_null);
+            mutant
+        }),
+        "accepted a RESP3 null in a RESP2 final-state record"
+    );
+    let mut resp3_resp2_null = final_records.clone();
+    let resp3_ghost = resp3_resp2_null[repeated_resp3_index]["known_keys"]
+        [repeated_resp3_main_index]["before_cleanup"]["observations"]
+        .as_array_mut()
+        .expect("RESP3 observations must be an array")
+        .last_mut()
+        .expect("RESP3 observations must include a ghost member");
+    replace_exchange_response(resp3_ghost, b"$-1\r\n");
+    assert!(
+        !validate_final_state(&{
+            let mutant = scratch.join("final-state-resp3-resp2-null.jsonl");
+            write_jsonl(&mutant, &resp3_resp2_null);
+            mutant
+        }),
+        "accepted a RESP2 null in a RESP3 final-state record"
+    );
+    let invalid_resp3_components: [(&str, &[u8]); 4] = [
+        ("integer-component", b"*4\r\n:1\r\n,0\r\n,0\r\n,0\r\n"),
+        ("nan-component", b"*4\r\n,nan\r\n,0\r\n,0\r\n,0\r\n"),
+        ("infinite-component", b"*4\r\n,inf\r\n,0\r\n,0\r\n,0\r\n"),
+        (
+            "nonnumeric-component",
+            b"*4\r\n,not-a-number\r\n,0\r\n,0\r\n,0\r\n",
+        ),
+    ];
+    for (name, response) in invalid_resp3_components {
+        let mut mutant_records = final_records.clone();
+        replace_exchange_response(
+            &mut mutant_records[repeated_resp3_index]["known_keys"][repeated_resp3_main_index]["before_cleanup"]
+                ["observations"][2],
+            response,
+        );
+        let mutant = scratch.join(format!("final-state-{name}.jsonl"));
+        write_jsonl(&mutant, &mutant_records);
+        assert!(
+            !validate_final_state(&mutant),
+            "accepted invalid RESP3 VEMB {name}"
+        );
+    }
     let mut repeated_two_member_state = final_records.clone();
     let repeated_observations = repeated_two_member_state[repeated_index]["known_keys"]
         [repeated_main_index]["before_cleanup"]["observations"]
@@ -2627,7 +2729,7 @@ fn vector_differential_runner_rejects_unreplayable_or_unbounded_evidence() {
     replace_exchange_response(
         &mut unexpected_two_member_profile_member[repeated_index]["known_keys"]
             [repeated_main_index]["before_cleanup"]["observations"][4],
-        &resp_vector(4),
+        &resp_vector(4, 2),
     );
     assert_final_mutant_rejected(
         "unexpected-two-member-profile-member",
@@ -2668,7 +2770,7 @@ fn vector_differential_runner_rejects_unreplayable_or_unbounded_evidence() {
     assert_final_mutant_rejected("missing-key-role", &missing_key_role);
     let mut wrong_key_bytes = final_records.clone();
     wrong_key_bytes[server_index]["known_keys"][0] =
-        final_state_key_record("values", b"wrong-key", "none", None, &[], 0);
+        final_state_key_record("values", b"wrong-key", "none", 2, None, &[], 0);
     assert_final_mutant_rejected("wrong-key-bytes", &wrong_key_bytes);
     let mut wrong_profile_type = final_records.clone();
     let profile_key = BASE64_STANDARD
@@ -2679,7 +2781,7 @@ fn vector_differential_runner_rejects_unreplayable_or_unbounded_evidence() {
         )
         .expect("fixture key must use valid Base64");
     wrong_profile_type[server_index]["known_keys"][0] =
-        final_state_key_record("values", &profile_key, "string", None, &[], 0);
+        final_state_key_record("values", &profile_key, "string", 2, None, &[], 0);
     assert_final_mutant_rejected("wrong-profile-type", &wrong_profile_type);
     let mut missing_vdim = final_records.clone();
     missing_vdim[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["observations"]
@@ -2719,7 +2821,7 @@ fn vector_differential_runner_rejects_unreplayable_or_unbounded_evidence() {
         .expect("Vector observations must be an array")
         .last_mut()
         .expect("Vector observations must include the ghost member");
-    replace_exchange_response(ghost_observation, &resp_vector(4));
+    replace_exchange_response(ghost_observation, &resp_vector(4, 2));
     assert_final_mutant_rejected("populated-ghost", &populated_ghost);
     let mut empty_member_vector = final_records.clone();
     replace_exchange_response(

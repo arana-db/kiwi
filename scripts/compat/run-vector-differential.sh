@@ -359,16 +359,23 @@ def response_type(frame, context):
     return payload
 
 
-def response_vemb(frame, context):
+def response_vemb(frame, protocol, context):
     prefix, payload, children = one_frame(frame, context)
-    if (prefix == b"$" and payload is None) or prefix == b"_":
+    if (protocol == 2 and prefix == b"$" and payload is None) or (
+        protocol == 3 and prefix == b"_"
+    ):
         return None
     if prefix not in {b"*", b"~"}:
         raise SystemExit(f"{context} must be an aggregate or null VEMB response")
+    expected_component_prefix = b"$" if protocol == 2 else b","
     values = []
     for child_prefix, child_payload, grandchildren in children:
-        if child_prefix != b"$" or child_payload is None or grandchildren:
-            raise SystemExit(f"{context} VEMB component is not a bulk string")
+        if (
+            child_prefix != expected_component_prefix
+            or child_payload is None
+            or grandchildren
+        ):
+            raise SystemExit(f"{context} VEMB component does not match the RESP protocol")
         try:
             value = float(child_payload)
         except ValueError as error:
@@ -379,7 +386,7 @@ def response_vemb(frame, context):
     return values
 
 
-def validate_exchange(exchange, expected_command, key, context, arguments=()):
+def validate_exchange(exchange, expected_command, key, protocol, context, arguments=()):
     required = {
         "command", "request_base64", "request_sha256", "kiwi_response_base64",
         "kiwi_response_sha256", "redis_response_base64", "redis_response_sha256",
@@ -395,8 +402,8 @@ def validate_exchange(exchange, expected_command, key, context, arguments=()):
     kiwi = decode_bytes(exchange, "kiwi_response", context)
     redis = decode_bytes(exchange, "redis_response", context)
     if expected_command == "VEMB":
-        kiwi_vector = response_vemb(kiwi, f"{context} Kiwi response")
-        redis_vector = response_vemb(redis, f"{context} Redis response")
+        kiwi_vector = response_vemb(kiwi, protocol, f"{context} Kiwi response")
+        redis_vector = response_vemb(redis, protocol, f"{context} Redis response")
         if (kiwi_vector is None) != (redis_vector is None):
             raise SystemExit(f"{context} Kiwi/Redis VEMB nullability differs")
         if kiwi_vector is not None and (
@@ -634,14 +641,18 @@ elif kind == "final-state":
             }:
                 raise SystemExit(f"{key_context} cleanup fields drifted")
             type_before = response_type(
-                validate_exchange(before["type"], "TYPE", key, f"{key_context} TYPE before"),
+                validate_exchange(
+                    before["type"], "TYPE", key, protocol, f"{key_context} TYPE before"
+                ),
                 f"{key_context} TYPE before",
             )
             expected_type = profile_types[state_profile].get(expected_role, b"none")
             if type_before != expected_type:
                 raise SystemExit(f"{key_context} TYPE differs from the registry profile")
             pttl_before = response_integer(
-                validate_exchange(before["pttl"], "PTTL", key, f"{key_context} PTTL before"),
+                validate_exchange(
+                    before["pttl"], "PTTL", key, protocol, f"{key_context} PTTL before"
+                ),
                 f"{key_context} PTTL before",
             )
             expected_pttl = -2 if type_before == b"none" else -1
@@ -663,7 +674,7 @@ elif kind == "final-state":
                 observations, expected_observations
             ):
                 observation_frames.append(validate_exchange(
-                    observation, expected_command, key,
+                    observation, expected_command, key, protocol,
                     f"{key_context} {expected_command} observation", arguments,
                 ))
             if type_before == b"vectorset":
@@ -677,7 +688,7 @@ elif kind == "final-state":
                     raise SystemExit(f"{key_context} VDIM differs from its profile")
                 members = vector_members[expected_role]
                 member_vectors = [
-                    response_vemb(frame, f"{key_context} VEMB observation")
+                    response_vemb(frame, protocol, f"{key_context} VEMB observation")
                     for frame in observation_frames[2:]
                 ]
                 expected_member_count = profile_member_counts.get(state_profile, {}).get(
@@ -710,25 +721,37 @@ elif kind == "final-state":
                 if card != expected_member_count:
                     raise SystemExit(f"{key_context} VCARD differs from its profile")
             first_del = response_integer(
-                validate_exchange(cleanup["first_del"], "DEL", key, f"{key_context} first DEL"),
+                validate_exchange(
+                    cleanup["first_del"], "DEL", key, protocol,
+                    f"{key_context} first DEL",
+                ),
                 f"{key_context} first DEL",
             )
             if first_del != (0 if type_before == b"none" else 1):
                 raise SystemExit(f"{key_context} first DEL sentinel drifted")
             type_after = response_type(
-                validate_exchange(cleanup["after_type"], "TYPE", key, f"{key_context} TYPE after"),
+                validate_exchange(
+                    cleanup["after_type"], "TYPE", key, protocol,
+                    f"{key_context} TYPE after",
+                ),
                 f"{key_context} TYPE after",
             )
             if type_after != b"none":
                 raise SystemExit(f"{key_context} TYPE after cleanup must be none")
             pttl_after = response_integer(
-                validate_exchange(cleanup["after_pttl"], "PTTL", key, f"{key_context} PTTL after"),
+                validate_exchange(
+                    cleanup["after_pttl"], "PTTL", key, protocol,
+                    f"{key_context} PTTL after",
+                ),
                 f"{key_context} PTTL after",
             )
             if pttl_after != -2:
                 raise SystemExit(f"{key_context} PTTL after cleanup must be -2")
             second_del = response_integer(
-                validate_exchange(cleanup["second_del"], "DEL", key, f"{key_context} second DEL"),
+                validate_exchange(
+                    cleanup["second_del"], "DEL", key, protocol,
+                    f"{key_context} second DEL",
+                ),
                 f"{key_context} second DEL",
             )
             if second_del != 0:
