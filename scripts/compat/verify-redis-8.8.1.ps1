@@ -31,6 +31,18 @@ param(
     [Alias('callback-input')]
     [string]$CallbackInput,
 
+    [Parameter(Mandatory = $true)]
+    [Alias('expected-head')]
+    [string]$ExpectedHead,
+
+    [Parameter(Mandatory = $true)]
+    [Alias('evidence-output')]
+    [string]$EvidenceOutput,
+
+    [Parameter(Mandatory = $true)]
+    [Alias('publication-verifier')]
+    [string]$PublicationVerifier,
+
     [Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)]
     [Alias('run-after-ready')]
     [string[]]$RunAfterReady
@@ -65,7 +77,10 @@ function Convert-ToWslPath {
 if ($RunAfterReady.Count -eq 0 -or [string]::IsNullOrWhiteSpace($RunAfterReady[0])) {
     throw '--run-after-ready requires a callback executable and argv.'
 }
-foreach ($requiredPath in @($Source, $PrimaryMetadata, $Output, $CallbackInput)) {
+if ($ExpectedHead -cnotmatch '^[0-9a-f]{40}$') {
+    throw '--expected-head must be a 40-character lowercase hexadecimal OID.'
+}
+foreach ($requiredPath in @($Source, $PrimaryMetadata, $Output, $CallbackInput, $EvidenceOutput, $PublicationVerifier)) {
     Assert-SupportedWindowsPath $requiredPath
 }
 foreach ($argument in $RunAfterReady) {
@@ -83,6 +98,12 @@ $arguments.Add('--primary-metadata')
 $arguments.Add((Convert-ToWslPath $PrimaryMetadata))
 $arguments.Add('--output')
 $arguments.Add((Convert-ToWslPath $Output))
+$arguments.Add('--evidence-output')
+$arguments.Add((Convert-ToWslPath $EvidenceOutput))
+$arguments.Add('--expected-head')
+$arguments.Add($ExpectedHead)
+$arguments.Add('--publication-verifier')
+$arguments.Add((Convert-ToWslPath $PublicationVerifier))
 $arguments.Add('--callback-input')
 $arguments.Add((Convert-ToWslPath $CallbackInput))
 $arguments.Add('--run-after-ready')

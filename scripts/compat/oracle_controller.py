@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import errno
+import fcntl
 import hashlib
 import json
 import os
@@ -40,7 +41,9 @@ from datetime import datetime, timezone
 from typing import Callable, Iterable, Mapping, Sequence
 
 BUILD_SCHEMA = "kiwi-redis-oracle-build/v3"
-PROVENANCE_SCHEMA = "kiwi-redis-oracle-provenance/v3"
+PROVENANCE_SCHEMA = "kiwi-redis-oracle-provenance/v4"
+DIFFERENTIAL_EVIDENCE_SCHEMA = "kiwi-vector-differential-evidence/v1"
+CALLBACK_INPUT_MANIFEST_SCHEMA = "kiwi-callback-input-manifest/v1"
 RECIPE_ID = "redis-8.8.1-linux-release-v3"
 REDIS_TAG = "8.8.1"
 REDIS_COMMIT = "77b6c308396c9700672390a210143a8496fb4b10"
@@ -72,6 +75,27 @@ CALLBACK_OUTPUT_LIMIT = 16 * 1024 * 1024
 REDIS_START_TIMEOUT_MS = 30_000
 CONTROLLED_PATH_FD = 198
 MAX_JSON_BYTES = 1024 * 1024
+MAX_CALLBACK_INPUT_ENTRIES = 8192
+MAX_CALLBACK_INPUT_FILE_BYTES = 512 * 1024 * 1024
+MAX_CALLBACK_INPUT_TOTAL_BYTES = 1024 * 1024 * 1024
+MAX_DIFFERENTIAL_EVIDENCE_BYTES = 128 * 1024 * 1024
+CALLBACK_RUNTIME_PATHS = (
+    "target/debug/kiwi",
+    "target/debug/kiwi-required-vector-jobs",
+)
+CALLBACK_EVIDENCE_FILES = {
+    "vector-required-jobs.json": 1024 * 1024,
+    "kiwi.conf": 64 * 1024,
+    "kiwi.log": 8 * 1024 * 1024,
+    "kiwi-runtime.json": 1024 * 1024,
+    "callback-cleanup.json": 1024 * 1024,
+    "collect.log": 8 * 1024 * 1024,
+    "collect-summary.json": 1024 * 1024,
+    "pytest.log": 8 * 1024 * 1024,
+    "run-summary.json": 1024 * 1024,
+    "raw-transcript.jsonl": 64 * 1024 * 1024,
+    "final-state.jsonl": 4 * 1024 * 1024,
+}
 
 
 class OracleError(RuntimeError):
@@ -131,6 +155,82 @@ def _sha256_fd(fd: int) -> str:
         digest.update(chunk)
     os.lseek(fd, offset, os.SEEK_SET)
     return digest.hexdigest()
+
+
+REQUIRED_MEMFD_SEALS = (
+    fcntl.F_SEAL_WRITE | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL
+)
+
+
+def _sealed_memfd_snapshot(
+    label: str,
+    source_fd: int,
+    expected_size: int,
+    expected_sha256: str,
+    mode: int,
+) -> tuple[int, os.stat_result]:
+    if sys.platform != "linux" or not hasattr(os, "memfd_create"):
+        raise OracleError("sealed file snapshots require Linux memfd support")
+    if expected_size <= 0:
+        raise OracleError(f"{label} must be non-empty")
+    fd = os.memfd_create(label, os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING)
+    source_offset = os.lseek(source_fd, 0, os.SEEK_CUR)
+    try:
+        os.fchmod(fd, mode)
+        os.lseek(source_fd, 0, os.SEEK_SET)
+        digest = hashlib.sha256()
+        remaining = expected_size
+        while remaining > 0:
+            chunk = os.read(source_fd, min(1024 * 1024, remaining))
+            if not chunk:
+                raise OracleError(f"{label} changed while it was snapshotted")
+            digest.update(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(fd, view)
+                if written <= 0:
+                    raise OracleError(f"{label} snapshot write made no progress")
+                view = view[written:]
+            remaining -= len(chunk)
+        if os.read(source_fd, 1):
+            raise OracleError(f"{label} grew while it was snapshotted")
+        if digest.hexdigest() != expected_sha256:
+            raise OracleError(f"{label} content changed while it was snapshotted")
+        fcntl.fcntl(fd, fcntl.F_ADD_SEALS, REQUIRED_MEMFD_SEALS)
+        observed_seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
+        if observed_seals & REQUIRED_MEMFD_SEALS != REQUIRED_MEMFD_SEALS:
+            raise OracleError(f"{label} did not acquire all required seals")
+        identity = os.fstat(fd)
+        if (
+            not stat.S_ISREG(identity.st_mode)
+            or identity.st_size != expected_size
+            or _sha256_fd(fd) != expected_sha256
+        ):
+            raise OracleError(f"sealed {label} differs from its held source")
+        return fd, identity
+    except BaseException:
+        os.close(fd)
+        raise
+    finally:
+        os.lseek(source_fd, source_offset, os.SEEK_SET)
+
+
+def _verify_sealed_memfd(
+    fd: int,
+    identity: os.stat_result,
+    expected_size: int,
+    expected_sha256: str,
+    label: str,
+) -> None:
+    current = os.fstat(fd)
+    observed_seals = fcntl.fcntl(fd, fcntl.F_GET_SEALS)
+    if (
+        observed_seals & REQUIRED_MEMFD_SEALS != REQUIRED_MEMFD_SEALS
+        or not _same_identity(identity, current)
+        or current.st_size != expected_size
+        or _sha256_fd(fd) != expected_sha256
+    ):
+        raise OracleError(f"sealed {label} changed")
 
 
 def _git_blob_oid_fd(fd: int, size: int) -> str:
@@ -566,6 +666,59 @@ class HeldExecutable:
 
     def __exit__(self, _type: object, _value: object, _traceback: object) -> None:
         self.close()
+
+
+class SealedExecutableSnapshot:
+    """A controller-owned executable snapshot protected by Linux memfd seals."""
+
+    def __init__(
+        self,
+        role: str,
+        path: pathlib.Path,
+        fd: int,
+        identity: os.stat_result,
+        sha256: str,
+    ):
+        self.role = role
+        self.path = path
+        self.fd = fd
+        self.stat = identity
+        self.sha256 = sha256
+
+    @classmethod
+    def create(cls, executable: HeldExecutable) -> "SealedExecutableSnapshot":
+        executable.verify_path()
+        if executable.stat.st_size <= 0 or executable.stat.st_mode & 0o111 == 0:
+            raise OracleError(f"tool {executable.role!r} is not executable")
+        fd, identity = _sealed_memfd_snapshot(
+            f"kiwi-{executable.role}",
+            executable.fd,
+            executable.stat.st_size,
+            executable.sha256,
+            stat.S_IMODE(executable.stat.st_mode) & 0o555,
+        )
+        try:
+            executable.verify_path()
+            return cls(executable.role, executable.path, fd, identity, executable.sha256)
+        except BaseException:
+            os.close(fd)
+            raise
+
+    def verify_sealed(self) -> None:
+        if self.fd < 0:
+            raise OracleError("sealed executable snapshot is closed")
+        _verify_sealed_memfd(
+            self.fd,
+            self.stat,
+            self.stat.st_size,
+            self.sha256,
+            "executable snapshot",
+        )
+
+    def close(self) -> None:
+        if self.fd >= 0:
+            os.close(self.fd)
+            self.fd = -1
 
 
 def _enable_subreaper() -> None:
@@ -1244,7 +1397,7 @@ def _reap_descendants(group_id: int, deadline: float) -> bool:
 
 
 def run_bounded(
-    executable: HeldExecutable,
+    executable: HeldExecutable | SealedExecutableSnapshot,
     argv: Sequence[str],
     *,
     env: Mapping[str, str],
@@ -1687,6 +1840,8 @@ class ArtifactLimits:
 
 def _tree_entries(
     root: HeldDirectory,
+    *,
+    exclude_git: bool,
 ) -> tuple[dict[str, tuple[object, ...]], set[str]]:
     entries: dict[str, tuple[object, ...]] = {}
     directories: set[str] = set()
@@ -1700,7 +1855,7 @@ def _tree_entries(
             raise
         for name in ordered:
             relative = f"{prefix}/{name}" if prefix else name
-            if relative == ".git" or relative.startswith(".git/"):
+            if exclude_git and (relative == ".git" or relative.startswith(".git/")):
                 continue
             metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
             if stat.S_ISDIR(metadata.st_mode):
@@ -1733,7 +1888,7 @@ def _tree_entries(
 
 def snapshot_tree(root: pathlib.Path) -> dict[str, tuple[object, ...]]:
     with HeldDirectory.open(root) as held:
-        entries, _directories = _tree_entries(held)
+        entries, _directories = _tree_entries(held, exclude_git=False)
         return entries
 
 
@@ -1765,7 +1920,7 @@ def scan_artifacts(
     owned_root = not isinstance(root, HeldDirectory)
     held = HeldDirectory.open(root) if owned_root else root
     try:
-        current, _directories = _tree_entries(held)
+        current, _directories = _tree_entries(held, exclude_git=True)
         return _scan_artifacts_from_entries(
             held, baseline, current, tracked_tree or {}, limits
         )
@@ -1875,9 +2030,201 @@ def _scan_artifacts_from_entries(
 
 
 def canonical_json_bytes(document: Mapping[str, object]) -> bytes:
-    return (
-        json.dumps(document, ensure_ascii=True, sort_keys=True, separators=(",", ":")) + "\n"
-    ).encode("utf-8")
+    try:
+        encoded = json.dumps(
+            document,
+            allow_nan=False,
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except ValueError as error:
+        raise OracleError("canonical JSON contains a non-finite number") from error
+    return (encoded + "\n").encode("utf-8")
+
+
+def _strict_json_bytes(payload: bytes, label: str) -> dict[str, object]:
+    def reject_duplicates(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise OracleError(f"{label} contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    def reject_constant(value: str) -> object:
+        raise OracleError(f"{label} contains a non-finite JSON number: {value}")
+
+    try:
+        document = json.loads(
+            payload.decode("utf-8", "strict"),
+            object_pairs_hook=reject_duplicates,
+            parse_constant=reject_constant,
+        )
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise OracleError(f"{label} is not strict UTF-8 JSON") from error
+    if not isinstance(document, dict):
+        raise OracleError(f"{label} root must be an object")
+    return document
+
+
+def _read_bounded_fd(fd: int, limit: int, label: str) -> bytes:
+    metadata = os.fstat(fd)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_size > limit:
+        raise OracleError(f"{label} is not a bounded single-link regular file")
+    offset = os.lseek(fd, 0, os.SEEK_CUR)
+    os.lseek(fd, 0, os.SEEK_SET)
+    try:
+        content = bytearray()
+        while len(content) <= metadata.st_size:
+            chunk = os.read(fd, min(1024 * 1024, metadata.st_size + 1 - len(content)))
+            if not chunk:
+                break
+            content.extend(chunk)
+        if len(content) != metadata.st_size:
+            raise OracleError(f"{label} changed while being read")
+        return bytes(content)
+    finally:
+        os.lseek(fd, offset, os.SEEK_SET)
+
+
+def _parse_json_lines(payload: bytes, label: str) -> list[dict[str, object]]:
+    try:
+        text = payload.decode("utf-8", "strict")
+    except UnicodeError as error:
+        raise OracleError(f"{label} is not strict UTF-8") from error
+    if not text or not text.endswith("\n"):
+        raise OracleError(f"{label} must be non-empty newline-terminated JSONL")
+    records: list[dict[str, object]] = []
+    for index, line in enumerate(text.splitlines(), start=1):
+        if not line:
+            raise OracleError(f"{label} contains an empty record at line {index}")
+        records.append(_strict_json_bytes(line.encode("utf-8"), f"{label} line {index}"))
+    return records
+
+
+def _collect_differential_evidence(
+    work_root: HeldDirectory,
+    redis_log_fd: int,
+    callback_input: CallbackInputSnapshot,
+    callback_document: Mapping[str, object],
+    runtime_document: Mapping[str, object],
+    tool_evidence: Sequence[Mapping[str, object]],
+) -> dict[str, object]:
+    observed, directories = _tree_entries(work_root, exclude_git=False)
+    if directories or set(observed) != set(CALLBACK_EVIDENCE_FILES):
+        observed_paths = set(observed).union(directories)
+        raise OracleError(
+            "callback evidence allowlist drifted: "
+            f"missing={sorted(set(CALLBACK_EVIDENCE_FILES) - set(observed))}, "
+            f"extra={sorted(observed_paths - set(CALLBACK_EVIDENCE_FILES))}"
+        )
+    payloads: dict[str, bytes] = {}
+    total = 0
+    for name, limit in CALLBACK_EVIDENCE_FILES.items():
+        fd = work_root.open_regular(name)
+        try:
+            payload = _read_bounded_fd(fd, limit, f"callback evidence {name}")
+        finally:
+            os.close(fd)
+        if not payload and name != "kiwi.log":
+            raise OracleError(f"callback evidence is unexpectedly empty: {name}")
+        payloads[name] = payload
+        total += len(payload)
+    redis_log = _read_bounded_fd(redis_log_fd, 8 * 1024 * 1024, "Redis runtime log")
+    total += len(redis_log)
+    if total > MAX_DIFFERENTIAL_EVIDENCE_BYTES:
+        raise OracleError("callback evidence inputs exceed the aggregate bound")
+
+    required_jobs = _strict_json_bytes(
+        payloads["vector-required-jobs.json"], "canonical required-jobs evidence"
+    )
+    if required_jobs.get("schema") != "kiwi-vector-required-jobs/canonical-v1":
+        raise OracleError("canonical required-jobs schema identity mismatch")
+    collect_summary = _strict_json_bytes(
+        payloads["collect-summary.json"], "collection summary evidence"
+    )
+    run_summary = _strict_json_bytes(payloads["run-summary.json"], "pytest summary evidence")
+    kiwi_runtime = _strict_json_bytes(
+        payloads["kiwi-runtime.json"], "Kiwi runtime identity evidence"
+    )
+    callback_cleanup = _strict_json_bytes(
+        payloads["callback-cleanup.json"], "callback cleanup evidence"
+    )
+    if kiwi_runtime.get("schema_version") != "kiwi-runtime-identity/v1":
+        raise OracleError("Kiwi runtime identity schema mismatch")
+    if callback_cleanup.get("schema_version") != "kiwi-vector-callback-cleanup/v1":
+        raise OracleError("callback cleanup evidence schema mismatch")
+    for field in (
+        "kiwi_process_reaped",
+        "data_directory_removed",
+        "log_directory_removed",
+        "no_unexpected_work_residue",
+    ):
+        if callback_cleanup.get(field) is not True:
+            raise OracleError(f"callback cleanup evidence is incomplete: {field}")
+    if callback_document.get("process_group_reaped") is not True:
+        raise OracleError("callback process group was not reaped")
+    if kiwi_runtime.get("binary_sha256") != callback_input.document["kiwi_sha256"]:
+        raise OracleError("executed Kiwi binary hash differs from frozen callback input")
+    if kiwi_runtime.get("executable_identity_equal") is not True:
+        raise OracleError("executed Kiwi binary identity differs from frozen executable")
+
+    manifest_entries = callback_input.manifest["entries"]
+    assert isinstance(manifest_entries, list)
+    helper = next(
+        entry
+        for entry in manifest_entries
+        if entry.get("path") == "target/debug/kiwi-required-vector-jobs"
+    )
+    evidence = {
+        "schema_version": DIFFERENTIAL_EVIDENCE_SCHEMA,
+        "callback_input": {
+            "expected_head": callback_input.document["expected_head"],
+            "actual_head": callback_input.document["actual_head"],
+            "tree_oid": callback_input.document["tree_oid"],
+            "manifest_sha256": callback_input.document["input_manifest_sha256"],
+            "manifest": callback_input.manifest,
+        },
+        "platform": {
+            "system": "Linux",
+            "kernel": os.uname().release,
+            "architecture": os.uname().machine,
+        },
+        "controlled_tools": list(tool_evidence),
+        "runtime_identities": {
+            "redis": dict(runtime_document),
+            "kiwi": kiwi_runtime,
+            "required_jobs_helper": helper,
+        },
+        "required_jobs": required_jobs,
+        "collection": {
+            "log": payloads["collect.log"].decode("utf-8", "strict"),
+            "summary": collect_summary,
+        },
+        "pytest": {
+            "log": payloads["pytest.log"].decode("utf-8", "strict"),
+            "summary": run_summary,
+        },
+        "logs": {
+            "kiwi": payloads["kiwi.log"].decode("utf-8", "strict"),
+            "redis": redis_log.decode("utf-8", "strict"),
+        },
+        "raw_wire_transcripts": _parse_json_lines(
+            payloads["raw-transcript.jsonl"], "raw wire transcript evidence"
+        ),
+        "final_state": _parse_json_lines(
+            payloads["final-state.jsonl"], "final-state evidence"
+        ),
+        "cleanup": {
+            **callback_cleanup,
+            "callback_process_group_reaped": True,
+            "observed_work_files": sorted(payloads),
+        },
+    }
+    if len(canonical_json_bytes(evidence)) > MAX_DIFFERENTIAL_EVIDENCE_BYTES:
+        raise OracleError("canonical differential evidence exceeds 128 MiB")
+    return evidence
 
 
 def _parse_utc_timestamp(value: object, field: str) -> datetime:
@@ -2014,6 +2361,28 @@ def _rename_noreplace(directory_fd: int, source: str, target: str) -> None:
     raise OSError(error, f"renameat2 RENAME_NOREPLACE: {os.strerror(error)}")
 
 
+def _verified_rollback_parent(
+    target: CandidateTarget, preferred_fd: int | None
+) -> tuple[int, HeldDirectory | None]:
+    for directory_fd in (preferred_fd, target.parent.fd):
+        if directory_fd is None or directory_fd < 0:
+            continue
+        try:
+            current = os.fstat(directory_fd)
+        except OSError:
+            continue
+        if not _same_directory_object(target.parent.stat, current):
+            raise OracleError(
+                f"rollback parent identity changed: {target.parent_path}"
+            )
+        return directory_fd, None
+    visible = HeldDirectory.open_absolute_nofollow(target.parent_path)
+    if not _same_directory_object(target.parent.stat, visible.stat):
+        visible.close()
+        raise OracleError(f"rollback parent path changed: {target.parent_path}")
+    return visible.fd, visible
+
+
 def publish_provenance(
     path: pathlib.Path | CandidateTarget,
     document: Mapping[str, object],
@@ -2033,37 +2402,45 @@ def publish_provenance(
     payload_sha256 = ""
     rollback_attempted = False
 
-    def rollback_publication() -> None:
-        if rollback_fd < 0 or published_identity is None:
+    def rollback_publication(preferred_parent_fd: int | None = None) -> None:
+        if published_identity is None:
             raise OracleError("output publication rollback identity is unavailable")
+        directory_fd, owned_parent = _verified_rollback_parent(
+            target,
+            rollback_fd if preferred_parent_fd is None else preferred_parent_fd,
+        )
         try:
-            visible_fd = os.open(
-                target.basename,
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=rollback_fd,
-            )
-        except FileNotFoundError as error:
-            raise OracleError(
-                "output publication rollback is ambiguous because final is missing"
-            ) from error
-        try:
-            visible_identity = os.fstat(visible_fd)
-            if not _same_identity(published_identity, visible_identity):
-                raise OracleError(
-                    "output publication rollback refused a replacement final"
+            try:
+                visible_fd = os.open(
+                    target.basename,
+                    os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=directory_fd,
                 )
-            if (
-                not stat.S_ISREG(visible_identity.st_mode)
-                or visible_identity.st_size != len(payload)
-                or _sha256_fd(visible_fd) != payload_sha256
-            ):
+            except FileNotFoundError as error:
                 raise OracleError(
-                    "output publication rollback refused changed final content"
-                )
+                    "output publication rollback is ambiguous because final is missing"
+                ) from error
+            try:
+                visible_identity = os.fstat(visible_fd)
+                if not _same_identity(published_identity, visible_identity):
+                    raise OracleError(
+                        "output publication rollback refused a replacement final"
+                    )
+                if (
+                    not stat.S_ISREG(visible_identity.st_mode)
+                    or visible_identity.st_size != len(payload)
+                    or _sha256_fd(visible_fd) != payload_sha256
+                ):
+                    raise OracleError(
+                        "output publication rollback refused changed final content"
+                    )
+            finally:
+                os.close(visible_fd)
+            os.unlink(target.basename, dir_fd=directory_fd)
+            os.fsync(directory_fd)
         finally:
-            os.close(visible_fd)
-        os.unlink(target.basename, dir_fd=rollback_fd)
-        os.fsync(rollback_fd)
+            if owned_parent is not None:
+                owned_parent.close()
 
     try:
         rollback_fd = os.dup(target.parent.fd)
@@ -2128,12 +2505,8 @@ def publish_provenance(
         rollback_error: BaseException | None = None
         close_error: BaseException | None = None
         parent_error: BaseException | None = None
-        if published and not completed:
-            rollback_attempted = True
-            try:
-                rollback_publication()
-            except BaseException as error:
-                rollback_error = error
+        published_close_error: BaseException | None = None
+        rollback_parent_close_error: BaseException | None = None
         if close_after_publication:
             try:
                 target.close()
@@ -2152,39 +2525,459 @@ def publish_provenance(
                         visible.close()
                 except BaseException as error:
                     parent_error = error
-            if published and (close_error is not None or parent_error is not None):
-                if not rollback_attempted:
+        if published_fd >= 0:
+            closing_fd = published_fd
+            published_fd = -1
+            try:
+                os.close(closing_fd)
+            except BaseException as error:
+                published_close_error = error
+        must_rollback = published and (
+            not completed
+            or failure_error is not None
+            or close_error is not None
+            or parent_error is not None
+            or published_close_error is not None
+        )
+        if must_rollback and not rollback_attempted:
+            rollback_attempted = True
+            try:
+                rollback_publication()
+            except BaseException as error:
+                rollback_error = error
+        if rollback_fd >= 0:
+            closing_fd = rollback_fd
+            try:
+                os.close(closing_fd)
+            except BaseException as error:
+                rollback_parent_close_error = error
+                if published and not rollback_attempted:
                     rollback_attempted = True
                     try:
-                        rollback_publication()
-                    except BaseException as error:
-                        rollback_error = error
-        if published_fd >= 0:
-            try:
-                os.close(published_fd)
-            except BaseException as error:
-                if rollback_error is None:
-                    rollback_error = error
-            published_fd = -1
-        if rollback_fd >= 0:
-            try:
-                os.close(rollback_fd)
-            except BaseException as error:
-                if rollback_error is None:
-                    rollback_error = error
+                        rollback_publication(closing_fd)
+                    except BaseException as rollback_failure:
+                        rollback_error = rollback_failure
             rollback_fd = -1
         if rollback_error is not None:
             raise OracleError(
                 "provenance publication cleanup/rollback failed: "
                 f"business={failure_error}; close={close_error}; "
-                f"identity={parent_error}; rollback={rollback_error}"
-            ) from (failure_error or close_error or parent_error or rollback_error)
+                f"identity={parent_error}; published_close={published_close_error}; "
+                f"rollback_parent_close={rollback_parent_close_error}; "
+                f"rollback={rollback_error}"
+            ) from (
+                failure_error
+                or close_error
+                or parent_error
+                or published_close_error
+                or rollback_parent_close_error
+                or rollback_error
+            )
+        late_close_error = published_close_error or rollback_parent_close_error
+        if late_close_error is not None:
+            raise OracleError(
+                "provenance publication late close failed after rollback: "
+                f"published={published_close_error}; "
+                f"rollback_parent={rollback_parent_close_error}"
+            ) from late_close_error
         if close_error is not None:
             raise close_error
         if parent_error is not None:
             raise OracleError(
                 f"output-parent identity verification failed after close: {parent_error}"
             ) from parent_error
+
+
+@dataclass
+class PublishedOutput:
+    target: CandidateTarget
+    fd: int
+    identity: os.stat_result
+    size_bytes: int
+    sha256: str
+
+
+def _rollback_published_output(
+    output: PublishedOutput, *, parent_fd: int | None = None
+) -> None:
+    directory_fd = output.target.parent.fd if parent_fd is None else parent_fd
+    visible_fd = os.open(
+        output.target.basename,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=directory_fd,
+    )
+    try:
+        visible = os.fstat(visible_fd)
+        if (
+            not _same_identity(output.identity, visible)
+            or visible.st_size != output.size_bytes
+            or _sha256_fd(visible_fd) != output.sha256
+        ):
+            raise OracleError(
+                f"rollback refused a replaced or changed output: {output.target.path}"
+            )
+    finally:
+        os.close(visible_fd)
+    os.unlink(output.target.basename, dir_fd=directory_fd)
+    os.fsync(directory_fd)
+
+
+def _rollback_published_output_with_parent_recovery(
+    output: PublishedOutput, parent_fd: int | None
+) -> None:
+    directory_fd, owned_parent = _verified_rollback_parent(output.target, parent_fd)
+    try:
+        _rollback_published_output(output, parent_fd=directory_fd)
+    finally:
+        if owned_parent is not None:
+            owned_parent.close()
+
+
+def _publish_atomic_payload(
+    target: CandidateTarget, payload: bytes, label: str
+) -> PublishedOutput:
+    target.reject_existing()
+    temporary = f".{target.basename}.{label}-{os.getpid()}-{time.monotonic_ns()}"
+    fd = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC,
+        0o600,
+        dir_fd=target.parent.fd,
+    )
+    published: PublishedOutput | None = None
+    renamed = False
+    payload_sha256 = hashlib.sha256(payload).hexdigest()
+    temporary_identity: os.stat_result | None = None
+    try:
+        view = memoryview(payload)
+        while view:
+            written = os.write(fd, view)
+            if written <= 0:
+                raise OracleError(f"{label} write made no progress")
+            view = view[written:]
+        os.fsync(fd)
+        temporary_identity = os.fstat(fd)
+        os.close(fd)
+        fd = -1
+        target.verify_visible_parent()
+        _rename_noreplace(target.parent.fd, temporary, target.basename)
+        renamed = True
+        published_fd = os.open(
+            target.basename,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            dir_fd=target.parent.fd,
+        )
+        visible = os.fstat(published_fd)
+        published = PublishedOutput(
+            target=target,
+            fd=published_fd,
+            identity=visible,
+            size_bytes=len(payload),
+            sha256=payload_sha256,
+        )
+        if (
+            temporary_identity is None
+            or not _same_identity(temporary_identity, visible)
+            or not stat.S_ISREG(visible.st_mode)
+            or visible.st_nlink != 1
+            or visible.st_size != len(payload)
+            or _sha256_fd(published_fd) != payload_sha256
+        ):
+            raise OracleError(f"published {label} differs from its staged bytes")
+        os.fsync(target.parent.fd)
+        target.verify_visible_parent()
+        return published
+    except BaseException:
+        if published is not None:
+            try:
+                _rollback_published_output(published)
+            finally:
+                os.close(published.fd)
+        elif renamed and temporary_identity is not None:
+            visible_fd = os.open(
+                target.basename,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                dir_fd=target.parent.fd,
+            )
+            try:
+                visible = os.fstat(visible_fd)
+                if (
+                    _same_identity(temporary_identity, visible)
+                    and visible.st_size == len(payload)
+                    and _sha256_fd(visible_fd) == payload_sha256
+                ):
+                    os.unlink(target.basename, dir_fd=target.parent.fd)
+                    os.fsync(target.parent.fd)
+            finally:
+                os.close(visible_fd)
+        raise
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        try:
+            os.unlink(temporary, dir_fd=target.parent.fd)
+        except FileNotFoundError:
+            pass
+
+
+def _verify_published_output(output: PublishedOutput) -> None:
+    output.target.verify_visible_parent()
+    visible_fd = os.open(
+        output.target.basename,
+        os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+        dir_fd=output.target.parent.fd,
+    )
+    try:
+        visible = os.fstat(visible_fd)
+        if (
+            not _same_identity(output.identity, visible)
+            or visible.st_size != output.size_bytes
+            or _sha256_fd(visible_fd) != output.sha256
+        ):
+            raise OracleError(f"post-publish verification failed: {output.target.path}")
+    finally:
+        os.close(visible_fd)
+
+
+def _verify_published_binding(
+    verifier: HeldExecutable,
+    provenance: PublishedOutput,
+    evidence: PublishedOutput,
+    expected_head: str,
+    expected_tree: str,
+) -> None:
+    verifier.verify_path()
+    if provenance.fd < 0 or evidence.fd < 0 or provenance.fd == evidence.fd:
+        raise OracleError("publication binding requires two distinct open output FDs")
+    sealed_verifier = SealedExecutableSnapshot.create(verifier)
+    provenance_snapshot_fd = -1
+    evidence_snapshot_fd = -1
+    try:
+        provenance_snapshot_fd, provenance_snapshot_identity = _sealed_memfd_snapshot(
+            "published-provenance",
+            provenance.fd,
+            provenance.size_bytes,
+            provenance.sha256,
+            0o400,
+        )
+        evidence_snapshot_fd, evidence_snapshot_identity = _sealed_memfd_snapshot(
+            "published-evidence",
+            evidence.fd,
+            evidence.size_bytes,
+            evidence.sha256,
+            0o400,
+        )
+        sealed_verifier.verify_sealed()
+        _verify_sealed_memfd(
+            provenance_snapshot_fd,
+            provenance_snapshot_identity,
+            provenance.size_bytes,
+            provenance.sha256,
+            "published provenance snapshot",
+        )
+        _verify_sealed_memfd(
+            evidence_snapshot_fd,
+            evidence_snapshot_identity,
+            evidence.size_bytes,
+            evidence.sha256,
+            "published evidence snapshot",
+        )
+        result = run_bounded(
+            sealed_verifier,
+            [
+                str(verifier.path),
+                str(provenance_snapshot_fd),
+                str(evidence_snapshot_fd),
+                evidence.target.basename,
+                expected_head,
+                expected_tree,
+            ],
+            env={
+                "PATH": "/usr/bin:/bin",
+                "HOME": "/",
+                "TMPDIR": "/tmp",
+                "LC_ALL": "C",
+                "LANG": "C",
+                "TZ": "UTC",
+            },
+            timeout_ms=COMMAND_TIMEOUT_MS,
+            term_grace_ms=TERM_GRACE_MS,
+            stdout_limit_bytes=MAX_JSON_BYTES,
+            stderr_limit_bytes=MAX_JSON_BYTES,
+            extra_fds=(provenance_snapshot_fd, evidence_snapshot_fd),
+            cwd=pathlib.Path("/"),
+        )
+        sealed_verifier.verify_sealed()
+        _verify_sealed_memfd(
+            provenance_snapshot_fd,
+            provenance_snapshot_identity,
+            provenance.size_bytes,
+            provenance.sha256,
+            "published provenance snapshot",
+        )
+        _verify_sealed_memfd(
+            evidence_snapshot_fd,
+            evidence_snapshot_identity,
+            evidence.size_bytes,
+            evidence.sha256,
+            "published evidence snapshot",
+        )
+    finally:
+        if evidence_snapshot_fd >= 0:
+            os.close(evidence_snapshot_fd)
+        if provenance_snapshot_fd >= 0:
+            os.close(provenance_snapshot_fd)
+        sealed_verifier.close()
+    verifier.verify_path()
+    if result.timed_out or result.output_truncated or result.exit_code != 0:
+        stderr = result.stderr.decode("utf-8", "replace").strip()
+        raise OracleError(
+            "Oracle publication binding verification failed: "
+            f"exit={result.exit_code} timeout={result.timed_out} "
+            f"truncated={result.output_truncated} stderr={stderr!r}"
+        )
+
+
+def publish_evidence_then_provenance(
+    evidence_target: CandidateTarget,
+    provenance_target: CandidateTarget,
+    evidence_document: Mapping[str, object],
+    provenance_document: Mapping[str, object],
+    *,
+    close_targets: bool = False,
+    post_publish_verifier: HeldExecutable | None = None,
+    expected_head: str | None = None,
+    expected_tree: str | None = None,
+    close_post_publish_verifier: bool = False,
+) -> dict[str, object]:
+    if evidence_target.path == provenance_target.path:
+        raise OracleError("evidence and provenance outputs must be distinct")
+    if post_publish_verifier is None:
+        if (
+            expected_head is not None
+            or expected_tree is not None
+            or close_post_publish_verifier
+        ):
+            raise OracleError("publication binding arguments are incomplete")
+    elif expected_head is None or expected_tree is None:
+        raise OracleError("publication binding requires expected Head and tree")
+    evidence_payload = canonical_json_bytes(evidence_document)
+    if len(evidence_payload) > MAX_DIFFERENTIAL_EVIDENCE_BYTES:
+        raise OracleError("canonical differential evidence exceeds 128 MiB")
+    evidence: PublishedOutput | None = None
+    provenance: PublishedOutput | None = None
+    rollback_parent_fds: dict[int, int] = {}
+    if close_targets:
+        try:
+            for target in (evidence_target, provenance_target):
+                rollback_parent_fds[id(target)] = os.dup(target.parent.fd)
+        except BaseException:
+            for parent_fd in rollback_parent_fds.values():
+                os.close(parent_fd)
+            raise
+    try:
+        evidence = _publish_atomic_payload(evidence_target, evidence_payload, "evidence")
+        differential_evidence_identity: dict[str, object] = {
+            "schema_version": DIFFERENTIAL_EVIDENCE_SCHEMA,
+            "file_name": evidence_target.basename,
+            "size_bytes": evidence.size_bytes,
+            "sha256": evidence.sha256,
+            "published_atomically": True,
+            "verified_after_publish": True,
+        }
+        final_provenance = dict(provenance_document)
+        final_provenance["differential_evidence"] = differential_evidence_identity
+        provenance_payload = canonical_json_bytes(final_provenance)
+        if len(provenance_payload) > MAX_JSON_BYTES:
+            raise OracleError("final provenance exceeds its JSON byte limit")
+        _validate_provenance_timestamp_order(final_provenance)
+        provenance = _publish_atomic_payload(
+            provenance_target, provenance_payload, "provenance"
+        )
+        _verify_published_output(evidence)
+        _verify_published_output(provenance)
+        if post_publish_verifier is not None:
+            assert expected_head is not None and expected_tree is not None
+            try:
+                _verify_published_binding(
+                    post_publish_verifier,
+                    provenance,
+                    evidence,
+                    expected_head,
+                    expected_tree,
+                )
+            finally:
+                if close_post_publish_verifier:
+                    post_publish_verifier.close()
+            _verify_published_output(evidence)
+            _verify_published_output(provenance)
+        os.fsync(evidence_target.parent.fd)
+        if not _same_directory_object(
+            evidence_target.parent.stat, provenance_target.parent.stat
+        ):
+            os.fsync(provenance_target.parent.fd)
+        for output in (provenance, evidence):
+            assert output is not None
+            output_fd = output.fd
+            output.fd = -1
+            os.close(output_fd)
+        if close_targets:
+            close_errors: list[tuple[pathlib.Path, BaseException]] = []
+            for target in (evidence_target, provenance_target):
+                try:
+                    target.close()
+                    visible_parent = HeldDirectory.open_absolute_nofollow(
+                        target.parent_path
+                    )
+                    try:
+                        if not _same_directory_object(
+                            target.parent.stat, visible_parent.stat
+                        ):
+                            raise OracleError(
+                                f"published output parent changed during close: {target.parent_path}"
+                            )
+                    finally:
+                        visible_parent.close()
+                except BaseException as error:
+                    close_errors.append((target.path, error))
+            if close_errors:
+                raise OracleError(f"published output target close failed: {close_errors}")
+            for target in (evidence_target, provenance_target):
+                parent_fd = rollback_parent_fds[id(target)]
+                os.close(parent_fd)
+                rollback_parent_fds[id(target)] = -1
+        return differential_evidence_identity
+    except BaseException as business_error:
+        rollback_errors: list[BaseException] = []
+        for output in (provenance, evidence):
+            if output is None:
+                continue
+            try:
+                _rollback_published_output_with_parent_recovery(
+                    output,
+                    rollback_parent_fds.get(id(output.target)),
+                )
+            except FileNotFoundError:
+                pass
+            except BaseException as error:
+                rollback_errors.append(error)
+        if rollback_errors:
+            raise OracleError(
+                f"evidence/provenance transaction rollback failed: {rollback_errors}"
+            ) from business_error
+        raise
+    finally:
+        for output in (provenance, evidence):
+            if output is not None and output.fd >= 0:
+                output_fd = output.fd
+                output.fd = -1
+                os.close(output_fd)
+        for parent_fd in rollback_parent_fds.values():
+            if parent_fd >= 0:
+                try:
+                    os.close(parent_fd)
+                except OSError:
+                    pass
 
 
 def _run_cleanup_actions(
@@ -2282,9 +3075,11 @@ def _remove_runtime_name(parent_fd: int, runtime_name: str) -> None:
         runtime_root.close()
 
 
+CALLBACK_SHELL_ENTRYPOINTS = ("/usr/bin/bash", "/bin/bash")
+
 REQUIRED_TOOL_PATHS: tuple[tuple[str, tuple[str, ...], tuple[str, ...]], ...] = (
     ("git", ("/usr/bin/git",), ("--version",)),
-    ("shell", ("/usr/bin/bash", "/bin/bash"), ("--version",)),
+    ("shell", CALLBACK_SHELL_ENTRYPOINTS, ("--version",)),
     ("make", ("/usr/bin/make",), ("--version",)),
     ("cc", ("/usr/bin/cc",), ("--version",)),
     ("ld", ("/usr/bin/ld",), ("--version",)),
@@ -2435,6 +3230,698 @@ def _git_text(
     env: Mapping[str, str],
 ) -> str:
     return _git_bytes(git, source, git_dir, args, env).decode("utf-8", "strict").strip()
+
+
+@dataclass(frozen=True)
+class CallbackRepositoryIdentity:
+    expected_head: str
+    actual_head: str
+    tree_oid: str
+    ref_context: str
+    tracked_entries: tuple[tuple[str, str, str, int], ...]
+
+
+@dataclass(frozen=True)
+class CallbackInputLimits:
+    max_entries: int = MAX_CALLBACK_INPUT_ENTRIES
+    max_file_bytes: int = MAX_CALLBACK_INPUT_FILE_BYTES
+    max_total_bytes: int = MAX_CALLBACK_INPUT_TOTAL_BYTES
+
+    def __post_init__(self) -> None:
+        if (
+            self.max_entries <= 0
+            or self.max_file_bytes < 0
+            or self.max_total_bytes < 0
+        ):
+            raise ValueError("callback input limits must be non-negative and non-zero")
+
+
+@dataclass
+class _CallbackInputBudget:
+    limits: CallbackInputLimits
+    entry_count: int = 0
+    total_bytes: int = 0
+
+    def reserve(self, path: str, size_bytes: int, *, file_entry: bool) -> None:
+        if size_bytes < 0:
+            raise OracleError(f"callback input has a negative byte size: {path}")
+        if file_entry and size_bytes > self.limits.max_file_bytes:
+            raise OracleError(f"callback input exceeds its file byte bound: {path}")
+        if self.entry_count >= self.limits.max_entries:
+            raise OracleError("callback input exceeds its entry-count bound")
+        if self.total_bytes + size_bytes > self.limits.max_total_bytes:
+            raise OracleError("callback input exceeds its aggregate byte bound")
+        self.entry_count += 1
+        self.total_bytes += size_bytes
+
+
+@dataclass
+class CallbackInputSnapshot:
+    root: HeldDirectory
+    repository: CallbackRepositoryIdentity
+    manifest: dict[str, object]
+    runtime_manifest: tuple[dict[str, object], ...]
+    document: dict[str, object]
+    full_revalidation_count: int = 0
+
+
+def _callback_git_bytes(
+    git: HeldExecutable,
+    source: HeldDirectory,
+    args: Sequence[str],
+    env: Mapping[str, str],
+    *,
+    stdout_limit_bytes: int = 1024 * 1024,
+) -> bytes:
+    git_env = dict(env)
+    git_env.update(
+        {
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_LITERAL_PATHSPECS": "1",
+            "GIT_ATTR_NOSYSTEM": "1",
+            "XDG_CONFIG_HOME": env["HOME"],
+        }
+    )
+    result = run_bounded(
+        git,
+        [
+            "git",
+            "-c",
+            "core.useReplaceRefs=false",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.attributesFile=/dev/null",
+            "-c",
+            "diff.external=",
+            "-c",
+            "protocol.file.allow=never",
+            "-c",
+            "protocol.ext.allow=never",
+            "-C",
+            f"/proc/self/fd/{source.fd}",
+            *args,
+        ],
+        env=git_env,
+        timeout_ms=COMMAND_TIMEOUT_MS,
+        term_grace_ms=1_000,
+        stdout_limit_bytes=stdout_limit_bytes,
+        stderr_limit_bytes=1024 * 1024,
+        extra_fds=(source.fd,),
+    )
+    if result.timed_out or result.output_truncated or result.exit_code != 0:
+        raise OracleError(
+            f"controlled callback Git command failed: {' '.join(args)}; "
+            f"exit={result.exit_code}; timeout={result.timed_out}; "
+            f"truncated={result.output_truncated}; "
+            f"stderr={result.stderr.decode('utf-8', 'replace')}"
+        )
+    return result.stdout
+
+
+def _callback_git_text(
+    git: HeldExecutable,
+    source: HeldDirectory,
+    args: Sequence[str],
+    env: Mapping[str, str],
+) -> str:
+    return _callback_git_bytes(git, source, args, env).decode("utf-8", "strict").strip()
+
+
+def _canonical_callback_path(raw_path: bytes) -> str:
+    path = raw_path.decode("utf-8", "strict")
+    parts = path.split("/")
+    if (
+        not path
+        or path.startswith("/")
+        or "\\" in path
+        or any(part in {"", ".", ".."} for part in parts)
+    ):
+        raise OracleError(f"Git returned a non-canonical callback path: {path!r}")
+    return path
+
+
+def _validate_callback_repository(
+    source: HeldDirectory,
+    expected_head: str,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+    *,
+    limits: CallbackInputLimits | None = None,
+) -> CallbackRepositoryIdentity:
+    limits = limits or CallbackInputLimits()
+    if len(expected_head) != 40 or any(character not in "0123456789abcdef" for character in expected_head):
+        raise OracleError("expected Kiwi Head must be a 40-character lowercase hexadecimal OID")
+    actual_head = _callback_git_text(git, source, ["rev-parse", "HEAD^{commit}"], env)
+    if actual_head != expected_head:
+        raise OracleError(
+            f"Kiwi HEAD differs from KIWI_EXPECTED_HEAD: expected={expected_head}, actual={actual_head}"
+        )
+    tree_oid = _callback_git_text(
+        git, source, ["rev-parse", f"{expected_head}^{{tree}}"], env
+    )
+    if len(tree_oid) != 40 or any(character not in "0123456789abcdef" for character in tree_oid):
+        raise OracleError("Git returned an invalid Kiwi HEAD tree OID")
+    commit_object = _callback_git_bytes(
+        git,
+        source,
+        ["cat-file", "commit", expected_head],
+        env,
+        stdout_limit_bytes=MAX_JSON_BYTES,
+    )
+    commit_tree_line = commit_object.partition(b"\n")[0]
+    if not commit_tree_line.startswith(b"tree "):
+        raise OracleError("Git returned a Kiwi commit without a tree identity")
+    commit_tree_oid = commit_tree_line.removeprefix(b"tree ").decode("ascii", "strict")
+    if (
+        len(commit_tree_oid) != 40
+        or any(character not in "0123456789abcdef" for character in commit_tree_oid)
+        or commit_tree_oid != tree_oid
+    ):
+        raise OracleError("Git tree OID differs from expected Head commit object")
+    tracked_status = _callback_git_bytes(
+        git, source, ["status", "--porcelain=v1", "--untracked-files=no"], env
+    )
+    if tracked_status:
+        raise OracleError("Kiwi checkout has tracked changes")
+    index_records = _callback_git_bytes(
+        git, source, ["ls-files", "-v", "-z", "--cached"], env
+    ).split(b"\0")
+    unsafe_index = [record for record in index_records if record and record[:1] != b"H"]
+    if unsafe_index:
+        raise OracleError("Kiwi index contains assume-unchanged or skip-worktree entries")
+    ref_context = _callback_git_text(
+        git, source, ["rev-parse", "--symbolic-full-name", "HEAD"], env
+    )
+    if not ref_context:
+        ref_context = "HEAD"
+
+    records = _callback_git_bytes(
+        git,
+        source,
+        ["ls-tree", "-rz", "-l", "--full-tree", tree_oid],
+        env,
+        stdout_limit_bytes=16 * 1024 * 1024,
+    ).split(b"\0")
+    entries: list[tuple[str, str, str, int]] = []
+    seen: set[str] = set()
+    for record in records:
+        if not record:
+            continue
+        try:
+            header, raw_path = record.split(b"\t", 1)
+            raw_mode, raw_kind, raw_oid, raw_size = header.split(None, 3)
+            size = int(raw_size)
+        except (ValueError, OverflowError) as error:
+            raise OracleError("Git returned malformed Kiwi tree evidence") from error
+        path = _canonical_callback_path(raw_path)
+        mode = raw_mode.decode("ascii", "strict")
+        kind = raw_kind.decode("ascii", "strict")
+        oid = raw_oid.decode("ascii", "strict")
+        if kind != "blob" or mode not in {"100644", "100755", "120000"}:
+            raise OracleError(f"unsupported Kiwi HEAD entry: {mode} {kind} {path}")
+        if len(oid) != 40 or any(character not in "0123456789abcdef" for character in oid):
+            raise OracleError(f"invalid Kiwi blob OID for {path}")
+        if size < 0 or size > limits.max_file_bytes:
+            raise OracleError(f"Kiwi HEAD entry exceeds its byte bound: {path}")
+        if path in seen:
+            raise OracleError(f"duplicate Kiwi HEAD path: {path}")
+        if len(entries) >= limits.max_entries:
+            raise OracleError("Kiwi HEAD entry count is outside the callback-input bound")
+        seen.add(path)
+        entries.append((path, mode, oid, size))
+    if not entries:
+        raise OracleError("Kiwi HEAD entry count is outside the callback-input bound")
+    final_head = _callback_git_text(git, source, ["rev-parse", "HEAD^{commit}"], env)
+    if final_head != expected_head:
+        raise OracleError(
+            "Kiwi HEAD changed while validating callback input: "
+            f"expected={expected_head}, actual={final_head}"
+        )
+    return CallbackRepositoryIdentity(
+        expected_head=expected_head,
+        actual_head=actual_head,
+        tree_oid=tree_oid,
+        ref_context=ref_context,
+        tracked_entries=tuple(entries),
+    )
+
+
+def _read_callback_regular(
+    root: HeldDirectory,
+    relative: str,
+    *,
+    budget: _CallbackInputBudget | None = None,
+    expected_metadata: os.stat_result | None = None,
+) -> tuple[bytes, os.stat_result]:
+    fd = root.open_regular(relative)
+    try:
+        metadata = os.fstat(fd)
+        if expected_metadata is not None and not _same_identity(expected_metadata, metadata):
+            raise OracleError(f"runtime callback input changed before reading: {relative}")
+        if metadata.st_nlink != 1:
+            raise OracleError(f"runtime callback input has invalid size or hard-link count: {relative}")
+        if budget is not None:
+            budget.reserve(relative, metadata.st_size, file_entry=True)
+        elif metadata.st_size > MAX_CALLBACK_INPUT_FILE_BYTES:
+            raise OracleError(f"runtime callback input has invalid size or hard-link count: {relative}")
+        content = bytearray()
+        while len(content) <= metadata.st_size:
+            chunk = os.read(fd, min(1024 * 1024, metadata.st_size + 1 - len(content)))
+            if not chunk:
+                break
+            content.extend(chunk)
+        if len(content) != metadata.st_size:
+            raise OracleError(f"runtime callback input changed while reading: {relative}")
+        return bytes(content), metadata
+    finally:
+        os.close(fd)
+
+
+def _stream_directory_names(directory_fd: int) -> Iterable[str]:
+    with os.scandir(directory_fd) as entries:
+        for entry in entries:
+            yield entry.name
+
+
+def _runtime_callback_entries(
+    source: HeldDirectory,
+    *,
+    limits: CallbackInputLimits | None = None,
+    initial_entry_count: int = 0,
+    initial_total_bytes: int = 0,
+    _budget: _CallbackInputBudget | None = None,
+) -> Iterable[tuple[str, str, int, bytes | str, os.stat_result]]:
+    budget = _budget or _CallbackInputBudget(
+        limits or CallbackInputLimits(), initial_entry_count, initial_total_bytes
+    )
+    identities: set[tuple[int, int]] = set()
+    for relative in CALLBACK_RUNTIME_PATHS:
+        content, metadata = _read_callback_regular(source, relative, budget=budget)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if identity in identities:
+            raise OracleError("runtime callback inputs contain an unexpected hard-link relationship")
+        identities.add(identity)
+        yield relative, "regular", stat.S_IMODE(metadata.st_mode), content, metadata
+
+    python_root = source.open_directory(".oracle-python")
+    try:
+        budget.reserve(".oracle-python", 0, file_entry=False)
+        pending = [(os.dup(python_root.fd), ".oracle-python")]
+        try:
+            while pending:
+                directory_fd, prefix = pending.pop()
+                try:
+                    for name in _stream_directory_names(directory_fd):
+                        relative = f"{prefix}/{name}"
+                        _canonical_callback_path(os.fsencode(relative))
+                        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                        if stat.S_ISDIR(metadata.st_mode):
+                            budget.reserve(relative, 0, file_entry=False)
+                            pending.append(
+                                (
+                                    os.open(
+                                        name,
+                                        os.O_RDONLY
+                                        | os.O_DIRECTORY
+                                        | os.O_NOFOLLOW
+                                        | os.O_CLOEXEC,
+                                        dir_fd=directory_fd,
+                                    ),
+                                    relative,
+                                )
+                            )
+                        elif stat.S_ISREG(metadata.st_mode):
+                            if metadata.st_nlink != 1:
+                                raise OracleError(
+                                    f"runtime callback input contains a hard link: {relative}"
+                                )
+                            identity = (metadata.st_dev, metadata.st_ino)
+                            if identity in identities:
+                                raise OracleError(
+                                    "runtime callback inputs contain an unexpected hard-link relationship"
+                                )
+                            identities.add(identity)
+                            content, held_metadata = _read_callback_regular(
+                                source,
+                                relative,
+                                budget=budget,
+                                expected_metadata=metadata,
+                            )
+                            yield (
+                                relative,
+                                "regular",
+                                stat.S_IMODE(held_metadata.st_mode),
+                                content,
+                                held_metadata,
+                            )
+                        elif stat.S_ISLNK(metadata.st_mode):
+                            if metadata.st_nlink != 1:
+                                raise OracleError(
+                                    f"runtime callback input contains a hard link: {relative}"
+                                )
+                            identity = (metadata.st_dev, metadata.st_ino)
+                            if identity in identities:
+                                raise OracleError(
+                                    "runtime callback inputs contain an unexpected hard-link relationship"
+                                )
+                            target = os.readlink(name, dir_fd=directory_fd)
+                            current = os.stat(
+                                name, dir_fd=directory_fd, follow_symlinks=False
+                            )
+                            if (
+                                not _same_identity(metadata, current)
+                                or current.st_nlink != 1
+                                or len(os.fsencode(target)) != current.st_size
+                            ):
+                                raise OracleError(
+                                    f"runtime callback symlink changed while reading: {relative}"
+                                )
+                            identities.add(identity)
+                            budget.reserve(relative, current.st_size, file_entry=True)
+                            _resolve_manifest_symlink(relative, target)
+                            yield relative, "symlink", 0o120000, target, current
+                        else:
+                            raise OracleError(
+                                f"unsupported runtime callback input type: {relative}"
+                            )
+                finally:
+                    os.close(directory_fd)
+        finally:
+            for directory_fd, _prefix in pending:
+                os.close(directory_fd)
+    finally:
+        python_root.close()
+
+
+def _ensure_callback_parent(root: pathlib.Path, relative: str) -> pathlib.Path:
+    target = root.joinpath(*relative.split("/"))
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return target
+
+
+def _manifest_entry(
+    path: str,
+    source: str,
+    kind: str,
+    mode: str,
+    content: bytes | str,
+    *,
+    blob_oid: str | None = None,
+) -> dict[str, object]:
+    raw = content if isinstance(content, bytes) else os.fsencode(content)
+    entry: dict[str, object] = {
+        "path": path,
+        "source": source,
+        "kind": kind,
+        "mode": mode,
+        "size_bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    if blob_oid is not None:
+        entry["blob_oid"] = blob_oid
+    if kind == "symlink":
+        entry["target"] = content
+    return entry
+
+
+def _validate_callback_manifest_symlinks(entries: Sequence[Mapping[str, object]]) -> None:
+    by_path = {str(entry["path"]): entry for entry in entries}
+    for entry in entries:
+        if entry["kind"] != "symlink":
+            continue
+        current = str(entry["path"])
+        for _ in range(8):
+            current_entry = by_path.get(current)
+            if current_entry is None:
+                raise OracleError(f"callback symlink target is absent: {current}")
+            if current_entry["kind"] != "symlink":
+                break
+            current = _resolve_manifest_symlink(current, str(current_entry["target"]))
+        else:
+            raise OracleError(f"callback symlink depth exceeds eight: {entry['path']}")
+
+
+def _materialize_callback_input(
+    source: HeldDirectory,
+    destination: HeldDirectory,
+    identity: CallbackRepositoryIdentity,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+    *,
+    limits: CallbackInputLimits | None = None,
+) -> CallbackInputSnapshot:
+    limits = limits or CallbackInputLimits()
+    if os.listdir(destination.fd):
+        raise OracleError("controller-owned callback input must start empty")
+    manifest_entries: list[dict[str, object]] = []
+    budget = _CallbackInputBudget(limits)
+    for path, mode, oid, expected_size in identity.tracked_entries:
+        budget.reserve(path, expected_size, file_entry=True)
+        content = _callback_git_bytes(
+            git,
+            source,
+            ["cat-file", "blob", oid],
+            env,
+            stdout_limit_bytes=limits.max_file_bytes + 1,
+        )
+        if len(content) != expected_size or _git_blob_oid_bytes(content) != oid:
+            raise OracleError(f"Git object bytes differ from the HEAD tree entry: {path}")
+        target = _ensure_callback_parent(destination.path, path)
+        if mode == "120000":
+            symlink_target = content.decode("utf-8", "strict")
+            _resolve_manifest_symlink(path, symlink_target)
+            os.symlink(symlink_target, target)
+            manifest_entries.append(
+                _manifest_entry(path, "git", "symlink", mode, symlink_target, blob_oid=oid)
+            )
+        else:
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+            try:
+                view = memoryview(content)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise OracleError(f"callback input write made no progress: {path}")
+                    view = view[written:]
+                os.fchmod(fd, 0o755 if mode == "100755" else 0o644)
+            finally:
+                os.close(fd)
+            manifest_entries.append(
+                _manifest_entry(path, "git", "regular", mode, content, blob_oid=oid)
+            )
+
+    for path, kind, mode, content, _metadata in _runtime_callback_entries(
+        source, limits=limits, _budget=budget
+    ):
+        if any(entry["path"] == path for entry in manifest_entries):
+            raise OracleError(f"runtime callback input replaces a tracked HEAD path: {path}")
+        target = _ensure_callback_parent(destination.path, path)
+        if kind == "symlink":
+            assert isinstance(content, str)
+            os.symlink(content, target)
+            manifest_entries.append(
+                _manifest_entry(path, "runtime", kind, "120000", content)
+            )
+        else:
+            assert isinstance(content, bytes)
+            fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o600)
+            try:
+                view = memoryview(content)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise OracleError(f"callback input write made no progress: {path}")
+                    view = view[written:]
+                os.fchmod(fd, mode & 0o777)
+            finally:
+                os.close(fd)
+            manifest_entries.append(
+                _manifest_entry(path, "runtime", kind, f"{mode | 0o100000:06o}", content)
+            )
+
+    manifest_entries.sort(key=lambda entry: os.fsencode(str(entry["path"])))
+    _validate_callback_manifest_symlinks(manifest_entries)
+    manifest = {
+        "schema_version": CALLBACK_INPUT_MANIFEST_SCHEMA,
+        "entry_count": len(manifest_entries),
+        "total_bytes": budget.total_bytes,
+        "entries": manifest_entries,
+    }
+    manifest_sha256 = hashlib.sha256(canonical_json_bytes(manifest)).hexdigest()
+    by_path = {str(entry["path"]): entry for entry in manifest_entries}
+    kiwi = by_path.get("target/debug/kiwi")
+    helper = by_path.get("target/debug/kiwi-required-vector-jobs")
+    if kiwi is None or helper is None or kiwi["kind"] != "regular" or helper["kind"] != "regular":
+        raise OracleError("callback runtime executables are missing from the frozen input")
+    document: dict[str, object] = {
+        "expected_head": identity.expected_head,
+        "actual_head": identity.actual_head,
+        "tree_oid": identity.tree_oid,
+        "ref_context": identity.ref_context,
+        "input_manifest_sha256": manifest_sha256,
+        "kiwi_sha256": kiwi["sha256"],
+        "required_jobs_helper_sha256": helper["sha256"],
+        "frozen_from_git_objects": True,
+        "readonly_mount": True,
+        "revalidated_after_callback": False,
+        "original_inputs_revalidated": False,
+    }
+    runtime_manifest = tuple(
+        entry for entry in manifest_entries if entry["source"] == "runtime"
+    )
+    snapshot = CallbackInputSnapshot(
+        root=destination,
+        repository=identity,
+        manifest=manifest,
+        runtime_manifest=runtime_manifest,
+        document=document,
+    )
+    _verify_frozen_callback_manifest(snapshot)
+    return snapshot
+
+
+def _verify_frozen_callback_manifest(snapshot: CallbackInputSnapshot) -> None:
+    expected_entries = {
+        str(entry["path"]): entry for entry in snapshot.manifest["entries"]  # type: ignore[index]
+    }
+    observed, observed_directories = _tree_entries(snapshot.root, exclude_git=False)
+    expected_directories: set[str] = set()
+    for path in expected_entries:
+        parts = path.split("/")
+        expected_directories.update("/".join(parts[:index]) for index in range(1, len(parts)))
+    if set(observed) != set(expected_entries) or observed_directories != expected_directories:
+        raise OracleError("frozen callback input path set changed")
+    identities: set[tuple[int, int]] = set()
+    rebuilt: list[dict[str, object]] = []
+    total_bytes = 0
+    for path, expected in expected_entries.items():
+        metadata = snapshot.root.lstat(path)
+        if expected["kind"] == "regular":
+            content, held = _read_callback_regular(snapshot.root, path)
+            identity = (held.st_dev, held.st_ino)
+            if identity in identities:
+                raise OracleError("frozen callback input contains an unexpected hard-link relationship")
+            identities.add(identity)
+            rebuilt.append(
+                _manifest_entry(
+                    path,
+                    str(expected["source"]),
+                    "regular",
+                    str(expected["mode"]),
+                    content,
+                    blob_oid=str(expected["blob_oid"]) if "blob_oid" in expected else None,
+                )
+            )
+            total_bytes += len(content)
+        else:
+            if not stat.S_ISLNK(metadata.st_mode):
+                raise OracleError(f"frozen callback symlink changed type: {path}")
+            if metadata.st_nlink != 1:
+                raise OracleError(
+                    "frozen callback input contains an unexpected hard-link relationship"
+                )
+            identity = (metadata.st_dev, metadata.st_ino)
+            if identity in identities:
+                raise OracleError(
+                    "frozen callback input contains an unexpected hard-link relationship"
+                )
+            target = snapshot.root.readlink(path)
+            current = snapshot.root.lstat(path)
+            if not _same_identity(metadata, current) or current.st_nlink != 1:
+                raise OracleError(f"frozen callback symlink changed while reading: {path}")
+            identities.add(identity)
+            rebuilt.append(
+                _manifest_entry(
+                    path,
+                    str(expected["source"]),
+                    "symlink",
+                    str(expected["mode"]),
+                    target,
+                    blob_oid=str(expected["blob_oid"]) if "blob_oid" in expected else None,
+                )
+            )
+            total_bytes += len(os.fsencode(target))
+    rebuilt.sort(key=lambda entry: os.fsencode(str(entry["path"])))
+    current_manifest = {
+        "schema_version": CALLBACK_INPUT_MANIFEST_SCHEMA,
+        "entry_count": len(rebuilt),
+        "total_bytes": total_bytes,
+        "entries": rebuilt,
+    }
+    if canonical_json_bytes(current_manifest) != canonical_json_bytes(snapshot.manifest):
+        raise OracleError("frozen callback input manifest changed")
+
+
+def _validate_original_callback_inputs(
+    snapshot: CallbackInputSnapshot,
+    source: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+) -> None:
+    current = _validate_callback_repository(
+        source, snapshot.repository.expected_head, git, env
+    )
+    if current != snapshot.repository:
+        raise OracleError("Kiwi repository identity changed during callback")
+    runtime_manifest = []
+    for path, kind, mode, content, _metadata in _runtime_callback_entries(
+        source,
+        initial_entry_count=len(snapshot.repository.tracked_entries),
+        initial_total_bytes=sum(
+            size for _path, _mode, _oid, size in snapshot.repository.tracked_entries
+        ),
+    ):
+        runtime_manifest.append(
+            _manifest_entry(
+                path,
+                "runtime",
+                kind,
+                "120000" if kind == "symlink" else f"{mode | 0o100000:06o}",
+                content,
+            )
+        )
+    runtime_manifest.sort(key=lambda entry: os.fsencode(str(entry["path"])))
+    if canonical_json_bytes({"entries": runtime_manifest}) != canonical_json_bytes(
+        {"entries": list(snapshot.runtime_manifest)}
+    ):
+        raise OracleError("original callback runtime inputs changed during callback")
+
+
+def _revalidate_callback_input(
+    snapshot: CallbackInputSnapshot,
+    source: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+) -> None:
+    snapshot.document["revalidated_after_callback"] = False
+    snapshot.document["original_inputs_revalidated"] = False
+    _validate_original_callback_inputs(snapshot, source, git, env)
+    _verify_frozen_callback_manifest(snapshot)
+    snapshot.full_revalidation_count += 1
+    snapshot.document["revalidated_after_callback"] = True
+    snapshot.document["original_inputs_revalidated"] = True
+
+
+def _finalize_callback_input_document(
+    snapshot: CallbackInputSnapshot,
+    source: HeldDirectory,
+    git: HeldExecutable,
+    env: Mapping[str, str],
+) -> dict[str, object]:
+    snapshot.document["original_inputs_revalidated"] = False
+    _validate_original_callback_inputs(snapshot, source, git, env)
+    if snapshot.full_revalidation_count < 2:
+        raise OracleError(
+            "frozen callback input was not revalidated after evidence collection"
+        )
+    if snapshot.document.get("revalidated_after_callback") is not True:
+        raise OracleError("frozen callback input final revalidation is incomplete")
+    snapshot.document["original_inputs_revalidated"] = True
+    return dict(snapshot.document)
 
 
 def _read_held_regular(root: HeldDirectory, relative: str, limit: int = 1024 * 1024) -> bytes:
@@ -2657,7 +4144,7 @@ def _validate_pristine_source_tree(
         for index in range(1, len(parts)):
             allowed_directories.add("/".join(parts[:index]))
 
-    entries, directories = _tree_entries(source)
+    entries, directories = _tree_entries(source, exclude_git=True)
     extra_entries = sorted(set(entries).difference(tracked), key=os.fsencode)
     extra_directories = sorted(directories.difference(allowed_directories), key=os.fsencode)
     if extra_entries or extra_directories:
@@ -2722,6 +4209,9 @@ def _sanitized_environment(
         "GIT_TERMINAL_PROMPT": "0",
         "CCACHE_DISABLE": "1",
         "SCCACHE_DISABLE": "1",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONDONTWRITEBYTECODE": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
         "SOURCE_DATE_EPOCH": str(SOURCE_DATE_EPOCH),
         "CC": "cc",
         "LD": "ld",
@@ -3021,7 +4511,7 @@ def _validate_artifact_document(
     overlap = sorted(tracked_paths.intersection(artifact_paths), key=os.fsencode)
     if overlap:
         raise OracleError(f"tracked source entries cannot be declared artifacts: {overlap}")
-    entries, directories = _tree_entries(root)
+    entries, directories = _tree_entries(root, exclude_git=True)
     expected_paths = tracked_paths.union(artifact_paths)
     missing = sorted(expected_paths.difference(entries), key=os.fsencode)
     extra = sorted(set(entries).difference(expected_paths), key=os.fsencode)
@@ -3602,6 +5092,7 @@ def _write_runtime_evidence(
 
 def _run_callback(
     callback_argv: Sequence[str],
+    callback_shell: HeldExecutable,
     aliases_directory: FrozenToolDirectory,
     callback_root: HeldDirectory,
     callback_input_root: HeldDirectory,
@@ -3611,9 +5102,43 @@ def _run_callback(
 ) -> dict[str, object]:
     if not callback_argv or len(callback_argv) > 32:
         raise OracleError("--run-after-ready requires 1..32 callback argv entries")
-    executable_path = pathlib.Path(callback_argv[0])
-    if not executable_path.is_absolute():
-        raise OracleError("callback executable must use an absolute path")
+    if callback_argv[0] not in CALLBACK_SHELL_ENTRYPOINTS:
+        raise OracleError("callback executable must be the registered shell")
+    try:
+        executable_path = pathlib.Path(callback_argv[0]).resolve(strict=True)
+    except OSError as error:
+        raise OracleError("callback executable must be the registered shell") from error
+    callback_shell.verify_path()
+    if executable_path != callback_shell.path or not _same_identity(
+        callback_shell.stat, os.stat(executable_path, follow_symlinks=False)
+    ):
+        raise OracleError("callback executable must be the registered shell")
+    if len(callback_argv) < 2:
+        raise OracleError("callback script path must be canonical below /callback-input")
+    script_path = callback_argv[1]
+    script_parts = script_path.split("/")
+    if (
+        len(script_parts) < 3
+        or script_parts[:2] != ["", "callback-input"]
+        or any(part in {"", ".", ".."} for part in script_parts[2:])
+        or "\0" in script_path
+    ):
+        raise OracleError("callback script path must be canonical below /callback-input")
+    script_relative = "/".join(script_parts[2:])
+    script_fd = -1
+    try:
+        script_metadata = callback_input_root.lstat(script_relative)
+        if not stat.S_ISREG(script_metadata.st_mode) or script_metadata.st_nlink != 1:
+            raise OracleError("callback script must be a regular frozen input entry")
+        script_fd = callback_input_root.open_regular(script_relative)
+        held_script = os.fstat(script_fd)
+        if not _same_identity(script_metadata, held_script) or held_script.st_nlink != 1:
+            raise OracleError("callback script changed while it was validated")
+    except OSError as error:
+        raise OracleError("callback script must be a regular frozen input entry") from error
+    finally:
+        if script_fd >= 0:
+            os.close(script_fd)
     working = callback_root.path / "work"
     working.mkdir(mode=0o700)
     (working / "home").mkdir(mode=0o700)
@@ -3622,11 +5147,9 @@ def _run_callback(
     sandbox_root.mkdir(mode=0o700)
     work_root: HeldDirectory | None = None
     held_sandbox_root: HeldDirectory | None = None
-    executable: HeldExecutable | None = None
     try:
         work_root = callback_root.open_directory("work")
         held_sandbox_root = callback_root.open_directory("sandbox-root")
-        executable = HeldExecutable.open("callback", executable_path)
         aliases_directory.verify_frozen()
         env = _sanitized_environment(
             "/usr/bin:/bin", pathlib.Path("/work/home"), pathlib.Path("/work/tmp")
@@ -3638,10 +5161,13 @@ def _run_callback(
                 "KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE": "/runtime-evidence.json",
                 "KIWI_REDIS_ORACLE_CALLBACK_INPUT": "/callback-input",
                 "KIWI_REDIS_ORACLE_WORKDIR": "/work",
+                "PYTHONNOUSERSITE": "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
             }
         )
         result = run_bounded(
-            executable,
+            callback_shell,
             callback_argv,
             env=env,
             timeout_ms=CALLBACK_TIMEOUT_MS,
@@ -3665,8 +5191,6 @@ def _run_callback(
         )
         aliases_directory.verify_frozen()
     finally:
-        if executable is not None:
-            executable.close()
         if held_sandbox_root is not None:
             held_sandbox_root.close()
         if work_root is not None:
@@ -3719,7 +5243,10 @@ def verify_oracle(
     source_argument: str,
     primary_metadata_argument: str,
     output_argument: str,
+    evidence_output_argument: str,
     callback_input_argument: str,
+    expected_head_argument: str,
+    publication_verifier_argument: str,
     callback_argv: Sequence[str],
     bootstrap_python_path: pathlib.Path,
     bootstrap_python_fd: int,
@@ -3736,18 +5263,30 @@ def verify_oracle(
         source_argument,
         primary_metadata_argument,
         output_argument,
+        evidence_output_argument,
         callback_input_argument,
+        publication_verifier_argument,
     ):
         if not pathlib.Path(value).is_absolute():
             raise OracleError(
-                "--source, --primary-metadata, --output, and --callback-input must be absolute"
+                "--source, --primary-metadata, --output, --evidence-output, --callback-input, and --publication-verifier must be absolute"
             )
 
     target = CandidateTarget.open(output_argument)
+    try:
+        evidence_target = CandidateTarget.open(evidence_output_argument)
+    except BaseException:
+        target.close()
+        raise
+    if evidence_target.path == target.path:
+        evidence_target.close()
+        target.close()
+        raise OracleError("evidence and provenance output paths must differ")
     source_root: HeldDirectory | None = None
     primary_metadata: HeldRegularFile | None = None
     controller: HeldExecutable | None = None
     python: HeldExecutable | None = None
+    publication_verifier: HeldExecutable | None = None
     tools: list[HeldExecutable] = []
     aliases_directory: FrozenToolDirectory | None = None
     verifier_name: str | None = None
@@ -3758,7 +5297,9 @@ def verify_oracle(
     runtime_root: HeldDirectory | None = None
     logs_root: HeldDirectory | None = None
     callback_root: HeldDirectory | None = None
+    callback_repository_root: HeldDirectory | None = None
     callback_input_root: HeldDirectory | None = None
+    callback_input_snapshot: CallbackInputSnapshot | None = None
     runtime_evidence_fd = -1
     redis_log_fd = -1
     redis_process: subprocess.Popen[bytes] | None = None
@@ -3769,6 +5310,8 @@ def verify_oracle(
     comparison: dict[str, bool] | None = None
     runtime_document: dict[str, object] | None = None
     callback_document: dict[str, object] | None = None
+    callback_input_document: dict[str, object] | None = None
+    differential_evidence_document: dict[str, object] | None = None
     business_error: BaseException | None = None
     cleanup_errors: list[tuple[str, BaseException]] = []
     cleanup_state = {
@@ -3789,19 +5332,25 @@ def verify_oracle(
             cleanup_errors.append((label, error))
 
     try:
+        publication_verifier = HeldExecutable.open(
+            "publication-verifier", pathlib.Path(publication_verifier_argument)
+        )
         source_path = pathlib.Path(source_argument).resolve(strict=True)
         if not source_path.is_dir() or source_path.is_symlink():
             raise OracleError("--source must resolve to a real directory")
-        if target.parent_path == source_path or source_path in target.parent_path.parents:
+        if any(
+            output_parent == source_path or source_path in output_parent.parents
+            for output_parent in (target.parent_path, evidence_target.parent_path)
+        ):
             raise OracleError("final provenance and verifier temp root must be outside source A")
         source_root = HeldDirectory.open(source_path)
         callback_input_path = pathlib.Path(callback_input_argument).resolve(strict=True)
         if not callback_input_path.is_dir() or callback_input_path.is_symlink():
             raise OracleError("--callback-input must resolve to a real directory")
-        callback_input_root = HeldDirectory.open(callback_input_path)
+        callback_repository_root = HeldDirectory.open(callback_input_path)
         primary_metadata = HeldRegularFile.open(primary_metadata_argument, MAX_JSON_BYTES)
-        if primary_metadata.path == target.path:
-            raise OracleError("primary metadata and final provenance paths must differ")
+        if primary_metadata.path in {target.path, evidence_target.path}:
+            raise OracleError("primary metadata and final output paths must differ")
 
         verifier_name, verifier_root = _reserve_child_directory(
             target.parent, "kiwi-oracle-verifier"
@@ -3810,6 +5359,7 @@ def verify_oracle(
         runtime_path = held_verifier_path / "runtime"
         logs_path = held_verifier_path / "logs"
         callback_path = held_verifier_path / "callback"
+        frozen_callback_path = held_verifier_path / "callback-input"
         for path in (
             held_verifier_path / "home",
             held_verifier_path / "tmp",
@@ -3817,11 +5367,13 @@ def verify_oracle(
             runtime_path,
             logs_path,
             callback_path,
+            frozen_callback_path,
         ):
             path.mkdir(mode=0o700)
         runtime_root = verifier_root.open_directory("runtime")
         logs_root = verifier_root.open_directory("logs")
         callback_root = verifier_root.open_directory("callback")
+        callback_input_root = verifier_root.open_directory("callback-input")
         home = held_verifier_path / "home"
         temporary = held_verifier_path / "tmp"
         versions = held_verifier_path / "versions"
@@ -3846,6 +5398,19 @@ def verify_oracle(
         _empty_directory(home, "verifier HOME")
         _empty_directory(temporary, "verifier TMPDIR")
         git = next(tool for tool in tools if tool.role == "git")
+
+        assert callback_repository_root is not None
+        assert callback_input_root is not None
+        callback_repository_identity = _validate_callback_repository(
+            callback_repository_root, expected_head_argument, git, env
+        )
+        callback_input_snapshot = _materialize_callback_input(
+            callback_repository_root,
+            callback_input_root,
+            callback_repository_identity,
+            git,
+            env,
+        )
 
         primary_tracked_tree = _validate_built_source_revision(source_root, git, env)
         primary_document = _load_json_object(primary_metadata, "primary metadata")
@@ -3880,14 +5445,20 @@ def verify_oracle(
             temporary: snapshot_tree(temporary),
             versions: snapshot_tree(versions),
         }
-        checkout_snapshot = _tree_entries(checkout)
-        runtime_snapshot = _tree_entries(runtime_root)
+        checkout_snapshot = _tree_entries(checkout, exclude_git=True)
+        runtime_snapshot = _tree_entries(runtime_root, exclude_git=False)
         verifier_identity_before_callback = os.fstat(verifier_root.fd)
         runtime_evidence_sha256 = hashlib.sha256(
             canonical_json_bytes(runtime_document)
         ).hexdigest()
+        current_callback_repository = _validate_callback_repository(
+            callback_repository_root, expected_head_argument, git, env
+        )
+        if current_callback_repository != callback_input_snapshot.repository:
+            raise OracleError("Kiwi repository identity changed before callback")
         callback_document = _run_callback(
             callback_argv,
+            next(tool for tool in tools if tool.role == "shell"),
             aliases_directory,
             callback_root,
             callback_input_root,
@@ -3906,9 +5477,9 @@ def verify_oracle(
         rebuild_binary.verify_path()
         aliases_directory.verify_frozen()
         _validate_artifact_document(checkout, rebuild_document, rebuild_tracked_tree)
-        if _tree_entries(checkout) != checkout_snapshot:
+        if _tree_entries(checkout, exclude_git=True) != checkout_snapshot:
             raise OracleError("callback modified the verifier checkout B resource tree")
-        if _tree_entries(runtime_root) != runtime_snapshot:
+        if _tree_entries(runtime_root, exclude_git=False) != runtime_snapshot:
             raise OracleError("callback modified the verifier runtime resource tree")
         for path, expected in immutable_path_snapshots.items():
             if snapshot_tree(path) != expected:
@@ -3924,6 +5495,23 @@ def verify_oracle(
         rebuild_metadata.verify_path()
         if _sha256_fd(runtime_evidence_fd) != runtime_evidence_sha256:
             raise OracleError("callback modified held runtime evidence")
+        assert callback_input_snapshot is not None
+        assert callback_repository_root is not None
+        _revalidate_callback_input(
+            callback_input_snapshot, callback_repository_root, git, env
+        )
+        callback_work_root = callback_root.open_directory("work")
+        try:
+            differential_evidence_document = _collect_differential_evidence(
+                callback_work_root,
+                redis_log_fd,
+                callback_input_snapshot,
+                callback_document,
+                runtime_document,
+                tool_evidence,
+            )
+        finally:
+            callback_work_root.close()
     except BaseException as error:
         business_error = error
 
@@ -3949,16 +5537,6 @@ def verify_oracle(
         cleanup("rebuild binary close", rebuild_binary.close)
     if rebuild_metadata is not None:
         cleanup("rebuild metadata close", rebuild_metadata.close)
-    if callback_input_root is not None:
-        def close_callback_input() -> None:
-            assert callback_input_root is not None
-            try:
-                callback_input_root.verify_path()
-            finally:
-                callback_input_root.close()
-
-        cleanup("callback input revalidation and close", close_callback_input)
-
     if verifier_root is not None:
         def remove_runtime() -> None:
             assert verifier_root is not None and runtime_root is not None
@@ -3989,6 +5567,18 @@ def verify_oracle(
         cleanup("runtime directory close", runtime_root.close)
     if checkout is not None:
         cleanup("checkout B close", checkout.close)
+    if (
+        business_error is None
+        and not cleanup_errors
+        and callback_input_snapshot is not None
+        and callback_repository_root is not None
+    ):
+        cleanup(
+            "cleanup-final frozen callback input revalidation",
+            lambda: _revalidate_callback_input(
+                callback_input_snapshot, callback_repository_root, git, env
+            ),
+        )
     if aliases_directory is not None:
         cleanup("controlled aliases remove", aliases_directory.remove_path)
         cleanup("controlled aliases close", aliases_directory.close)
@@ -4000,13 +5590,18 @@ def verify_oracle(
 
         cleanup("verifier temp root remove", remove_temp_root)
         cleanup("verifier temp root close", verifier_root.close)
+    if callback_input_root is not None:
+        cleanup("callback input close after verifier removal", callback_input_root.close)
 
     if business_error is None and not cleanup_errors:
         def final_revalidation() -> None:
+            nonlocal callback_input_document
             assert source_root is not None
             assert primary_metadata is not None
             assert primary_document is not None
             assert primary_tracked_tree is not None
+            assert callback_input_snapshot is not None
+            assert callback_repository_root is not None
             source_root.verify_path()
             primary_metadata.verify_path()
             _validate_artifact_document(
@@ -4014,13 +5609,22 @@ def verify_oracle(
             )
             for tool in tools:
                 tool.verify_path()
+            assert publication_verifier is not None
+            publication_verifier.verify_path()
             target.verify_visible_parent()
             target.reject_existing()
+            evidence_target.verify_visible_parent()
+            evidence_target.reject_existing()
+            callback_input_document = _finalize_callback_input_document(
+                callback_input_snapshot, callback_repository_root, git, env
+            )
             cleanup_state["final_identity_revalidated"] = True
             cleanup_state["output_parent_revalidated"] = True
 
         cleanup("final evidence identity revalidation", final_revalidation)
 
+    if callback_repository_root is not None:
+        cleanup("callback repository close", callback_repository_root.close)
     for index, tool in enumerate(tools):
         cleanup(f"tool {index} close", tool.close)
     if controller is not None and all(tool is not controller for tool in tools):
@@ -4055,6 +5659,8 @@ def verify_oracle(
                 comparison,
                 runtime_document,
                 callback_document,
+                callback_input_document,
+                differential_evidence_document,
             )
         ):
             raise OracleError("verifier produced incomplete provenance evidence")
@@ -4066,14 +5672,34 @@ def verify_oracle(
             "comparison": comparison,
             "runtime": runtime_document,
             "callback": callback_document,
+            "callback_input": callback_input_document,
             "cleanup": {**cleanup_state, "completed_at_utc": completed_at},
             "published_after_cleanup": True,
             "published_at_utc": _utc_now(),
         }
-        publish_provenance(target, document, close_target=True)
+        assert differential_evidence_document is not None
+        assert callback_input_document is not None
+        assert publication_verifier is not None
+        publish_evidence_then_provenance(
+            evidence_target,
+            target,
+            differential_evidence_document,
+            document,
+            close_targets=True,
+            post_publish_verifier=publication_verifier,
+            expected_head=expected_head_argument,
+            expected_tree=str(callback_input_document["tree_oid"]),
+            close_post_publish_verifier=True,
+        )
         print(str(target.path))
+        print(str(evidence_target.path))
     finally:
-        target.close()
+        try:
+            if publication_verifier is not None:
+                publication_verifier.close()
+        finally:
+            evidence_target.close()
+            target.close()
 
 
 def build_primary(
@@ -4293,6 +5919,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--metadata", help="absolute candidate build metadata path")
     parser.add_argument("--primary-metadata", help="absolute primary build metadata path")
     parser.add_argument("--output", help="absolute final provenance path")
+    parser.add_argument("--evidence-output", help="absolute final differential evidence path")
+    parser.add_argument("--expected-head", help="expected exact Kiwi Head commit OID")
+    parser.add_argument(
+        "--publication-verifier",
+        help="absolute current-Head Oracle publication binding verifier",
+    )
     parser.add_argument(
         "--callback-input",
         help="absolute read-only callback input root exposed as /callback-input",
@@ -4316,6 +5948,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for value in (
                     arguments.primary_metadata,
                     arguments.output,
+                    arguments.evidence_output,
+                    arguments.expected_head,
+                    arguments.publication_verifier,
                     arguments.callback_input,
                     arguments.run_after_ready,
                 )
@@ -4333,17 +5968,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             if (
                 arguments.primary_metadata is None
                 or arguments.output is None
+                or arguments.evidence_output is None
+                or arguments.expected_head is None
+                or arguments.publication_verifier is None
                 or arguments.callback_input is None
                 or not arguments.run_after_ready
             ):
                 raise OracleError(
-                    "verifier requires --primary-metadata, --output, --callback-input, and --run-after-ready argv"
+                    "verifier requires --primary-metadata, --output, --evidence-output, --expected-head, --publication-verifier, --callback-input, and --run-after-ready argv"
                 )
             verify_oracle(
                 arguments.source,
                 arguments.primary_metadata,
                 arguments.output,
+                arguments.evidence_output,
                 arguments.callback_input,
+                arguments.expected_head,
+                arguments.publication_verifier,
                 arguments.run_after_ready,
                 pathlib.Path(arguments.bootstrap_python_path),
                 arguments.bootstrap_python_fd,

@@ -63,6 +63,10 @@ pub enum MigrationFaultPoint {
     AfterSwitchPrepared,
     AfterOldMovedToBackup(u32),
     AfterShadowPromoted(u32),
+    #[cfg(any(test, feature = "test-fault-injection"))]
+    AfterFilesystemStepBeforeJournal(MigrationPhase, u32),
+    #[cfg(any(test, feature = "test-fault-injection"))]
+    AfterRootTransitionPersisted(MigrationPhase, u32),
     AfterNewStorageOpened,
     AfterCommitted,
     AfterRollbackV2MovedAside(u32),
@@ -424,15 +428,14 @@ pub fn prepare_or_resume_migration(
     );
     let layout = MigrationLayout::new(root, &transaction)?;
     validate_resume_layout(&layout, &transaction, db_instance_num, options)?;
+    rebind_all_v2_instances(&layout, db_instance_num, &root_manifest)?;
 
     if transaction.phase == MigrationPhase::RollbackWindowClosed {
-        rebind_all_v2_instances(&layout, db_instance_num, &root_manifest)?;
         verify_live_v2_instances(root, db_instance_num, &root_manifest, options)?;
         return Ok(Some(profile));
     }
 
     if transaction.phase == MigrationPhase::Committed {
-        rebind_all_v2_instances(&layout, db_instance_num, &root_manifest)?;
         verify_instances(
             &layout,
             db_instance_num,
@@ -468,7 +471,6 @@ pub fn prepare_or_resume_migration(
             | MigrationPhase::InstanceCopied
             | MigrationPhase::InstanceUpgraded
     ) {
-        rebind_all_v2_instances(&layout, db_instance_num, &root_manifest)?;
         for instance_id in 0..db_instance_num as u32 {
             let shadow = layout.shadow_instance(instance_id);
             if !is_v2_manifest(&shadow)? {
@@ -493,6 +495,27 @@ pub fn prepare_or_resume_migration(
                     maybe_fail(root, MigrationFaultPoint::AfterInstanceCopied(instance_id))?;
                 }
                 upgrade_shadow_instance(&shadow, instance_id, profile, options, &root_manifest)?;
+                #[cfg(any(test, feature = "test-fault-injection"))]
+                maybe_fail(
+                    root,
+                    MigrationFaultPoint::AfterFilesystemStepBeforeJournal(
+                        MigrationPhase::InstanceUpgraded,
+                        instance_id,
+                    ),
+                )?;
+                persist_transition(
+                    root,
+                    &mut root_manifest,
+                    MigrationPhase::InstanceUpgraded,
+                    instance_id,
+                    &layout,
+                    db_instance_num,
+                )?;
+                maybe_fail(
+                    root,
+                    MigrationFaultPoint::AfterInstanceUpgraded(instance_id),
+                )?;
+            } else if migration_is_at(&root_manifest, MigrationPhase::InstanceCopied, instance_id) {
                 persist_transition(
                     root,
                     &mut root_manifest,
@@ -558,6 +581,35 @@ pub fn prepare_or_resume_migration(
             fs::rename(&source, &backup).context(IoSnafu)?;
             sync_directory(root).context(IoSnafu)?;
             sync_directory(&layout.backup_root()).context(IoSnafu)?;
+            #[cfg(any(test, feature = "test-fault-injection"))]
+            maybe_fail(
+                root,
+                MigrationFaultPoint::AfterFilesystemStepBeforeJournal(
+                    MigrationPhase::OldMovedToBackup,
+                    instance_id,
+                ),
+            )?;
+            persist_transition(
+                root,
+                &mut root_manifest,
+                MigrationPhase::OldMovedToBackup,
+                instance_id,
+                &layout,
+                db_instance_num,
+            )?;
+            maybe_fail(
+                root,
+                MigrationFaultPoint::AfterOldMovedToBackup(instance_id),
+            )?;
+        } else if (instance_id == 0
+            && migration_is_at(&root_manifest, MigrationPhase::SwitchPrepared, 0))
+            || (instance_id > 0
+                && migration_is_at(
+                    &root_manifest,
+                    MigrationPhase::ShadowPromoted,
+                    instance_id - 1,
+                ))
+        {
             persist_transition(
                 root,
                 &mut root_manifest,
@@ -584,6 +636,14 @@ pub fn prepare_or_resume_migration(
             fs::rename(&shadow, &source).context(IoSnafu)?;
             sync_directory(root).context(IoSnafu)?;
             sync_directory(&layout.shadow_root()).context(IoSnafu)?;
+            #[cfg(any(test, feature = "test-fault-injection"))]
+            maybe_fail(
+                root,
+                MigrationFaultPoint::AfterFilesystemStepBeforeJournal(
+                    MigrationPhase::ShadowPromoted,
+                    instance_id,
+                ),
+            )?;
             persist_transition(
                 root,
                 &mut root_manifest,
@@ -602,6 +662,21 @@ pub fn prepare_or_resume_migration(
                     )
                 }
             );
+            if migration_is_at(
+                &root_manifest,
+                MigrationPhase::OldMovedToBackup,
+                instance_id,
+            ) {
+                persist_transition(
+                    root,
+                    &mut root_manifest,
+                    MigrationPhase::ShadowPromoted,
+                    instance_id,
+                    &layout,
+                    db_instance_num,
+                )?;
+                maybe_fail(root, MigrationFaultPoint::AfterShadowPromoted(instance_id))?;
+            }
         }
     }
 
@@ -847,6 +922,8 @@ fn persist_transition(
     layout: &MigrationLayout,
     db_instance_num: usize,
 ) -> Result<()> {
+    rebind_all_v2_instances(layout, db_instance_num, manifest)?;
+    let previous_root_digest = manifest.manifest_digest().clone();
     let mut transaction = manifest.migration().cloned().ok_or_else(|| {
         InvalidFormatSnafu {
             message: "migration transition has no transaction".to_string(),
@@ -857,7 +934,27 @@ fn persist_transition(
     transaction.current_instance = current_instance;
     manifest.set_migration(Some(transaction))?;
     manifest.write_to_dir_atomically(root)?;
-    rebind_all_v2_instances(layout, db_instance_num, manifest)
+    #[cfg(any(test, feature = "test-fault-injection"))]
+    maybe_fail(
+        root,
+        MigrationFaultPoint::AfterRootTransitionPersisted(phase, current_instance),
+    )?;
+    rebind_all_v2_instances_with_predecessor(
+        layout,
+        db_instance_num,
+        manifest,
+        Some(&previous_root_digest),
+    )
+}
+
+fn migration_is_at(
+    manifest: &RootStorageManifestV2,
+    phase: MigrationPhase,
+    current_instance: u32,
+) -> bool {
+    manifest.migration().is_some_and(|transaction| {
+        transaction.phase == phase && transaction.current_instance == current_instance
+    })
 }
 
 fn rebind_all_v2_instances(
@@ -865,17 +962,120 @@ fn rebind_all_v2_instances(
     db_instance_num: usize,
     root_manifest: &RootStorageManifestV2,
 ) -> Result<()> {
+    let predecessor_digest = immediate_predecessor_root_digest(root_manifest)?;
+    rebind_all_v2_instances_with_predecessor(
+        layout,
+        db_instance_num,
+        root_manifest,
+        predecessor_digest.as_ref(),
+    )
+}
+
+fn immediate_predecessor_root_digest(
+    root_manifest: &RootStorageManifestV2,
+) -> Result<Option<ManifestDigest>> {
+    let mut transaction = root_manifest.migration().cloned().ok_or_else(|| {
+        InvalidFormatSnafu {
+            message: "migration root has no transaction for predecessor reconstruction".to_string(),
+        }
+        .build()
+    })?;
+    let last_instance = root_manifest.db_instance_num().saturating_sub(1);
+    let predecessor = match (transaction.phase, transaction.current_instance) {
+        (MigrationPhase::SourceDetected, 0) => return Ok(None),
+        (MigrationPhase::ShadowPrepared, 0) => (MigrationPhase::SourceDetected, 0),
+        (MigrationPhase::InstanceCopied, 0) => (MigrationPhase::ShadowPrepared, 0),
+        (MigrationPhase::InstanceCopied, instance_id) if instance_id <= last_instance => {
+            (MigrationPhase::InstanceUpgraded, instance_id - 1)
+        }
+        (MigrationPhase::InstanceUpgraded, instance_id) if instance_id <= last_instance => {
+            (MigrationPhase::InstanceCopied, instance_id)
+        }
+        (MigrationPhase::AllInstancesVerified, instance_id) if instance_id == last_instance => {
+            (MigrationPhase::InstanceUpgraded, last_instance)
+        }
+        (MigrationPhase::SwitchPrepared, 0) => {
+            (MigrationPhase::AllInstancesVerified, last_instance)
+        }
+        (MigrationPhase::OldMovedToBackup, 0) => (MigrationPhase::SwitchPrepared, 0),
+        (MigrationPhase::OldMovedToBackup, instance_id) if instance_id <= last_instance => {
+            (MigrationPhase::ShadowPromoted, instance_id - 1)
+        }
+        (MigrationPhase::ShadowPromoted, instance_id) if instance_id <= last_instance => {
+            (MigrationPhase::OldMovedToBackup, instance_id)
+        }
+        (MigrationPhase::NewStorageOpened, instance_id) if instance_id == last_instance => {
+            (MigrationPhase::ShadowPromoted, last_instance)
+        }
+        (MigrationPhase::Committed, instance_id) if instance_id == last_instance => {
+            (MigrationPhase::NewStorageOpened, last_instance)
+        }
+        (MigrationPhase::RollbackWindowClosed, instance_id) if instance_id == last_instance => {
+            (MigrationPhase::Committed, last_instance)
+        }
+        _ => {
+            return Err(InvalidFormatSnafu {
+                message: format!(
+                    "migration phase {:?} at instance {} has no unique immediate predecessor",
+                    transaction.phase, transaction.current_instance
+                ),
+            }
+            .build());
+        }
+    };
+    transaction.phase = predecessor.0;
+    transaction.current_instance = predecessor.1;
+    let mut predecessor_root = root_manifest.clone();
+    predecessor_root.set_migration(Some(transaction))?;
+    Ok(Some(predecessor_root.manifest_digest().clone()))
+}
+
+fn rebind_all_v2_instances_with_predecessor(
+    layout: &MigrationLayout,
+    db_instance_num: usize,
+    root_manifest: &RootStorageManifestV2,
+    predecessor_digest: Option<&ManifestDigest>,
+) -> Result<()> {
+    let mut pending_rebinds = Vec::new();
     for instance_id in 0..db_instance_num as u32 {
         for instance in [
             layout.source_instance(instance_id),
             layout.shadow_instance(instance_id),
         ] {
             if instance.join(STORAGE_MANIFEST_FILE).exists() && is_v2_manifest(&instance)? {
-                let mut manifest = InstanceStorageManifestV2::read_from_dir(&instance)?;
-                manifest.rebind_root(root_manifest)?;
-                manifest.write_to_dir_atomically(&instance)?;
+                let manifest = InstanceStorageManifestV2::read_from_dir(&instance)?;
+                ensure!(
+                    manifest.instance_id() == instance_id,
+                    InvalidFormatSnafu {
+                        message: format!(
+                            "instance_id {} does not match expected {instance_id}",
+                            manifest.instance_id()
+                        )
+                    }
+                );
+                ensure!(
+                    manifest.root_manifest_id() == root_manifest.manifest_id(),
+                    InvalidFormatSnafu {
+                        message: "instance root manifest identity or digest mismatch".to_string()
+                    }
+                );
+                if manifest.root_manifest_digest() == root_manifest.manifest_digest() {
+                    continue;
+                }
+                ensure!(
+                    predecessor_digest
+                        .is_some_and(|digest| manifest.root_manifest_digest() == digest),
+                    InvalidFormatSnafu {
+                        message: "instance root manifest identity or digest mismatch".to_string()
+                    }
+                );
+                pending_rebinds.push((instance, manifest));
             }
         }
+    }
+    for (instance, mut manifest) in pending_rebinds {
+        manifest.rebind_root(root_manifest)?;
+        manifest.write_to_dir_atomically(&instance)?;
     }
     Ok(())
 }

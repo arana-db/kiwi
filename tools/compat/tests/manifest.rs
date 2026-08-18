@@ -770,6 +770,61 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
         registry.expected_node_ids().len()
     );
     assert!(registry.expected_item_count() > 0);
+    assert_eq!(
+        registry.final_state_applicability().len(),
+        registry.expected_item_count(),
+        "every required pytest node must own final-state applicability",
+    );
+    assert_eq!(
+        registry
+            .final_state_applicability()
+            .keys()
+            .collect::<BTreeSet<_>>(),
+        registry.expected_node_ids().iter().collect::<BTreeSet<_>>(),
+        "final-state applicability must exactly cover the required collection",
+    );
+    for node_id in registry.expected_node_ids() {
+        let applicability = registry
+            .final_state_applicability()
+            .get(node_id)
+            .expect("required node must own final-state applicability");
+        if node_id.contains("test_raw_comparator_rejects_")
+            || node_id.contains("test_vinfo_raw_schema_")
+            || node_id.contains("test_raw_cleanup_")
+            || node_id.contains("test_raw_endpoint_separation_")
+        {
+            assert_eq!(applicability.applicability(), "not-applicable");
+            assert_eq!(applicability.reason(), Some("comparator"));
+            assert_eq!(applicability.state_profile(), None);
+            assert_eq!(applicability.observation_profile(), None);
+        } else if node_id.contains("test_vinfo_raw_parser_") {
+            assert_eq!(applicability.applicability(), "not-applicable");
+            assert_eq!(applicability.reason(), Some("parser"));
+            assert_eq!(applicability.state_profile(), None);
+            assert_eq!(applicability.observation_profile(), None);
+        } else {
+            assert_eq!(applicability.applicability(), "server-backed");
+            assert_eq!(applicability.reason(), None);
+            assert!(applicability.state_profile().is_some());
+            assert_eq!(
+                applicability.observation_profile(),
+                Some("complete-vector-state-v1")
+            );
+        }
+    }
+    for protocol in ["resp2", "resp3"] {
+        let node_id = format!(
+            "tests/python/test_vector_set_differential.py::test_repeated_vadd_and_vsim_options_match[{protocol}]"
+        );
+        assert_eq!(
+            registry
+                .final_state_applicability()
+                .get(&node_id)
+                .expect("repeated VADD node must own final-state applicability")
+                .state_profile(),
+            Some("typed-main-two-member-vector")
+        );
+    }
 
     let manifest_commands = manifest
         .commands()
@@ -809,6 +864,17 @@ fn repository_required_vector_job_matches_manifest_and_exact_pytest_collection()
                 .node_ids()
                 .iter()
                 .all(|node_id| registry.expected_node_ids().contains(node_id))
+        }));
+        assert!(raw_cases.iter().all(|raw_case| {
+            raw_case
+                .request_base64_by_node()
+                .keys()
+                .collect::<BTreeSet<_>>()
+                == raw_case.node_ids().iter().collect::<BTreeSet<_>>()
+                && raw_case
+                    .request_base64_by_node()
+                    .values()
+                    .all(|request| !request.is_empty())
         }));
     }
     let vinfo_cases = registry
@@ -854,13 +920,67 @@ fn required_vector_registry_rejects_a_command_without_raw_case_ownership() {
 fn required_vector_registry_requires_populated_vinfo_raw_schema_evidence() {
     let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml")
         .replace("\r\n", "\n");
-    let populated = "        - case_id: populated\n          evidence_kind: raw-schema\n          node_ids:\n            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]\n            - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]\n";
-    let without_populated = yaml.replace(populated, "");
+    let start = yaml
+        .find("        - case_id: populated\n")
+        .expect("registry fixture must contain populated VINFO");
+    let end = yaml[start..]
+        .find("      VISMEMBER:\n")
+        .expect("registry fixture must contain VISMEMBER after populated VINFO")
+        + start;
+    let without_populated = format!("{}{}", &yaml[..start], &yaml[end..]);
     assert_ne!(
         without_populated, yaml,
         "registry fixture must own populated VINFO"
     );
     assert!(RequiredVectorJobs::from_yaml(&without_populated).is_err());
+}
+
+#[test]
+fn required_vector_registry_requires_one_exact_request_per_raw_case_node() {
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml")
+        .replace("\r\n", "\n");
+    let request = "            \"tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]\": KjgNCiQ0DQpWQUREDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAyOnZhbHVlcw0KJDYNClZBTFVFUw0KJDENCjINCiQxDQowDQokMQ0KMA0KJDQNCnplcm8NCiQ3DQpOT1FVQU5UDQo=\n";
+    let valid_base64 = request
+        .trim()
+        .split_once(": ")
+        .expect("request fixture must contain a YAML value")
+        .1;
+    let missing = yaml.replacen(request, "", 1);
+    assert_ne!(
+        missing, yaml,
+        "registry fixture must contain the VADD request"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&missing).is_err());
+
+    let extra = yaml.replacen(
+        "          request_base64_by_node:\n",
+        "          request_base64_by_node:\n            \"tests/python/test_vector_set_differential.py::test_unregistered_node[resp2]\": KjENCiQ0DQpWQUREDQo=\n",
+        1,
+    );
+    assert_ne!(
+        extra, yaml,
+        "registry fixture must contain raw request ownership"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&extra).is_err());
+
+    let invalid_base64 = yaml.replacen(valid_base64, "not_base64!", 1);
+    assert_ne!(
+        invalid_base64, yaml,
+        "registry fixture must contain the canonical VADD request"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&invalid_base64).is_err());
+
+    let unpadded_base64 = valid_base64.trim_end_matches('=');
+    assert_ne!(
+        unpadded_base64, valid_base64,
+        "request fixture must exercise Base64 padding"
+    );
+    let noncanonical_base64 = yaml.replacen(valid_base64, unpadded_base64, 1);
+    assert_ne!(
+        noncanonical_base64, yaml,
+        "registry fixture must contain the padded VADD request"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&noncanonical_base64).is_err());
 }
 
 #[test]
@@ -882,6 +1002,56 @@ fn required_vector_registry_rejects_node_count_and_identity_drift() {
             .expect("repository registry must parse")
             .expected_node_ids()
     );
+}
+
+#[test]
+fn required_vector_registry_rejects_final_state_ownership_drift() {
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/vector-required-jobs.yaml")
+        .replace("\r\n", "\n");
+
+    let missing = yaml.replacen(
+        "      \"tests/python/test_vector_set_differential.py::test_raw_comparator_rejects_equal_typed_values_with_different_frames\":\n        applicability: not-applicable\n        reason: comparator\n",
+        "",
+        1,
+    );
+    assert_ne!(
+        missing, yaml,
+        "registry fixture must name every final-state node"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&missing).is_err());
+
+    let extra = yaml.replacen(
+        "    expected_node_ids:\n",
+        "      tests/python/test_vector_set_differential.py::test_unregistered_node:\n        applicability: server-backed\n    expected_node_ids:\n",
+        1,
+    );
+    assert_ne!(
+        extra, yaml,
+        "registry fixture must contain final-state mapping"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&extra).is_err());
+
+    let unknown_field = yaml.replacen(
+        "        applicability: server-backed\n",
+        "        applicability: server-backed\n        clock_tolerance_ms: 1000\n",
+        1,
+    );
+    assert_ne!(
+        unknown_field, yaml,
+        "registry fixture must contain server-backed nodes"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&unknown_field).is_err());
+
+    let self_declared_skip = yaml.replacen(
+        "        applicability: server-backed\n",
+        "        applicability: not-applicable\n        reason: test-declared\n",
+        1,
+    );
+    assert_ne!(
+        self_declared_skip, yaml,
+        "registry fixture must contain server-backed nodes"
+    );
+    assert!(RequiredVectorJobs::from_yaml(&self_declared_skip).is_err());
 }
 
 fn parse_valid(yaml: &str) -> CompatibilityManifest {

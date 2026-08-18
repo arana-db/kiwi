@@ -119,6 +119,13 @@ Schema 必须拒绝未知字段、空 owner、空 protocols、空 modes、重复
 
 测试必须保存双方原始请求和原始响应，并记录连接级事件顺序。比较范围包括：
 
+- 每个 required node 的 exact request bytes，以及 Kiwi/Redis 的 exact response
+  frame bytes；证据使用严格 Base64 保留原文，并同时保存可重算的 SHA-256，
+  不能只保留 hash；
+- server-backed node 在清理前后保存 raw `TYPE`、`PTTL` 和类型专属观察值；
+  持久键的 `PTTL` 必须为 `-1`，清理后的缺失键必须为 `-2`，并验证两次
+  `DEL` 的幂等结果；
+
 - RESP2/RESP3 frame 类型及嵌套结构；
 - Null Bulk、Null Array、Null、空集合和空字符串；
 - Simple Error、Blob Error、错误前缀和稳定文本；
@@ -219,6 +226,20 @@ Cache OFF 下不得存在：
 - final-state/TTL 对账；
 - known difference 和 skip 清单；
 - 命令、退出码和日志 hash。
+
+正式 differential evidence 使用固定文件 allowlist 和逐文件上限：raw transcript
+解码后不超过 16 MiB，final-state 不超过 4 MiB，每份 collection/test/Kiwi
+日志不超过 8 MiB。Runner 接收的固定 raw evidence set 的逐文件上限合计为
+97.0625 MiB，因此不另设不可达的 raw aggregate 分支；controller 构造的 canonical
+evidence（包含 runtime、toolchain 和 Redis log）仍必须低于 128 MiB。缺失、额外、
+重复、截断、非有限 JSON 数值、symlink、特殊文件或越界内容均必须 fail closed。
+
+Verifier 必须在 callback、进程和目录清理及输入身份复核全部成功后，先原子发布
+`kiwi-vector-differential-evidence/v1`，再发布引用其 exact size/SHA-256 的
+`kiwi-redis-oracle-provenance/v4`。Provenance 最后可见；任一 write、fsync、rename
+或发布后复核失败时，两份 final 文件都必须回滚。CI 只上传这两个最终文件，
+不能上传 live work directory、candidate 或 provenance-only 结果；上传 artifact 的
+固定保留期为 7 天。
 
 测试通过但缺少 exact identity 或原始 transcript 时，只能作为辅助结果，不能关闭 required compatibility item。
 

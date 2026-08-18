@@ -22,7 +22,13 @@ use std::fs;
 #[cfg(target_os = "linux")]
 use std::process::Command;
 
+#[cfg(target_os = "linux")]
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::Deserialize;
+#[cfg(target_os = "linux")]
+use serde_json::{Value, json};
+#[cfg(target_os = "linux")]
+use sha2::{Digest, Sha256};
 
 #[cfg(target_os = "linux")]
 fn runner_command(runner: &std::path::Path) -> Command {
@@ -32,6 +38,204 @@ fn runner_command(runner: &std::path::Path) -> Command {
         env!("CARGO_BIN_EXE_kiwi-required-vector-jobs"),
     );
     command
+}
+
+#[cfg(target_os = "linux")]
+fn encoded_bytes(payload: &[u8]) -> (String, String) {
+    (
+        BASE64_STANDARD.encode(payload),
+        format!("{:x}", Sha256::digest(payload)),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn encode_resp_command(command: &str, key: &[u8], arguments: &[&[u8]]) -> Vec<u8> {
+    let mut request = format!("*{}\r\n", arguments.len() + 2).into_bytes();
+    for part in std::iter::once(command.as_bytes())
+        .chain(std::iter::once(key))
+        .chain(arguments.iter().copied())
+    {
+        request.extend_from_slice(format!("${}\r\n", part.len()).as_bytes());
+        request.extend_from_slice(part);
+        request.extend_from_slice(b"\r\n");
+    }
+    request
+}
+
+#[cfg(target_os = "linux")]
+fn final_state_exchange(command: &str, key: &[u8], arguments: &[&[u8]], response: &[u8]) -> Value {
+    let request = encode_resp_command(command, key, arguments);
+    let (request_base64, request_sha256) = encoded_bytes(&request);
+    let (response_base64, response_sha256) = encoded_bytes(response);
+    json!({
+        "command": command,
+        "request_base64": request_base64,
+        "request_sha256": request_sha256,
+        "kiwi_response_base64": response_base64,
+        "kiwi_response_sha256": response_sha256,
+        "redis_response_base64": response_base64,
+        "redis_response_sha256": response_sha256,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn resp_integer(value: i64) -> Vec<u8> {
+    format!(":{value}\r\n").into_bytes()
+}
+
+#[cfg(target_os = "linux")]
+fn resp_vector(dimension: usize) -> Vec<u8> {
+    let mut response = format!("*{dimension}\r\n").into_bytes();
+    for _ in 0..dimension {
+        response.extend_from_slice(b"$1\r\n0\r\n");
+    }
+    response
+}
+
+#[cfg(target_os = "linux")]
+fn final_state_key_record(
+    role: &str,
+    key: &[u8],
+    key_type: &str,
+    dimension: Option<usize>,
+    members: &[&[u8]],
+    populated_member_count: usize,
+) -> Value {
+    let mut observations = Vec::new();
+    if key_type == "vectorset" {
+        let dimension = dimension.expect("vector fixture must declare its dimension");
+        assert!(populated_member_count < members.len());
+        observations.push(final_state_exchange(
+            "VCARD",
+            key,
+            &[],
+            &resp_integer(populated_member_count as i64),
+        ));
+        observations.push(final_state_exchange(
+            "VDIM",
+            key,
+            &[],
+            &resp_integer(dimension as i64),
+        ));
+        for (index, member) in members.iter().enumerate() {
+            let response = if index < populated_member_count {
+                resp_vector(dimension)
+            } else {
+                b"$-1\r\n".to_vec()
+            };
+            observations.push(final_state_exchange("VEMB", key, &[*member], &response));
+        }
+    } else if key_type == "string" {
+        observations.push(final_state_exchange("GET", key, &[], b"$5\r\nvalue\r\n"));
+    }
+
+    let exists = key_type != "none";
+    let (key_base64, key_sha256) = encoded_bytes(key);
+    json!({
+        "key_role": role,
+        "key_base64": key_base64,
+        "key_sha256": key_sha256,
+        "before_cleanup": {
+            "type": final_state_exchange(
+                "TYPE", key, &[], format!("+{key_type}\r\n").as_bytes()
+            ),
+            "pttl": final_state_exchange(
+                "PTTL", key, &[], &resp_integer(if exists { -1 } else { -2 })
+            ),
+            "observations": observations,
+        },
+        "cleanup": {
+            "first_del": final_state_exchange(
+                "DEL", key, &[], &resp_integer(if exists { 1 } else { 0 })
+            ),
+            "after_type": final_state_exchange("TYPE", key, &[], b"+none\r\n"),
+            "after_pttl": final_state_exchange("PTTL", key, &[], &resp_integer(-2)),
+            "second_del": final_state_exchange("DEL", key, &[], &resp_integer(0)),
+        },
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn final_state_keys(state_profile: &str, protocol: u8) -> Vec<Value> {
+    const TYPED_ROLES: &[&str] = &["main", "dense3", "string", "missing"];
+    const RAW_ROLES: &[&str] = &[
+        "values",
+        "fp32",
+        "missing-scores",
+        "missing-values",
+        "missing-fp32",
+        "invalid-values",
+        "invalid-fp32",
+        "repeated",
+        "option",
+    ];
+    const MAIN_MEMBERS: &[&[u8]] = &[
+        b"alpha",
+        b"beta",
+        b"gamma",
+        b"delta",
+        b"",
+        b"\x00bin\x00",
+        b"tie-a",
+        b"tie-b",
+        b"ghost",
+    ];
+    const DENSE3_MEMBERS: &[&[u8]] = &[b"x", b"y", b"z", b"ghost"];
+    const REPEATED_MEMBERS: &[&[u8]] = &[b"element", b"ghost"];
+
+    let typed = state_profile.starts_with("typed-");
+    let roles = if typed { TYPED_ROLES } else { RAW_ROLES };
+    roles
+        .iter()
+        .map(|role| {
+            let key = if typed {
+                format!("test_vdiff:p{protocol}:{role}").into_bytes()
+            } else if matches!(*role, "values" | "fp32" | "missing-scores") {
+                format!("test_vdiff:raw:p{protocol}:{role}").into_bytes()
+            } else {
+                format!("test_vdiff:raw:vadd:p{protocol}:{role}").into_bytes()
+            };
+            let key_type = match (state_profile, *role) {
+                ("raw-repeated-vector", "repeated")
+                | ("typed-main-vector", "main")
+                | ("typed-main-two-member-vector", "main")
+                | ("typed-main-dense3-vector", "main")
+                | ("typed-main-dense3-vector", "dense3") => "vectorset",
+                ("typed-string", "string") => "string",
+                _ => "none",
+            };
+            let (dimension, members): (Option<usize>, &[&[u8]]) = match *role {
+                "main" => (Some(4), MAIN_MEMBERS),
+                "dense3" => (Some(3), DENSE3_MEMBERS),
+                "repeated" => (Some(1), REPEATED_MEMBERS),
+                _ => (None, &[]),
+            };
+            let populated_member_count = match (state_profile, *role) {
+                ("raw-repeated-vector", "repeated") => 1,
+                ("typed-main-vector", "main") | ("typed-main-dense3-vector", "main") => 8,
+                ("typed-main-two-member-vector", "main") => 2,
+                ("typed-main-dense3-vector", "dense3") => 3,
+                _ => 0,
+            };
+            final_state_key_record(
+                role,
+                &key,
+                key_type,
+                dimension,
+                members,
+                populated_member_count,
+            )
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn replace_exchange_response(exchange: &mut Value, response: &[u8]) {
+    let (response_base64, response_sha256) = encoded_bytes(response);
+    exchange["kiwi_response_base64"] = json!(response_base64);
+    exchange["kiwi_response_sha256"] = json!(response_sha256);
+    exchange["redis_response_base64"] = json!(response_base64);
+    exchange["redis_response_sha256"] = json!(response_sha256);
 }
 
 #[derive(Clone, Deserialize)]
@@ -70,12 +274,18 @@ struct StepInputs {
     name: Option<String>,
     path: Option<String>,
     r#ref: Option<String>,
+    #[serde(rename = "retention-days")]
+    retention_days: Option<u64>,
     #[serde(rename = "if-no-files-found")]
     if_no_files_found: Option<String>,
 }
 
 const VECTOR_CLUSTER_JOB: &str = "vector-cluster-fail-closed";
 const TRUSTED_VECTOR_JOB: &str = "trusted-vector-differential";
+const TRUSTED_VECTOR_HEAD: &str = "${{ github.event.pull_request.head.sha || github.sha }}";
+const TRUSTED_VECTOR_PROVENANCE: &str = "${{ runner.temp }}/kiwi-oracle/oracle-provenance.json";
+const TRUSTED_VECTOR_EVIDENCE: &str =
+    "${{ runner.temp }}/kiwi-oracle/vector-differential-evidence.json";
 const BUILD_AND_TEST_JOB: &str = "build-and-test";
 const SANITIZERS_JOB: &str = "sanitizers";
 const STATIC_ANALYSIS_JOB: &str = "static-analysis";
@@ -312,6 +522,14 @@ fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), Stri
         return Err(format!("{TRUSTED_VECTOR_JOB} cannot continue on error"));
     }
 
+    let checkout = find_only_step(job, "exact-head checkout", |step| {
+        step.uses.as_deref() == Some("actions/checkout@v7")
+    })?;
+    if job.steps[checkout].with.r#ref.as_deref() != Some(TRUSTED_VECTOR_HEAD) {
+        return Err(format!(
+            "{TRUSTED_VECTOR_JOB} checkout must bind the pull-request Head or push SHA"
+        ));
+    }
     let namespace_preflight = find_only_step(job, "Oracle namespace preflight", |step| {
         step.run
             .as_deref()
@@ -324,6 +542,8 @@ fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), Stri
                 "KIWI_REDIS_ORACLE_SOURCE=\"$RUNNER_TEMP/kiwi-oracle/redis-source\"",
                 "KIWI_REDIS_ORACLE_PRIMARY_METADATA=\"$RUNNER_TEMP/kiwi-oracle/primary-build.json\"",
                 "KIWI_REDIS_ORACLE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json\"",
+                "KIWI_REDIS_ORACLE_EVIDENCE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/vector-differential-evidence.json\"",
+                "KIWI_EXPECTED_HEAD=\"${{ github.event.pull_request.head.sha || github.sha }}\"",
                 "bash scripts/compat/run-vector-differential.sh",
             ]
             .iter()
@@ -338,22 +558,35 @@ fn validate_vector_differential_workflow(workflow: &Workflow) -> Result<(), Stri
             .is_some_and(|action| action.starts_with("actions/upload-artifact@"))
     })?;
     let upload_step = &job.steps[upload];
+    let upload_paths = upload_step
+        .with
+        .path
+        .as_deref()
+        .map(|paths| {
+            paths
+                .lines()
+                .map(str::trim)
+                .filter(|path| !path.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     if upload_step.uses.as_deref() != Some("actions/upload-artifact@v7")
-        || upload_step.with.name.as_deref() != Some("trusted-vector-oracle-provenance")
-        || upload_step.with.path.as_deref()
-            != Some("${{ runner.temp }}/kiwi-oracle/oracle-provenance.json")
+        || upload_step.with.name.as_deref() != Some("trusted-vector-oracle-evidence")
+        || upload_paths != [TRUSTED_VECTOR_PROVENANCE, TRUSTED_VECTOR_EVIDENCE]
         || upload_step.with.if_no_files_found.as_deref() != Some("error")
+        || upload_step.with.retention_days != Some(7)
     {
         return Err(format!(
-            "{TRUSTED_VECTOR_JOB} may upload only the final post-cleanup provenance file"
+            "{TRUSTED_VECTOR_JOB} may upload only the final provenance and evidence files"
         ));
     }
-    if namespace_preflight >= runner || runner >= upload {
+    if checkout >= namespace_preflight || namespace_preflight >= runner || runner >= upload {
         return Err(format!(
-            "{TRUSTED_VECTOR_JOB} must run the namespace preflight, verifier, and provenance upload in order"
+            "{TRUSTED_VECTOR_JOB} must checkout exact Head, run the verifier, then upload final evidence"
         ));
     }
-    if job.steps[namespace_preflight].condition.is_some()
+    if job.steps[checkout].condition.is_some()
+        || job.steps[namespace_preflight].condition.is_some()
         || job.steps[runner].condition.is_some()
         || job.steps[upload].condition.is_some()
     {
@@ -430,7 +663,7 @@ fn validate_vector_differential_runner_source(source: &str) -> Result<(), String
     if source.matches(endpoint_guard).count() != 1 {
         return Err("outer differential runner must reject ambient Oracle endpoints".to_string());
     }
-    let verifier = "scripts/compat/verify-redis-8.8.1.sh \\\n    --source \"$KIWI_REDIS_ORACLE_SOURCE\" \\\n    --primary-metadata \"$KIWI_REDIS_ORACLE_PRIMARY_METADATA\" \\\n    --output \"$KIWI_REDIS_ORACLE_OUTPUT\" \\\n    --callback-input \"$repository_root\" \\\n    --run-after-ready /bin/bash \\\n    /callback-input/scripts/compat/run-vector-differential.sh --callback";
+    let verifier = "scripts/compat/verify-redis-8.8.1.sh \\\n    --source \"$KIWI_REDIS_ORACLE_SOURCE\" \\\n    --primary-metadata \"$KIWI_REDIS_ORACLE_PRIMARY_METADATA\" \\\n    --output \"$KIWI_REDIS_ORACLE_OUTPUT\" \\\n    --evidence-output \"$KIWI_REDIS_ORACLE_EVIDENCE_OUTPUT\" \\\n    --expected-head \"$KIWI_EXPECTED_HEAD\" \\\n    --publication-verifier \"$repository_root/target/debug/kiwi-verify-oracle-evidence\" \\\n    --callback-input \"$repository_root\" \\\n    --run-after-ready /bin/bash \\\n    /callback-input/scripts/compat/run-vector-differential.sh --callback";
     if source.matches(verifier).count() != 1 {
         return Err(
             "differential runner must obtain the rebuild runtime from the verifier supervisor"
@@ -448,14 +681,26 @@ fn validate_vector_differential_runner_source(source: &str) -> Result<(), String
     }
     for required in [
         "verifier did not publish Oracle provenance after cleanup",
-        "Oracle provenance was published before complete cleanup",
-        "Oracle provenance publication order is invalid",
+        "verifier did not publish differential evidence before provenance",
+        "--bin kiwi-verify-oracle-evidence",
+        "target/debug/kiwi-verify-oracle-evidence",
     ] {
         if !outer.contains(required) {
             return Err(format!(
                 "differential runner is missing post-cleanup proof: {required}"
             ));
         }
+    }
+    if outer
+        .matches("target/debug/kiwi-verify-oracle-evidence")
+        .count()
+        != 1
+        || outer.contains("/usr/bin/python3 -I -B - \"$KIWI_REDIS_ORACLE_OUTPUT\"")
+    {
+        return Err(
+            "publication binding must run inside the controller transaction exactly once"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -1371,6 +1616,152 @@ fn required_jobs_reject_unversioned_actions() {
 }
 
 #[test]
+fn trusted_vector_workflow_rejects_non_exact_head_and_incomplete_evidence_uploads() {
+    let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
+    let workflow: Workflow =
+        yaml_serde::from_str(&workflow_source).expect("CI workflow must parse");
+    validate_vector_differential_workflow(&workflow)
+        .expect("trusted differential exact-Head workflow must be fail closed");
+
+    let assert_rejected = |name: &str, mutant: Workflow| {
+        assert!(
+            validate_vector_differential_workflow(&mutant).is_err(),
+            "trusted differential accepted {name} mutant"
+        );
+    };
+    let step_index = |workflow: &Workflow, predicate: fn(&Step) -> bool| {
+        workflow.jobs[TRUSTED_VECTOR_JOB]
+            .steps
+            .iter()
+            .position(predicate)
+            .expect("required trusted Vector step must exist")
+    };
+    let is_checkout = |step: &Step| step.uses.as_deref() == Some("actions/checkout@v7");
+    let is_runner = |step: &Step| {
+        step.run
+            .as_deref()
+            .is_some_and(|run| run.contains("bash scripts/compat/run-vector-differential.sh"))
+    };
+    let is_upload = |step: &Step| {
+        step.uses
+            .as_deref()
+            .is_some_and(|uses| uses.starts_with("actions/upload-artifact@"))
+    };
+
+    let mut default_merge_checkout = workflow.clone();
+    let checkout = step_index(&default_merge_checkout, is_checkout);
+    default_merge_checkout
+        .jobs
+        .get_mut(TRUSTED_VECTOR_JOB)
+        .expect("trusted Vector job must exist")
+        .steps[checkout]
+        .with
+        .r#ref = None;
+    assert_rejected("default synthetic merge checkout", default_merge_checkout);
+
+    let mut synthetic_merge = workflow.clone();
+    let checkout = step_index(&synthetic_merge, is_checkout);
+    synthetic_merge
+        .jobs
+        .get_mut(TRUSTED_VECTOR_JOB)
+        .expect("trusted Vector job must exist")
+        .steps[checkout]
+        .with
+        .r#ref = Some("${{ github.sha }}".to_string());
+    assert_rejected("synthetic merge checkout", synthetic_merge);
+
+    let mut missing_expected_head = workflow.clone();
+    let runner = step_index(&missing_expected_head, is_runner);
+    let command = missing_expected_head
+        .jobs
+        .get_mut(TRUSTED_VECTOR_JOB)
+        .expect("trusted Vector job must exist")
+        .steps[runner]
+        .run
+        .as_mut()
+        .expect("trusted Vector runner must have a command");
+    *command = command.replace(
+        "KIWI_EXPECTED_HEAD=\"${{ github.event.pull_request.head.sha || github.sha }}\" \\\n",
+        "",
+    );
+    assert_rejected("missing expected Head", missing_expected_head);
+
+    let mut missing_evidence_output = workflow.clone();
+    let runner = step_index(&missing_evidence_output, is_runner);
+    let command = missing_evidence_output
+        .jobs
+        .get_mut(TRUSTED_VECTOR_JOB)
+        .expect("trusted Vector job must exist")
+        .steps[runner]
+        .run
+        .as_mut()
+        .expect("trusted Vector runner must have a command");
+    *command = command.replace(
+        "KIWI_REDIS_ORACLE_EVIDENCE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/vector-differential-evidence.json\" \\\n",
+        "",
+    );
+    assert_rejected("missing evidence output", missing_evidence_output);
+
+    for (name, path) in [
+        ("provenance-only upload", TRUSTED_VECTOR_PROVENANCE),
+        (
+            "broad work-directory upload",
+            "${{ runner.temp }}/kiwi-oracle",
+        ),
+    ] {
+        let mut mutant = workflow.clone();
+        let upload = step_index(&mutant, is_upload);
+        mutant
+            .jobs
+            .get_mut(TRUSTED_VECTOR_JOB)
+            .expect("trusted Vector job must exist")
+            .steps[upload]
+            .with
+            .path = Some(path.to_string());
+        assert_rejected(name, mutant);
+    }
+
+    let mut premature_upload = workflow.clone();
+    let runner = step_index(&premature_upload, is_runner);
+    let upload = step_index(&premature_upload, is_upload);
+    premature_upload
+        .jobs
+        .get_mut(TRUSTED_VECTOR_JOB)
+        .expect("trusted Vector job must exist")
+        .steps
+        .swap(runner, upload);
+    assert_rejected("premature upload", premature_upload);
+
+    let mut conditional_upload = workflow.clone();
+    let upload = step_index(&conditional_upload, is_upload);
+    conditional_upload
+        .jobs
+        .get_mut(TRUSTED_VECTOR_JOB)
+        .expect("trusted Vector job must exist")
+        .steps[upload]
+        .condition = Some(yaml_serde::Value::String("always()".to_string()));
+    assert_rejected("conditional failure upload", conditional_upload);
+
+    for (name, retention_days) in [
+        ("missing bounded retention", None),
+        ("zero-day retention", Some(0)),
+        ("six-day retention", Some(6)),
+        ("oversized retention", Some(90)),
+    ] {
+        let mut mutant = workflow.clone();
+        let upload = step_index(&mutant, is_upload);
+        mutant
+            .jobs
+            .get_mut(TRUSTED_VECTOR_JOB)
+            .expect("trusted Vector job must exist")
+            .steps[upload]
+            .with
+            .retention_days = retention_days;
+        assert_rejected(name, mutant);
+    }
+}
+
+#[test]
 fn vector_differential_upload_requires_explicit_missing_file_error() {
     let workflow_source = normalized_fixture(include_str!("../../../.github/workflows/ci.yml"));
     let workflow: Workflow =
@@ -1449,7 +1840,7 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
         .expect("trusted differential runner must obtain its runtime from the verifier");
 
     let runner_bypass = workflow_source.replacen(
-        "          KIWI_COMPAT_REQUIRE_ORACLE=1 \\\n          KIWI_REDIS_ORACLE_SOURCE=\"$RUNNER_TEMP/kiwi-oracle/redis-source\" \\\n          KIWI_REDIS_ORACLE_PRIMARY_METADATA=\"$RUNNER_TEMP/kiwi-oracle/primary-build.json\" \\\n          KIWI_REDIS_ORACLE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json\" \\\n            bash scripts/compat/run-vector-differential.sh",
+        "          KIWI_COMPAT_REQUIRE_ORACLE=1 \\\n          KIWI_REDIS_ORACLE_SOURCE=\"$RUNNER_TEMP/kiwi-oracle/redis-source\" \\\n          KIWI_REDIS_ORACLE_PRIMARY_METADATA=\"$RUNNER_TEMP/kiwi-oracle/primary-build.json\" \\\n          KIWI_REDIS_ORACLE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json\" \\\n          KIWI_REDIS_ORACLE_EVIDENCE_OUTPUT=\"$RUNNER_TEMP/kiwi-oracle/vector-differential-evidence.json\" \\\n          KIWI_EXPECTED_HEAD=\"${{ github.event.pull_request.head.sha || github.sha }}\" \\\n            bash scripts/compat/run-vector-differential.sh",
         "          redis-cli -h \"${KIWI_REDIS_ORACLE_HOST:-127.0.0.1}\" \\\n            -p \"${KIWI_REDIS_ORACLE_PORT:-6379}\" PING",
         1,
     );
@@ -1460,7 +1851,7 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
 
     let upload_before_cleanup = workflow_source.replacen(
         "      - name: Run required trusted Vector differential\n        run: |\n          KIWI_COMPAT_REQUIRE_ORACLE=1",
-        "      - name: Upload trusted Oracle provenance\n        uses: actions/upload-artifact@v7\n        with:\n          name: premature-provenance\n          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json\n\n      - name: Run required trusted Vector differential\n        run: |\n          KIWI_COMPAT_REQUIRE_ORACLE=1",
+        "      - name: Upload trusted Oracle evidence prematurely\n        uses: actions/upload-artifact@v7\n        with:\n          name: premature-evidence\n          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json\n\n      - name: Run required trusted Vector differential\n        run: |\n          KIWI_COMPAT_REQUIRE_ORACLE=1",
         1,
     );
     assert_ne!(
@@ -1469,7 +1860,7 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
     );
 
     let unsafe_upload = workflow_source.replacen(
-        "          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json",
+        "          path: |\n            ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json\n            ${{ runner.temp }}/kiwi-oracle/vector-differential-evidence.json",
         "          path: ${{ runner.temp }}/kiwi-oracle",
         1,
     );
@@ -1518,8 +1909,8 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
         ),
         (
             "upload condition",
-            "      - name: Upload trusted Oracle provenance\n        uses: actions/upload-artifact@v7",
-            "      - name: Upload trusted Oracle provenance\n        if: always()\n        uses: actions/upload-artifact@v7",
+            "      - name: Upload trusted Oracle evidence\n        uses: actions/upload-artifact@v7",
+            "      - name: Upload trusted Oracle evidence\n        if: always()\n        uses: actions/upload-artifact@v7",
         ),
     ] {
         let mutant = workflow_source.replacen(from, to, 1);
@@ -1554,6 +1945,61 @@ fn vector_differential_rejects_supervisor_bypass_and_unsafe_uploads() {
         assert!(
             validate_vector_differential_runner_source(&mutant).is_err(),
             "trusted differential runner accepted {name} mutant"
+        );
+    }
+}
+
+#[test]
+fn trusted_vector_task_8_propagates_expected_head_and_evidence_output() {
+    let runner = normalized_fixture(include_str!(
+        "../../../scripts/compat/run-vector-differential.sh"
+    ));
+    let powershell = normalized_fixture(include_str!(
+        "../../../scripts/compat/verify-redis-8.8.1.ps1"
+    ));
+    let controller =
+        normalized_fixture(include_str!("../../../scripts/compat/oracle_controller.py"));
+
+    for required in [
+        "KIWI_EXPECTED_HEAD",
+        "KIWI_REDIS_ORACLE_EVIDENCE_OUTPUT",
+        "--expected-head",
+        "--evidence-output",
+        "--publication-verifier",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD=1",
+        "-p pytest_timeout",
+    ] {
+        assert!(
+            runner.contains(required),
+            "trusted Vector runner is missing {required}"
+        );
+    }
+    for required in [
+        "[string]$ExpectedHead",
+        "[string]$EvidenceOutput",
+        "[string]$PublicationVerifier",
+        "$arguments.Add('--expected-head')",
+        "$arguments.Add('--evidence-output')",
+        "$arguments.Add('--publication-verifier')",
+    ] {
+        assert!(
+            powershell.contains(required),
+            "PowerShell verifier wrapper is missing {required}"
+        );
+    }
+    for required in [
+        "--expected-head",
+        "--evidence-output",
+        "--publication-verifier",
+        "expected_head_argument",
+        "evidence_output_argument",
+        "publication_verifier_argument",
+        "kiwi-redis-oracle-provenance/v4",
+        "kiwi-vector-differential-evidence/v1",
+    ] {
+        assert!(
+            controller.contains(required),
+            "Oracle controller is missing {required}"
         );
     }
 }
@@ -1618,12 +2064,37 @@ fn vector_differential_fast_job_uses_marker_ownership_not_path_ignore() {
     assert!(callback_registry < callback_collection);
     for validator in [
         "validate_collection /work/vector-required-jobs.json",
-        "validate_raw_coverage /work/vector-required-jobs.json",
+        "validate_raw_transcript /work/vector-required-jobs.json",
+        "validate_final_state /work/vector-required-jobs.json",
+        "validate_evidence_set /work/vector-required-jobs.json",
         "validate_summary /work/vector-required-jobs.json",
     ] {
         assert!(
             runner.contains(validator),
             "callback validator bypasses canonical JSON: {validator}"
+        );
+    }
+    for required in [
+        "kiwi-vector-wire-transcript/v1",
+        "kiwi-vector-final-state/v1",
+        "raw-transcript.jsonl",
+        "final-state.jsonl",
+        "KIWI_VECTOR_RAW_TRANSCRIPT",
+        "KIWI_VECTOR_FINAL_STATE",
+    ] {
+        assert!(
+            runner.contains(required),
+            "strict evidence runner is missing {required}"
+        );
+    }
+    for forbidden in [
+        "raw-coverage.jsonl",
+        "KIWI_VECTOR_RAW_COVERAGE",
+        "validate_raw_coverage",
+    ] {
+        assert!(
+            !runner.contains(forbidden),
+            "hash-only evidence contract remains in the runner: {forbidden}",
         );
     }
     assert!(
@@ -1835,21 +2306,47 @@ fn vector_differential_runner_rejects_collection_and_result_drift() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn vector_differential_runner_requires_observed_raw_coverage_for_every_command() {
+fn vector_differential_runner_rejects_unreplayable_or_unbounded_evidence() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let runner = root.join("scripts/compat/run-vector-differential.sh");
     let registry = root.join("tests/compat/redis-8.8.1/vector-required-jobs.yaml");
     let scratch = std::env::temp_dir().join(format!(
-        "kiwi-vector-raw-coverage-{}-{}",
+        "kiwi-vector-strict-evidence-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock must be after the Unix epoch")
             .as_nanos()
     ));
-    fs::create_dir(&scratch).expect("create raw coverage scratch directory");
-    let coverage = scratch.join("raw-coverage.jsonl");
-    let node_ids = [
+    fs::create_dir(&scratch).expect("create strict evidence scratch directory");
+    let transcript = scratch.join("raw-transcript.jsonl");
+    let final_state = scratch.join("final-state.jsonl");
+
+    let helper_output = Command::new(env!("CARGO_BIN_EXE_kiwi-required-vector-jobs"))
+        .arg(&registry)
+        .output()
+        .expect("required-jobs helper must run");
+    assert!(helper_output.status.success());
+    let canonical: Value =
+        serde_json::from_slice(&helper_output.stdout).expect("parse canonical required jobs");
+    let canonical_request = |command: &str, case_id: &str, node_id: &str| {
+        let raw_case = canonical["raw_cases"][command]
+            .as_array()
+            .expect("canonical command must expose raw cases")
+            .iter()
+            .find(|raw_case| raw_case["case_id"] == case_id)
+            .expect("canonical raw case must exist");
+        let request_base64 = raw_case["request_base64_by_node"][node_id]
+            .as_str()
+            .expect("canonical raw case must bind exact request bytes")
+            .to_string();
+        let request = BASE64_STANDARD
+            .decode(&request_base64)
+            .expect("canonical request must use valid Base64");
+        let (_, request_sha256) = encoded_bytes(&request);
+        (request_base64, request_sha256)
+    };
+    let raw_node_ids = [
         "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]",
         "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]",
         "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]",
@@ -1865,105 +2362,581 @@ fn vector_differential_runner_requires_observed_raw_coverage_for_every_command()
         ("VREM", "zero-vector"),
         ("VSIM", "zero-vector"),
     ];
-    let mut records = String::new();
-    for node_id in node_ids {
+    let mut transcript_records = Vec::new();
+    for node_id in raw_node_ids {
         let protocol = if node_id.ends_with("[resp2]") { 2 } else { 3 };
         for (command, case_id) in exact_cases {
-            records.push_str(&format!(
-                "{{\"case_id\":\"{case_id}\",\"command\":\"{command}\",\"evidence_kind\":\"exact-frame\",\"node_id\":\"{node_id}\",\"protocol\":{protocol},\"kiwi_frame_sha256\":\"{}\",\"redis_frame_sha256\":\"{}\"}}\n",
-                "a".repeat(64),
-                "a".repeat(64)
-            ));
+            let (request_base64, request_sha256) = canonical_request(command, case_id, node_id);
+            transcript_records.push(json!({
+                "schema": "kiwi-vector-wire-transcript/v1",
+                "node_id": node_id,
+                "case_id": case_id,
+                "protocol": protocol,
+                "command": command,
+                "comparison_kind": "exact-frame",
+                "request_base64": request_base64,
+                "request_sha256": request_sha256,
+                "kiwi_response_base64": "OjENCg==",
+                "kiwi_response_sha256": "6d7dbcb27aa6e24f40bf1f4cb2cc8a36e2f3b7f1ae87edf906578a2936b756d2",
+                "redis_response_base64": "OjENCg==",
+                "redis_response_sha256": "6d7dbcb27aa6e24f40bf1f4cb2cc8a36e2f3b7f1ae87edf906578a2936b756d2",
+                "registered_difference_ids": [],
+            }));
         }
-        records.push_str(&format!(
-            "{{\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"raw-schema\",\"node_id\":\"{node_id}\",\"protocol\":{protocol},\"kiwi_frame_sha256\":\"{}\",\"redis_frame_sha256\":\"{}\"}}\n",
-            "a".repeat(64),
-            "b".repeat(64)
-        ));
+        let (kiwi_base64, kiwi_sha256, redis_base64, redis_sha256) = if protocol == 2 {
+            (
+                "KjE4DQorcXVhbnQtdHlwZQ0KK2YzMg0KK2huc3ctbQ0KOjANCit2ZWN0b3ItZGltDQo6Mg0KK3Byb2plY3Rpb24taW5wdXQtZGltDQo6MA0KK3NpemUNCjoxDQorbWF4LWxldmVsDQo6MA0KK2F0dHJpYnV0ZXMtY291bnQNCjowDQordnNldC11aWQNCjo3DQoraG5zdy1tYXgtbm9kZS11aWQNCjowDQo=",
+                "a5345a20c71584036c712b8636581a509b31336c64af26d898bbda1aac75bb32",
+                "KjE4DQorcXVhbnQtdHlwZQ0KK2YzMg0KK2huc3ctbQ0KOjE2DQordmVjdG9yLWRpbQ0KOjINCitwcm9qZWN0aW9uLWlucHV0LWRpbQ0KOjANCitzaXplDQo6MQ0KK21heC1sZXZlbA0KOjMNCithdHRyaWJ1dGVzLWNvdW50DQo6MA0KK3ZzZXQtdWlkDQo6NDINCitobnN3LW1heC1ub2RlLXVpZA0KOjkNCg==",
+                "8c12989f6910ade14b6c2c3b24df811fbf44a4b46dfaa4e51c443358dc49bcb6",
+            )
+        } else {
+            (
+                "JTkNCitxdWFudC10eXBlDQorZjMyDQoraG5zdy1tDQo6MA0KK3ZlY3Rvci1kaW0NCjoyDQorcHJvamVjdGlvbi1pbnB1dC1kaW0NCjowDQorc2l6ZQ0KOjENCittYXgtbGV2ZWwNCjowDQorYXR0cmlidXRlcy1jb3VudA0KOjANCit2c2V0LXVpZA0KOjcNCitobnN3LW1heC1ub2RlLXVpZA0KOjANCg==",
+                "9d6962697ec057dae8636d27dbd05eb6b35f09a847e54261f7c0fa4fc8bcac20",
+                "JTkNCitxdWFudC10eXBlDQorZjMyDQoraG5zdy1tDQo6MTYNCit2ZWN0b3ItZGltDQo6Mg0KK3Byb2plY3Rpb24taW5wdXQtZGltDQo6MA0KK3NpemUNCjoxDQorbWF4LWxldmVsDQo6Mw0KK2F0dHJpYnV0ZXMtY291bnQNCjowDQordnNldC11aWQNCjo0Mg0KK2huc3ctbWF4LW5vZGUtdWlkDQo6OQ0K",
+                "3e1875a1d52140156cb4c01c936a42fa041686c2edc58451d9e8c0cff023acfc",
+            )
+        };
+        let (request_base64, request_sha256) = canonical_request("VINFO", "populated", node_id);
+        transcript_records.push(json!({
+            "schema": "kiwi-vector-wire-transcript/v1",
+            "node_id": node_id,
+            "case_id": "populated",
+            "protocol": protocol,
+            "command": "VINFO",
+            "comparison_kind": "raw-schema",
+            "request_base64": request_base64,
+            "request_sha256": request_sha256,
+            "kiwi_response_base64": kiwi_base64,
+            "kiwi_response_sha256": kiwi_sha256,
+            "redis_response_base64": redis_base64,
+            "redis_response_sha256": redis_sha256,
+            "registered_difference_ids": [
+                "vinfo-hnsw-m",
+                "vinfo-max-level",
+                "vinfo-vset-uid",
+                "vinfo-hnsw-max-node-uid",
+            ],
+        }));
     }
-    fs::write(&coverage, &records).expect("write valid raw coverage evidence");
-    let validate = |registry_path: &std::path::Path, coverage_path: &std::path::Path| {
+    let write_jsonl = |path: &std::path::Path, records: &[Value]| {
+        let text = records
+            .iter()
+            .map(|record| serde_json::to_string(record).expect("serialize evidence record"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        fs::write(path, text).expect("write JSONL evidence");
+    };
+    write_jsonl(&transcript, &transcript_records);
+    let validate_transcript = |path: &std::path::Path| {
         runner_command(&runner)
-            .arg("--validate-raw-coverage")
-            .arg(registry_path)
-            .arg(coverage_path)
+            .arg("--validate-raw-transcript")
+            .arg(&registry)
+            .arg(path)
             .status()
-            .expect("raw coverage validator must start")
+            .expect("raw transcript validator must start")
             .success()
     };
-    assert!(validate(&registry, &coverage));
-    let yaml = fs::read_to_string(&registry).expect("read required job registry");
-    for (name, mutant) in [
-        (
-            "unknown-field",
-            yaml.replacen(
-                "    test_module:",
-                "    unknown_job_field: true\n    test_module:",
-                1,
-            ),
-        ),
-        (
-            "reversed-protocols",
-            yaml.replacen(
-                "    protocols: [resp2, resp3]",
-                "    protocols: [resp3, resp2]",
-                1,
-            ),
-        ),
-    ] {
-        let mutant_registry = scratch.join(format!("{name}.yaml"));
-        fs::write(&mutant_registry, mutant).expect("write raw coverage registry mutant");
+    assert!(validate_transcript(&transcript));
+
+    let assert_transcript_mutant_rejected = |name: &str, records: &[Value]| {
+        let mutant = scratch.join(format!("raw-transcript-{name}.jsonl"));
+        write_jsonl(&mutant, records);
         assert!(
-            !validate(&mutant_registry, &coverage),
-            "raw coverage validator accepted {name} registry mutant"
+            !validate_transcript(&mutant),
+            "accepted raw transcript mutant {name}"
+        );
+    };
+    let hash_only = vec![json!({
+        "case_id": "zero-vector",
+        "command": "VADD",
+        "node_id": raw_node_ids[0],
+        "protocol": 2,
+        "kiwi_frame_sha256": "a".repeat(64),
+        "redis_frame_sha256": "a".repeat(64),
+    })];
+    assert_transcript_mutant_rejected("hash-only", &hash_only);
+    let mut invalid_base64 = transcript_records.clone();
+    invalid_base64[0]["request_base64"] = json!("%%%=");
+    assert_transcript_mutant_rejected("invalid-base64", &invalid_base64);
+    let mut hash_mismatch = transcript_records.clone();
+    hash_mismatch[0]["request_sha256"] = json!("0".repeat(64));
+    assert_transcript_mutant_rejected("hash-mismatch", &hash_mismatch);
+    let mut wrong_request_key = transcript_records.clone();
+    let wrong_key_request = encode_resp_command(
+        "VADD",
+        b"test_vdiff:raw:p2:wrong-key",
+        &[b"VALUES", b"2", b"0", b"0", b"zero", b"NOQUANT"],
+    );
+    let (wrong_key_base64, wrong_key_sha256) = encoded_bytes(&wrong_key_request);
+    wrong_request_key[0]["request_base64"] = json!(wrong_key_base64);
+    wrong_request_key[0]["request_sha256"] = json!(wrong_key_sha256);
+    assert_transcript_mutant_rejected("wrong-request-key", &wrong_request_key);
+    let mut wrong_request_arguments = transcript_records.clone();
+    let wrong_arguments_request = encode_resp_command(
+        "VADD",
+        b"test_vdiff:raw:p2:values",
+        &[b"VALUES", b"2", b"0", b"1", b"zero", b"NOQUANT"],
+    );
+    let (wrong_arguments_base64, wrong_arguments_sha256) = encoded_bytes(&wrong_arguments_request);
+    wrong_request_arguments[0]["request_base64"] = json!(wrong_arguments_base64);
+    wrong_request_arguments[0]["request_sha256"] = json!(wrong_arguments_sha256);
+    assert_transcript_mutant_rejected("wrong-request-arguments", &wrong_request_arguments);
+    assert_transcript_mutant_rejected("missing-case", &transcript_records[1..]);
+    let mut duplicate = transcript_records.clone();
+    duplicate.push(transcript_records[0].clone());
+    assert_transcript_mutant_rejected("duplicate-case", &duplicate);
+    let mut extra = transcript_records.clone();
+    let mut extra_record = transcript_records[0].clone();
+    extra_record["case_id"] = json!("extra-case");
+    extra.push(extra_record);
+    assert_transcript_mutant_rejected("extra-case", &extra);
+    let mut unregistered = transcript_records.clone();
+    unregistered[0]["registered_difference_ids"] = json!(["unregistered-difference"]);
+    assert_transcript_mutant_rejected("unregistered-difference", &unregistered);
+    let mut extra_field = transcript_records.clone();
+    extra_field[0]["typed_reply"] = json!(1);
+    assert_transcript_mutant_rejected("extra-field", &extra_field);
+    let duplicate_transcript_key = scratch.join("raw-transcript-duplicate-object-key.jsonl");
+    let transcript_text = fs::read_to_string(&transcript).expect("read transcript fixture");
+    let duplicate_transcript_text = transcript_text.replacen(
+        "\"schema\":",
+        "\"schema\":\"invalid-duplicate\",\"schema\":",
+        1,
+    );
+    assert_ne!(duplicate_transcript_text, transcript_text);
+    fs::write(&duplicate_transcript_key, duplicate_transcript_text)
+        .expect("write duplicate transcript object-key mutant");
+    assert!(
+        !validate_transcript(&duplicate_transcript_key),
+        "accepted duplicate transcript object key"
+    );
+
+    let node_ids = canonical["expected_node_ids"]
+        .as_array()
+        .expect("canonical registry must expose expected node IDs")
+        .iter()
+        .map(|node_id| {
+            node_id
+                .as_str()
+                .expect("canonical node ID must be a string")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(node_ids.len(), 40);
+    let final_contracts = canonical["final_state"]
+        .as_object()
+        .expect("canonical registry must expose final-state contracts");
+    let mut final_records = Vec::new();
+    for &node_id in &node_ids {
+        let contract = final_contracts
+            .get(node_id)
+            .expect("canonical node must have a final-state contract");
+        if contract["applicability"] == "not-applicable" {
+            final_records.push(json!({
+                "schema": "kiwi-vector-final-state/v1",
+                "node_id": node_id,
+                "applicability": "not-applicable",
+                "reason": contract["reason"],
+            }));
+            continue;
+        }
+        let protocol = if node_id.ends_with("[resp2]") { 2 } else { 3 };
+        let state_profile = contract["state_profile"]
+            .as_str()
+            .expect("server-backed contract must expose a state profile");
+        final_records.push(json!({
+            "schema": "kiwi-vector-final-state/v1",
+            "node_id": node_id,
+            "applicability": "server-backed",
+            "protocol": protocol,
+            "known_keys": final_state_keys(state_profile, protocol),
+        }));
+    }
+    write_jsonl(&final_state, &final_records);
+    let validate_final_state = |path: &std::path::Path| {
+        runner_command(&runner)
+            .arg("--validate-final-state")
+            .arg(&registry)
+            .arg(path)
+            .status()
+            .expect("final-state validator must start")
+            .success()
+    };
+    assert!(validate_final_state(&final_state));
+    let repeated_node = "tests/python/test_vector_set_differential.py::test_repeated_vadd_and_vsim_options_match[resp2]";
+    let repeated_index = final_records
+        .iter()
+        .position(|record| record["node_id"] == repeated_node)
+        .expect("fixture must contain the repeated VADD RESP2 node");
+    let repeated_main_index = final_records[repeated_index]["known_keys"]
+        .as_array()
+        .expect("known_keys must be an array")
+        .iter()
+        .position(|key| key["key_role"] == "main")
+        .expect("repeated VADD fixture must expose the main role");
+    let mut repeated_two_member_state = final_records.clone();
+    let repeated_observations = repeated_two_member_state[repeated_index]["known_keys"]
+        [repeated_main_index]["before_cleanup"]["observations"]
+        .as_array_mut()
+        .expect("repeated VADD observations must be an array");
+    replace_exchange_response(&mut repeated_observations[0], b":2\r\n");
+    for observation in &mut repeated_observations[4..] {
+        replace_exchange_response(observation, b"$-1\r\n");
+    }
+    let repeated_two_member_final_state = scratch.join("final-state-repeated-two-member.jsonl");
+    write_jsonl(&repeated_two_member_final_state, &repeated_two_member_state);
+    assert!(
+        validate_final_state(&repeated_two_member_final_state),
+        "rejected producer-accurate repeated VADD final state with only alpha and beta"
+    );
+    let final_state_text = fs::read_to_string(&final_state).expect("read final-state fixture");
+    let duplicate_final_top_key = scratch.join("final-state-duplicate-top-object-key.jsonl");
+    let duplicate_final_top_text = final_state_text.replacen(
+        "\"schema\":",
+        "\"schema\":\"invalid-duplicate\",\"schema\":",
+        1,
+    );
+    assert_ne!(duplicate_final_top_text, final_state_text);
+    fs::write(&duplicate_final_top_key, duplicate_final_top_text)
+        .expect("write duplicate final-state top-level object-key mutant");
+    assert!(
+        !validate_final_state(&duplicate_final_top_key),
+        "accepted duplicate final-state top-level object key"
+    );
+    let duplicate_final_nested_key = scratch.join("final-state-duplicate-nested-object-key.jsonl");
+    let duplicate_final_nested_text =
+        final_state_text.replacen("\"command\":", "\"command\":\"INVALID\",\"command\":", 1);
+    assert_ne!(duplicate_final_nested_text, final_state_text);
+    fs::write(&duplicate_final_nested_key, duplicate_final_nested_text)
+        .expect("write duplicate final-state nested object-key mutant");
+    assert!(
+        !validate_final_state(&duplicate_final_nested_key),
+        "accepted duplicate final-state nested object key"
+    );
+    let assert_final_mutant_rejected = |name: &str, records: &[Value]| {
+        let mutant = scratch.join(format!("final-state-{name}.jsonl"));
+        write_jsonl(&mutant, records);
+        assert!(
+            !validate_final_state(&mutant),
+            "accepted final-state mutant {name}"
+        );
+    };
+    let mut unexpected_two_member_profile_member = repeated_two_member_state.clone();
+    replace_exchange_response(
+        &mut unexpected_two_member_profile_member[repeated_index]["known_keys"]
+            [repeated_main_index]["before_cleanup"]["observations"][4],
+        &resp_vector(4),
+    );
+    assert_final_mutant_rejected(
+        "unexpected-two-member-profile-member",
+        &unexpected_two_member_profile_member,
+    );
+    assert_final_mutant_rejected("missing-envelope", &final_records[1..]);
+    let mut duplicate_final = final_records.clone();
+    duplicate_final.push(final_records[0].clone());
+    assert_final_mutant_rejected("duplicate-envelope", &duplicate_final);
+    let server_index = final_records
+        .iter()
+        .position(|record| record["applicability"] == "server-backed")
+        .expect("fixture must contain server-backed final state");
+    let vector_index = final_records
+        .iter()
+        .position(|record| {
+            record["known_keys"].as_array().is_some_and(|keys| {
+                keys.iter().any(|key| {
+                    key["key_role"] == "main"
+                        && key["before_cleanup"]["observations"]
+                            .as_array()
+                            .is_some_and(|items| !items.is_empty())
+                })
+            })
+        })
+        .expect("fixture must contain a populated main Vector key");
+    let vector_key_index = final_records[vector_index]["known_keys"]
+        .as_array()
+        .expect("known_keys must be an array")
+        .iter()
+        .position(|key| key["key_role"] == "main")
+        .expect("populated Vector fixture must expose the main role");
+    let mut missing_key_role = final_records.clone();
+    missing_key_role[server_index]["known_keys"]
+        .as_array_mut()
+        .expect("known_keys must be an array")
+        .remove(0);
+    assert_final_mutant_rejected("missing-key-role", &missing_key_role);
+    let mut wrong_key_bytes = final_records.clone();
+    wrong_key_bytes[server_index]["known_keys"][0] =
+        final_state_key_record("values", b"wrong-key", "none", None, &[], 0);
+    assert_final_mutant_rejected("wrong-key-bytes", &wrong_key_bytes);
+    let mut wrong_profile_type = final_records.clone();
+    let profile_key = BASE64_STANDARD
+        .decode(
+            wrong_profile_type[server_index]["known_keys"][0]["key_base64"]
+                .as_str()
+                .expect("fixture key Base64 must be a string"),
+        )
+        .expect("fixture key must use valid Base64");
+    wrong_profile_type[server_index]["known_keys"][0] =
+        final_state_key_record("values", &profile_key, "string", None, &[], 0);
+    assert_final_mutant_rejected("wrong-profile-type", &wrong_profile_type);
+    let mut missing_vdim = final_records.clone();
+    missing_vdim[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["observations"]
+        .as_array_mut()
+        .expect("Vector observations must be an array")
+        .remove(1);
+    assert_final_mutant_rejected("missing-vdim", &missing_vdim);
+    let mut missing_vemb = final_records.clone();
+    missing_vemb[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["observations"]
+        .as_array_mut()
+        .expect("Vector observations must be an array")
+        .remove(2);
+    assert_final_mutant_rejected("missing-vemb", &missing_vemb);
+    let mut inconsistent_card = final_records.clone();
+    replace_exchange_response(
+        &mut inconsistent_card[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["observations"]
+            [0],
+        b":0\r\n",
+    );
+    assert_final_mutant_rejected("inconsistent-vcard-vemb", &inconsistent_card);
+    let mut missing_profile_member = final_records.clone();
+    replace_exchange_response(
+        &mut missing_profile_member[vector_index]["known_keys"][vector_key_index]["before_cleanup"]
+            ["observations"][0],
+        b":7\r\n",
+    );
+    replace_exchange_response(
+        &mut missing_profile_member[vector_index]["known_keys"][vector_key_index]["before_cleanup"]
+            ["observations"][2],
+        b"$-1\r\n",
+    );
+    assert_final_mutant_rejected("missing-profile-member", &missing_profile_member);
+    let mut populated_ghost = final_records.clone();
+    let ghost_observation = populated_ghost[vector_index]["known_keys"][vector_key_index]
+        ["before_cleanup"]["observations"]
+        .as_array_mut()
+        .expect("Vector observations must be an array")
+        .last_mut()
+        .expect("Vector observations must include the ghost member");
+    replace_exchange_response(ghost_observation, &resp_vector(4));
+    assert_final_mutant_rejected("populated-ghost", &populated_ghost);
+    let mut empty_member_vector = final_records.clone();
+    replace_exchange_response(
+        &mut empty_member_vector[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["observations"]
+            [2],
+        b"*0\r\n",
+    );
+    assert_final_mutant_rejected("empty-member-vector", &empty_member_vector);
+    let mut missing_pttl = final_records.clone();
+    missing_pttl[server_index]["known_keys"][0]["before_cleanup"]
+        .as_object_mut()
+        .expect("before_cleanup must be an object")
+        .remove("pttl");
+    assert_final_mutant_rejected("missing-pttl", &missing_pttl);
+    let mut wrong_persistent = final_records.clone();
+    wrong_persistent[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["pttl"]["kiwi_response_base64"] =
+        json!("Oi0yDQo=");
+    wrong_persistent[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["pttl"]["kiwi_response_sha256"] =
+        json!("b905573911645991d118a4cd4f110a3661d4574d51339a3b489eeaf7ac5383c9");
+    wrong_persistent[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["pttl"]["redis_response_base64"] =
+        json!("Oi0yDQo=");
+    wrong_persistent[vector_index]["known_keys"][vector_key_index]["before_cleanup"]["pttl"]["redis_response_sha256"] =
+        json!("b905573911645991d118a4cd4f110a3661d4574d51339a3b489eeaf7ac5383c9");
+    assert_final_mutant_rejected("wrong-minus-one", &wrong_persistent);
+    let mut wrong_missing = final_records.clone();
+    wrong_missing[server_index]["known_keys"][0]["cleanup"]["after_pttl"]["kiwi_response_base64"] =
+        json!("Oi0xDQo=");
+    wrong_missing[server_index]["known_keys"][0]["cleanup"]["after_pttl"]["kiwi_response_sha256"] =
+        json!("8302d7e43fdb0dc1797e8e2a2ef4bd9525450fd23e88c6390af84f32dd5cdf99");
+    wrong_missing[server_index]["known_keys"][0]["cleanup"]["after_pttl"]["redis_response_base64"] =
+        json!("Oi0xDQo=");
+    wrong_missing[server_index]["known_keys"][0]["cleanup"]["after_pttl"]["redis_response_sha256"] =
+        json!("8302d7e43fdb0dc1797e8e2a2ef4bd9525450fd23e88c6390af84f32dd5cdf99");
+    assert_final_mutant_rejected("wrong-minus-two", &wrong_missing);
+
+    let evidence = scratch.join("evidence");
+    fs::create_dir(&evidence).expect("create evidence directory");
+    fs::copy(&transcript, evidence.join("raw-transcript.jsonl")).expect("copy transcript fixture");
+    fs::copy(&final_state, evidence.join("final-state.jsonl")).expect("copy final-state fixture");
+    fs::write(
+        evidence.join("vector-required-jobs.json"),
+        helper_output.stdout,
+    )
+    .expect("write canonical registry fixture");
+    fs::write(evidence.join("kiwi.conf"), "port 7379\n").expect("write config fixture");
+    fs::write(evidence.join("kiwi.log"), "ready\n").expect("write Kiwi log fixture");
+    fs::write(
+        evidence.join("kiwi-runtime.json"),
+        r#"{"schema_version":"kiwi-runtime-identity/v1","pid":1,"binary_path":"/callback-input/target/debug/kiwi","binary_sha256":"0000000000000000000000000000000000000000000000000000000000000000","binary_identity":{"device":1,"inode":1,"mode":33261,"size":1,"nlink":1},"executable_identity_equal":true}
+"#,
+    )
+    .expect("write Kiwi runtime identity fixture");
+    fs::write(
+        evidence.join("callback-cleanup.json"),
+        r#"{"schema_version":"kiwi-vector-callback-cleanup/v1","kiwi_process_reaped":true,"data_directory_removed":true,"log_directory_removed":true,"no_unexpected_work_residue":true}
+"#,
+    )
+    .expect("write callback cleanup fixture");
+    fs::write(
+        evidence.join("collect.log"),
+        format!("{}\n", node_ids.join("\n")),
+    )
+    .expect("write collection fixture");
+    fs::write(evidence.join("pytest.log"), "40 passed\n").expect("write pytest log fixture");
+    let collect_summary = r#"{"collected":40,"passed":0,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    let run_summary = r#"{"collected":40,"passed":40,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    fs::write(evidence.join("collect-summary.json"), collect_summary)
+        .expect("write collection summary fixture");
+    fs::write(evidence.join("run-summary.json"), run_summary).expect("write run summary fixture");
+    let duplicate_canonical = scratch.join("duplicate-canonical.json");
+    let canonical_text = fs::read_to_string(evidence.join("vector-required-jobs.json"))
+        .expect("read canonical registry fixture");
+    let duplicate_canonical_text = canonical_text.replacen(
+        "\"schema\":",
+        "\"schema\":\"invalid-duplicate\",\"schema\":",
+        1,
+    );
+    assert_ne!(duplicate_canonical_text, canonical_text);
+    fs::write(&duplicate_canonical, duplicate_canonical_text)
+        .expect("write duplicate canonical registry mutant");
+    let duplicate_helper = scratch.join("duplicate-required-jobs-helper");
+    fs::write(
+        &duplicate_helper,
+        "#!/usr/bin/env bash\n/usr/bin/cat -- \"$(dirname -- \"$0\")/duplicate-canonical.json\"\n",
+    )
+    .expect("write duplicate canonical helper");
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = fs::metadata(&duplicate_helper)
+            .expect("read duplicate helper mode")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&duplicate_helper, permissions)
+            .expect("make duplicate canonical helper executable");
+    }
+    for (validator, artifact) in [
+        ("--validate-collection", evidence.join("collect.log")),
+        ("--validate-summary", evidence.join("run-summary.json")),
+        (
+            "--validate-collect-summary",
+            evidence.join("collect-summary.json"),
+        ),
+        (
+            "--validate-raw-transcript",
+            evidence.join("raw-transcript.jsonl"),
+        ),
+        ("--validate-final-state", evidence.join("final-state.jsonl")),
+    ] {
+        let output = runner_command(&runner)
+            .env("KIWI_COMPAT_TEST_REQUIRED_JOBS_HELPER", &duplicate_helper)
+            .arg(validator)
+            .arg(&registry)
+            .arg(artifact)
+            .output()
+            .expect("duplicate canonical validator must start");
+        let output_text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !output.status.success(),
+            "{validator} accepted duplicate canonical JSON"
+        );
+        assert!(
+            output_text.contains("duplicate JSON object key"),
+            "{validator} failed for the wrong reason: {output_text}"
         );
     }
-
-    let missing_vcard = records
-        .lines()
-        .filter(|line| !(line.contains("\"command\":\"VCARD\"") && line.contains("[resp3]")))
-        .collect::<Vec<_>>()
-        .join("\n");
-    fs::write(&coverage, format!("{missing_vcard}\n"))
-        .expect("write missing command coverage mutant");
-    assert!(!validate(&registry, &coverage));
-
-    let typed_equivalence = records.replacen(
-        &format!(
-            "\"evidence_kind\":\"exact-frame\",\"node_id\":\"{}\",\"protocol\":2,\"kiwi_frame_sha256\":\"{}\"",
-            node_ids[0],
-            "a".repeat(64)
-        ),
-        &format!(
-            "\"evidence_kind\":\"exact-frame\",\"node_id\":\"{}\",\"protocol\":2,\"kiwi_frame_sha256\":\"{}\"",
-            node_ids[0],
-            "b".repeat(64)
-        ),
-        1,
+    let validate_set = || {
+        runner_command(&runner)
+            .arg("--validate-evidence-set")
+            .arg(&registry)
+            .arg(&evidence)
+            .status()
+            .expect("evidence-set validator must start")
+            .success()
+    };
+    assert!(validate_set());
+    let duplicate_run_summary = r#"{"collected":0,"collected":40,"passed":40,"failed":1,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    fs::write(evidence.join("run-summary.json"), duplicate_run_summary)
+        .expect("write duplicate run summary mutant");
+    assert!(!validate_set(), "accepted duplicate run-summary JSON key");
+    fs::write(evidence.join("run-summary.json"), run_summary).expect("restore run summary fixture");
+    let duplicate_collect_summary = r#"{"collected":0,"collected":40,"passed":1,"passed":0,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#;
+    fs::write(
+        evidence.join("collect-summary.json"),
+        duplicate_collect_summary,
+    )
+    .expect("write duplicate collection summary mutant");
+    assert!(
+        !validate_set(),
+        "accepted duplicate collect-summary JSON key"
     );
-    fs::write(&coverage, typed_equivalence).expect("write frame hash mismatch mutant");
-    assert!(!validate(&registry, &coverage));
+    fs::write(evidence.join("collect-summary.json"), collect_summary)
+        .expect("restore collection summary fixture");
+    for (name, mutant) in [
+        (
+            "float",
+            r#"{"collected":40.0,"passed":0,"failed":0,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#,
+        ),
+        (
+            "boolean",
+            r#"{"collected":40,"passed":false,"failed":false,"skipped":false,"xfailed":false,"xpassed":false,"deselected":false}"#,
+        ),
+        (
+            "negative",
+            r#"{"collected":40,"passed":0,"failed":-1,"skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#,
+        ),
+        (
+            "string",
+            r#"{"collected":40,"passed":0,"failed":"0","skipped":0,"xfailed":0,"xpassed":0,"deselected":0}"#,
+        ),
+    ] {
+        fs::write(evidence.join("collect-summary.json"), mutant)
+            .expect("write invalid collection summary counter mutant");
+        assert!(
+            !validate_set(),
+            "accepted {name} collect-summary counter mutant"
+        );
+    }
+    fs::write(evidence.join("collect-summary.json"), collect_summary)
+        .expect("restore collection summary fixture");
+    fs::create_dir(evidence.join("kiwi-data")).expect("create unexpected runtime directory");
+    fs::write(evidence.join("kiwi-data/unexpected.bin"), "not evidence")
+        .expect("write nested extra evidence mutant");
+    assert!(!validate_set(), "accepted nested extra evidence artifact");
+    fs::remove_dir_all(evidence.join("kiwi-data")).expect("remove nested extra evidence mutant");
+    fs::create_dir(evidence.join("kiwi-log")).expect("create unexpected log directory");
+    std::os::unix::fs::symlink(
+        evidence.join("kiwi.log"),
+        evidence.join("kiwi-log/unexpected-link"),
+    )
+    .expect("create nested symlink evidence mutant");
+    assert!(!validate_set(), "accepted nested symlink evidence artifact");
+    fs::remove_dir_all(evidence.join("kiwi-log")).expect("remove nested symlink evidence mutant");
+    fs::write(evidence.join("extra-artifact.txt"), "not allowed")
+        .expect("write extra artifact mutant");
+    assert!(!validate_set(), "accepted extra evidence artifact");
+    fs::remove_file(evidence.join("extra-artifact.txt")).expect("remove extra artifact mutant");
+    let kiwi_log = fs::OpenOptions::new()
+        .write(true)
+        .open(evidence.join("kiwi.log"))
+        .expect("open Kiwi log mutant");
+    kiwi_log
+        .set_len(8 * 1024 * 1024 + 1)
+        .expect("extend Kiwi log beyond its bound");
+    assert!(!validate_set(), "accepted oversized log evidence");
+    fs::write(evidence.join("kiwi.log"), "ready\n").expect("restore Kiwi log fixture");
+    let final_state_file = fs::OpenOptions::new()
+        .write(true)
+        .open(evidence.join("final-state.jsonl"))
+        .expect("open final-state mutant");
+    final_state_file
+        .set_len(4 * 1024 * 1024 + 1)
+        .expect("extend final-state evidence beyond its bound");
+    assert!(!validate_set(), "accepted oversized final-state evidence");
 
-    let without_populated_vinfo = records
-        .lines()
-        .filter(|line| {
-            !(line.contains("\"command\":\"VINFO\"")
-                && line.contains("\"case_id\":\"populated\"")
-                && line.contains("[resp3]"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    fs::write(&coverage, format!("{without_populated_vinfo}\n"))
-        .expect("write missing populated VINFO mutant");
-    assert!(!validate(&registry, &coverage));
-
-    let wrong_evidence_kind = records.replacen(
-        "\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"raw-schema\"",
-        "\"case_id\":\"populated\",\"command\":\"VINFO\",\"evidence_kind\":\"exact-frame\"",
-        1,
-    );
-    fs::write(&coverage, wrong_evidence_kind).expect("write evidence kind mutant");
-    assert!(!validate(&registry, &coverage));
-
-    fs::remove_dir_all(&scratch).expect("remove raw coverage scratch directory");
+    fs::remove_dir_all(&scratch).expect("remove strict evidence scratch directory");
 }

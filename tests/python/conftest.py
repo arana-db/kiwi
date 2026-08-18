@@ -122,7 +122,10 @@ def redis_client():
 @pytest.fixture(scope="function", autouse=True)
 def isolate_redis_database(request):
     """Flush the dedicated CI server before and after every test."""
-    if request.node.get_closest_marker("raw_vector_protocol") is not None:
+    if (
+        request.node.get_closest_marker("raw_vector_protocol") is not None
+        or "redis_client" not in request.fixturenames
+    ):
         yield
         return
 

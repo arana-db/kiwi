@@ -31,6 +31,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjgNCiQ0DQpWQUREDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAyOnZhbHVlcw0KJDYNClZBTFVFUw0KJDENCjINCiQxDQowDQokMQ0KMA0KJDQNCnplcm8NCiQ3DQpOT1FVQU5UDQo=
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjgNCiQ0DQpWQUREDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAzOnZhbHVlcw0KJDYNClZBTFVFUw0KJDENCjINCiQxDQowDQokMQ0KMA0KJDQNCnplcm8NCiQ3DQpOT1FVQU5UDQo=
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjYNCiQ0DQpWQUREDQokMjINCnRlc3RfdmRpZmY6cmF3OnAyOmZwMzINCiQ0DQpGUDMyDQokOA0KAAAAAAAAAAANCiQ1DQoAemVybw0KJDcNCk5PUVVBTlQNCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjYNCiQ0DQpWQUREDQokMjINCnRlc3RfdmRpZmY6cmF3OnAzOmZwMzINCiQ0DQpGUDMyDQokOA0KAAAAAAAAAAANCiQ1DQoAemVybw0KJDcNCk5PUVVBTlQNCg==
       VCARD:
         - case_id: zero-vector
           evidence_kind: exact-frame
@@ -39,6 +44,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjINCiQ1DQpWQ0FSRA0KJDI0DQp0ZXN0X3ZkaWZmOnJhdzpwMjp2YWx1ZXMNCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjINCiQ1DQpWQ0FSRA0KJDI0DQp0ZXN0X3ZkaWZmOnJhdzpwMzp2YWx1ZXMNCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjINCiQ1DQpWQ0FSRA0KJDIyDQp0ZXN0X3ZkaWZmOnJhdzpwMjpmcDMyDQo=
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjINCiQ1DQpWQ0FSRA0KJDIyDQp0ZXN0X3ZkaWZmOnJhdzpwMzpmcDMyDQo=
       VDIM:
         - case_id: zero-vector
           evidence_kind: exact-frame
@@ -47,6 +57,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjINCiQ0DQpWRElNDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAyOnZhbHVlcw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjINCiQ0DQpWRElNDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAzOnZhbHVlcw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjINCiQ0DQpWRElNDQokMjINCnRlc3RfdmRpZmY6cmF3OnAyOmZwMzINCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjINCiQ0DQpWRElNDQokMjINCnRlc3RfdmRpZmY6cmF3OnAzOmZwMzINCg==
       VEMB:
         - case_id: zero-vector
           evidence_kind: exact-frame
@@ -55,6 +70,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjMNCiQ0DQpWRU1CDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAyOnZhbHVlcw0KJDQNCnplcm8NCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjMNCiQ0DQpWRU1CDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAzOnZhbHVlcw0KJDQNCnplcm8NCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjMNCiQ0DQpWRU1CDQokMjINCnRlc3RfdmRpZmY6cmF3OnAyOmZwMzINCiQ1DQoAemVybw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjMNCiQ0DQpWRU1CDQokMjINCnRlc3RfdmRpZmY6cmF3OnAzOmZwMzINCiQ1DQoAemVybw0K
       VINFO:
         - case_id: missing-key
           evidence_kind: exact-frame
@@ -63,6 +83,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjINCiQ1DQpWSU5GTw0KJDMyDQp0ZXN0X3ZkaWZmOnJhdzpwMjptaXNzaW5nLXNjb3Jlcw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjINCiQ1DQpWSU5GTw0KJDMyDQp0ZXN0X3ZkaWZmOnJhdzpwMzptaXNzaW5nLXNjb3Jlcw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjINCiQ1DQpWSU5GTw0KJDMyDQp0ZXN0X3ZkaWZmOnJhdzpwMjptaXNzaW5nLXNjb3Jlcw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjINCiQ1DQpWSU5GTw0KJDMyDQp0ZXN0X3ZkaWZmOnJhdzpwMzptaXNzaW5nLXNjb3Jlcw0K
         - case_id: populated
           evidence_kind: raw-schema
           node_ids:
@@ -70,6 +95,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjINCiQ1DQpWSU5GTw0KJDI0DQp0ZXN0X3ZkaWZmOnJhdzpwMjp2YWx1ZXMNCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjINCiQ1DQpWSU5GTw0KJDI0DQp0ZXN0X3ZkaWZmOnJhdzpwMzp2YWx1ZXMNCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjINCiQ1DQpWSU5GTw0KJDIyDQp0ZXN0X3ZkaWZmOnJhdzpwMjpmcDMyDQo=
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjINCiQ1DQpWSU5GTw0KJDIyDQp0ZXN0X3ZkaWZmOnJhdzpwMzpmcDMyDQo=
       VISMEMBER:
         - case_id: zero-vector
           evidence_kind: exact-frame
@@ -78,6 +108,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjMNCiQ5DQpWSVNNRU1CRVINCiQyNA0KdGVzdF92ZGlmZjpyYXc6cDI6dmFsdWVzDQokNA0KemVybw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjMNCiQ5DQpWSVNNRU1CRVINCiQyNA0KdGVzdF92ZGlmZjpyYXc6cDM6dmFsdWVzDQokNA0KemVybw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjMNCiQ5DQpWSVNNRU1CRVINCiQyMg0KdGVzdF92ZGlmZjpyYXc6cDI6ZnAzMg0KJDUNCgB6ZXJvDQo=
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjMNCiQ5DQpWSVNNRU1CRVINCiQyMg0KdGVzdF92ZGlmZjpyYXc6cDM6ZnAzMg0KJDUNCgB6ZXJvDQo=
       VREM:
         - case_id: zero-vector
           evidence_kind: exact-frame
@@ -86,6 +121,11 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjMNCiQ0DQpWUkVNDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAyOnZhbHVlcw0KJDQNCnplcm8NCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjMNCiQ0DQpWUkVNDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAzOnZhbHVlcw0KJDQNCnplcm8NCg==
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjMNCiQ0DQpWUkVNDQokMjINCnRlc3RfdmRpZmY6cmF3OnAyOmZwMzINCiQ1DQoAemVybw0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjMNCiQ0DQpWUkVNDQokMjINCnRlc3RfdmRpZmY6cmF3OnAzOmZwMzINCiQ1DQoAemVybw0K
       VSIM:
         - case_id: zero-vector
           evidence_kind: exact-frame
@@ -94,6 +134,158 @@ jobs:
             - tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]
             - tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]
+          request_base64_by_node:
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]": KjcNCiQ0DQpWU0lNDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAyOnZhbHVlcw0KJDMNCkVMRQ0KJDQNCnplcm8NCiQxMA0KV0lUSFNDT1JFUw0KJDUNCkNPVU5UDQokMQ0KMg0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]": KjcNCiQ0DQpWU0lNDQokMjQNCnRlc3RfdmRpZmY6cmF3OnAzOnZhbHVlcw0KJDMNCkVMRQ0KJDQNCnplcm8NCiQxMA0KV0lUSFNDT1JFUw0KJDUNCkNPVU5UDQokMQ0KMg0K
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]": KjcNCiQ0DQpWU0lNDQokMjINCnRlc3RfdmRpZmY6cmF3OnAyOmZwMzINCiQzDQpFTEUNCiQ1DQoAemVybw0KJDEwDQpXSVRIU0NPUkVTDQokNQ0KQ09VTlQNCiQxDQoyDQo=
+            "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]": KjcNCiQ0DQpWU0lNDQokMjINCnRlc3RfdmRpZmY6cmF3OnAzOmZwMzINCiQzDQpFTEUNCiQ1DQoAemVybw0KJDEwDQpXSVRIU0NPUkVTDQokNQ0KQ09VTlQNCiQxDQoyDQo=
+    final_state:
+      "tests/python/test_vector_set_differential.py::test_raw_comparator_rejects_equal_typed_values_with_different_frames":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_parser_rejects_noncanonical_integer_grammar":
+        applicability: not-applicable
+        reason: parser
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_allows_only_registered_value_payload_differences[resp2]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_allows_only_registered_value_payload_differences[resp3]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[field-token-prefix-field token]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[container-container]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[pair-count-pair count]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[field-order-field token order]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[value-frame-type-value frame type]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[hnsw-malformed-integer-canonical RESP integer]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[uid-malformed-integer-canonical RESP integer]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_vinfo_raw_schema_rejects_unregistered_wire_drift[unregistered-value-quant-type]":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_raw_cleanup_requires_a_nonnegative_integer_frame":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_raw_endpoint_separation_and_cleanup_idempotency_guards":
+        applicability: not-applicable
+        reason: comparator
+      "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp2]":
+        applicability: server-backed
+        state_profile: raw-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_zero_vector_values_raw_differential[resp3]":
+        applicability: server-backed
+        state_profile: raw-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp2]":
+        applicability: server-backed
+        state_profile: raw-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_zero_vector_fp32_raw_differential[resp3]":
+        applicability: server-backed
+        state_profile: raw-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vsim_missing_key_withscores_raw_frame[resp2]":
+        applicability: server-backed
+        state_profile: raw-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vsim_missing_key_withscores_raw_frame[resp3]":
+        applicability: server-backed
+        state_profile: raw-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vadd_typed_error_precedence_raw[resp2]":
+        applicability: server-backed
+        state_profile: raw-repeated-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vadd_typed_error_precedence_raw[resp3]":
+        applicability: server-backed
+        state_profile: raw-repeated-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vadd_vcard_vdim_vismember_match[resp2]":
+        applicability: server-backed
+        state_profile: typed-main-dense3-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vadd_vcard_vdim_vismember_match[resp3]":
+        applicability: server-backed
+        state_profile: typed-main-dense3-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_repeated_vadd_and_vsim_options_match[resp2]":
+        applicability: server-backed
+        state_profile: typed-main-two-member-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_repeated_vadd_and_vsim_options_match[resp3]":
+        applicability: server-backed
+        state_profile: typed-main-two-member-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vemb_matches_for_every_member[resp2]":
+        applicability: server-backed
+        state_profile: typed-main-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vemb_matches_for_every_member[resp3]":
+        applicability: server-backed
+        state_profile: typed-main-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vsim_variants_match[resp2]":
+        applicability: server-backed
+        state_profile: typed-main-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vsim_variants_match[resp3]":
+        applicability: server-backed
+        state_profile: typed-main-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vrem_replies_and_set_disappears_when_emptied[resp2]":
+        applicability: server-backed
+        state_profile: typed-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vrem_replies_and_set_disappears_when_emptied[resp3]":
+        applicability: server-backed
+        state_profile: typed-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_wrongtype_errors_match[resp2]":
+        applicability: server-backed
+        state_profile: typed-string
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_wrongtype_errors_match[resp3]":
+        applicability: server-backed
+        state_profile: typed-string
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_missing_key_semantics_match[resp2]":
+        applicability: server-backed
+        state_profile: typed-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_missing_key_semantics_match[resp3]":
+        applicability: server-backed
+        state_profile: typed-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vsim_missing_key_precedes_malformed_and_option_validation[resp2]":
+        applicability: server-backed
+        state_profile: typed-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vsim_missing_key_precedes_malformed_and_option_validation[resp3]":
+        applicability: server-backed
+        state_profile: typed-all-missing
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp2]":
+        applicability: server-backed
+        state_profile: typed-main-vector
+        observation_profile: complete-vector-state-v1
+      "tests/python/test_vector_set_differential.py::test_vinfo_field_names_and_types_match[resp3]":
+        applicability: server-backed
+        state_profile: typed-main-vector
+        observation_profile: complete-vector-state-v1
     expected_node_ids:
       - tests/python/test_vector_set_differential.py::test_raw_comparator_rejects_equal_typed_values_with_different_frames
       - tests/python/test_vector_set_differential.py::test_vinfo_raw_parser_rejects_noncanonical_integer_grammar

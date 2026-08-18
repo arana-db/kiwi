@@ -26,8 +26,9 @@ use storage::{
     CANONICAL_COLUMN_FAMILY_NAMES, InstanceStorageManifestV2, MigrationFaultPoint, MigrationPhase,
     MigrationSourceProfile, ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2,
     SLOT_MAPPING_VERSION, STORAGE_MANIFEST_FILE, StorageOptions, classify_storage_root,
-    close_rollback_window, fail_next_redis_open, fail_next_storage_migration,
-    prepare_or_resume_migration, recover_or_rollback_before_admission, slot_mapping_digest,
+    close_rollback_window, fail_next_redis_open, fail_next_storage_manifest_persist,
+    fail_next_storage_migration, prepare_or_resume_migration, recover_or_rollback_before_admission,
+    slot_mapping_digest,
 };
 use uuid::Uuid;
 
@@ -727,6 +728,181 @@ fn single_step_filesystem_progress_ahead_of_journal_resumes() {
     assert_committed_and_bound(promoted.path(), MigrationSourceProfile::BaseV1SixCf, 2);
 }
 
+fn install_foreign_root_binding(
+    instance: &std::path::Path,
+    foreign_instance: &std::path::Path,
+) -> Vec<u8> {
+    std::fs::remove_dir_all(instance).expect("remove local shadow instance");
+    std::fs::rename(foreign_instance, instance).expect("install foreign V2 instance in shadow");
+    std::fs::read(instance.join(STORAGE_MANIFEST_FILE)).expect("read foreign-bound manifest bytes")
+}
+
+#[test]
+fn switch_prepared_rejects_foreign_shadow_before_filesystem_changes() {
+    let temp = tempfile::tempdir().expect("SwitchPrepared foreign-shadow root");
+    let foreign = tempfile::tempdir().expect("foreign root");
+    create_legacy_root(temp.path(), 2, false);
+    create_legacy_root(foreign.path(), 2, false);
+    let options = StorageOptions::default();
+    open_storage(foreign.path(), 2).expect("commit foreign root migration");
+
+    let guard = fail_next_storage_migration(temp.path(), MigrationFaultPoint::AfterSwitchPrepared);
+    prepare_or_resume_migration(temp.path(), 2, &options).expect_err("stop at SwitchPrepared");
+    drop(guard);
+    let root = RootStorageManifestV2::read_from_dir(temp.path()).expect("SwitchPrepared root");
+    let transaction = root.migration().expect("migration transaction");
+    let shadow = temp.path().join(&transaction.shadow_name).join("0");
+    let backup_root = temp.path().join(&transaction.backup_name);
+    let root_bytes = std::fs::read(temp.path().join(ROOT_STORAGE_MANIFEST_FILE))
+        .expect("read SwitchPrepared root bytes");
+    let shadow_bytes = install_foreign_root_binding(&shadow, &foreign.path().join("0"));
+
+    let error = prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("foreign shadow must fail before moving the live source");
+    assert!(error.to_string().contains("identity or digest mismatch"));
+    assert!(
+        temp.path().join("0").exists(),
+        "live source must not be renamed"
+    );
+    assert!(
+        shadow.exists(),
+        "foreign shadow must not be promoted or removed"
+    );
+    assert!(!backup_root.exists(), "backup root must not be created");
+    assert_eq!(
+        std::fs::read(temp.path().join(ROOT_STORAGE_MANIFEST_FILE))
+            .expect("read unchanged SwitchPrepared root"),
+        root_bytes,
+    );
+    assert_eq!(
+        std::fs::read(shadow.join(STORAGE_MANIFEST_FILE)).expect("read unchanged foreign shadow"),
+        shadow_bytes,
+    );
+}
+
+#[test]
+fn old_moved_rejects_foreign_shadow_before_promotion() {
+    let temp = tempfile::tempdir().expect("OldMoved foreign-shadow root");
+    let foreign = tempfile::tempdir().expect("foreign root");
+    create_legacy_root(temp.path(), 2, false);
+    create_legacy_root(foreign.path(), 2, false);
+    let options = StorageOptions::default();
+    open_storage(foreign.path(), 2).expect("commit foreign root migration");
+
+    let guard =
+        fail_next_storage_migration(temp.path(), MigrationFaultPoint::AfterOldMovedToBackup(0));
+    prepare_or_resume_migration(temp.path(), 2, &options).expect_err("stop at OldMoved(0)");
+    drop(guard);
+    let root = RootStorageManifestV2::read_from_dir(temp.path()).expect("OldMoved root");
+    let transaction = root.migration().expect("migration transaction");
+    let shadow = temp.path().join(&transaction.shadow_name).join("0");
+    let backup = temp.path().join(&transaction.backup_name).join("0");
+    let root_bytes = std::fs::read(temp.path().join(ROOT_STORAGE_MANIFEST_FILE))
+        .expect("read OldMoved root bytes");
+    let shadow_bytes = install_foreign_root_binding(&shadow, &foreign.path().join("0"));
+
+    let error = prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("foreign shadow must fail before promotion");
+    assert!(error.to_string().contains("identity or digest mismatch"));
+    assert!(
+        !temp.path().join("0").exists(),
+        "foreign shadow must not become live"
+    );
+    assert!(shadow.exists(), "foreign shadow must remain in place");
+    assert!(backup.exists(), "legacy backup must remain in place");
+    assert_eq!(
+        std::fs::read(temp.path().join(ROOT_STORAGE_MANIFEST_FILE))
+            .expect("read unchanged OldMoved root"),
+        root_bytes,
+    );
+    assert_eq!(
+        std::fs::read(shadow.join(STORAGE_MANIFEST_FILE)).expect("read unchanged foreign shadow"),
+        shadow_bytes,
+    );
+}
+
+#[test]
+fn filesystem_ahead_then_root_first_rebind_crash_resumes() {
+    let temp = tempfile::tempdir().expect("filesystem-ahead root-first root");
+    create_legacy_root(temp.path(), 2, false);
+    let options = StorageOptions::default();
+    let filesystem_guard = fail_next_storage_migration(
+        temp.path(),
+        MigrationFaultPoint::AfterFilesystemStepBeforeJournal(MigrationPhase::OldMovedToBackup, 0),
+    );
+    prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("stop after source rename before OldMovedToBackup journal");
+    drop(filesystem_guard);
+
+    let root_first_guard = fail_next_storage_migration(
+        temp.path(),
+        MigrationFaultPoint::AfterRootTransitionPersisted(MigrationPhase::ShadowPromoted, 0),
+    );
+    prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("stop after ShadowPromoted Root write before instance rebinding");
+    drop(root_first_guard);
+
+    let root = RootStorageManifestV2::read_from_dir(temp.path()).expect("ShadowPromoted root");
+    let transaction = root.migration().expect("migration transaction");
+    assert_eq!(transaction.phase, MigrationPhase::ShadowPromoted);
+    assert_eq!(transaction.current_instance, 0);
+
+    open_storage(temp.path(), 2)
+        .expect("resume after canonical predecessor Root-first rebind crash");
+    assert_committed_and_bound(temp.path(), MigrationSourceProfile::BaseV1SixCf, 2);
+}
+
+#[test]
+fn upgraded_filesystem_ahead_then_root_first_rebind_crash_resumes() {
+    let temp = tempfile::tempdir().expect("upgraded-ahead root-first root");
+    create_legacy_root(temp.path(), 2, false);
+    let options = StorageOptions::default();
+    let filesystem_guard = fail_next_storage_migration(
+        temp.path(),
+        MigrationFaultPoint::AfterFilesystemStepBeforeJournal(MigrationPhase::InstanceUpgraded, 0),
+    );
+    prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("stop after shadow upgrade before InstanceUpgraded journal");
+    drop(filesystem_guard);
+
+    let root_first_guard = fail_next_storage_migration(
+        temp.path(),
+        MigrationFaultPoint::AfterRootTransitionPersisted(MigrationPhase::InstanceCopied, 1),
+    );
+    prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("stop after next InstanceCopied Root write before instance rebinding");
+    drop(root_first_guard);
+
+    open_storage(temp.path(), 2)
+        .expect("resume after canonical InstanceUpgraded predecessor crash");
+    assert_committed_and_bound(temp.path(), MigrationSourceProfile::BaseV1SixCf, 2);
+}
+
+#[test]
+fn promoted_filesystem_ahead_then_root_first_rebind_crash_resumes() {
+    let temp = tempfile::tempdir().expect("promoted-ahead root-first root");
+    create_legacy_root(temp.path(), 2, false);
+    let options = StorageOptions::default();
+    let filesystem_guard = fail_next_storage_migration(
+        temp.path(),
+        MigrationFaultPoint::AfterFilesystemStepBeforeJournal(MigrationPhase::ShadowPromoted, 0),
+    );
+    prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("stop after shadow promotion before ShadowPromoted journal");
+    drop(filesystem_guard);
+
+    let root_first_guard = fail_next_storage_migration(
+        temp.path(),
+        MigrationFaultPoint::AfterRootTransitionPersisted(MigrationPhase::OldMovedToBackup, 1),
+    );
+    prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("stop after next OldMovedToBackup Root write before instance rebinding");
+    drop(root_first_guard);
+
+    open_storage(temp.path(), 2).expect("resume after canonical ShadowPromoted predecessor crash");
+    assert_committed_and_bound(temp.path(), MigrationSourceProfile::BaseV1SixCf, 2);
+}
+
 #[test]
 fn migration_retries_after_new_storage_opened() {
     for profile in [
@@ -1047,6 +1223,140 @@ fn closed_resume_repairs_instance_binding_without_restoring_backup() {
     assert!(
         recover_or_rollback_before_admission(temp.path(), 2, &options).is_err(),
         "closed migration must not restore the legacy backup"
+    );
+}
+
+#[test]
+fn committed_resume_rejects_non_immediate_predecessor_binding_without_rewrite() {
+    let temp = tempfile::tempdir().expect("non-immediate predecessor root");
+    create_legacy_root(temp.path(), 2, false);
+    let options = StorageOptions::default();
+    let guard =
+        fail_next_storage_migration(temp.path(), MigrationFaultPoint::AfterShadowPromoted(1));
+    open_storage(temp.path(), 2).expect_err("stop with ShadowPromoted root");
+    drop(guard);
+
+    let stale_manifest = std::fs::read(temp.path().join("0").join(STORAGE_MANIFEST_FILE))
+        .expect("capture ShadowPromoted instance manifest");
+    open_storage(temp.path(), 2).expect("commit migration");
+    std::fs::write(
+        temp.path().join("0").join(STORAGE_MANIFEST_FILE),
+        &stale_manifest,
+    )
+    .expect("restore valid non-immediate predecessor binding");
+
+    let error = prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect_err("Committed resume must reject a ShadowPromoted binding");
+    assert!(error.to_string().contains("identity or digest mismatch"));
+    assert_eq!(
+        std::fs::read(temp.path().join("0").join(STORAGE_MANIFEST_FILE))
+            .expect("read rejected stale binding"),
+        stale_manifest,
+        "rejected non-immediate predecessor binding must remain byte-for-byte unchanged"
+    );
+}
+
+#[test]
+fn committed_resume_does_not_rewrite_current_instance_binding() {
+    let temp = tempfile::tempdir().expect("current binding no-write root");
+    create_legacy_root(temp.path(), 2, false);
+    open_storage(temp.path(), 2).expect("commit migration");
+    let options = StorageOptions::default();
+    let instance = temp.path().join("0");
+    let before = std::fs::read(instance.join(STORAGE_MANIFEST_FILE))
+        .expect("read current instance manifest");
+    let failure = fail_next_storage_manifest_persist(&instance);
+
+    prepare_or_resume_migration(temp.path(), 2, &options)
+        .expect("current-bound resume must not attempt a manifest write");
+    assert_eq!(
+        std::fs::read(instance.join(STORAGE_MANIFEST_FILE))
+            .expect("read current instance manifest after resume"),
+        before,
+    );
+
+    let manifest = InstanceStorageManifestV2::read_from_dir(&instance)
+        .expect("read current-bound instance manifest");
+    manifest
+        .write_to_dir_atomically(&instance)
+        .expect_err("resume must leave the injected manifest write failure unconsumed");
+    drop(failure);
+}
+
+fn assert_foreign_instance_rejected_before_rebinding(
+    root: &std::path::Path,
+    foreign_root: &RootStorageManifestV2,
+    foreign_manifest_bytes: &[u8],
+    open_result: Result<(), String>,
+) {
+    let instance = root.join("0");
+    assert_eq!(
+        std::fs::read(instance.join(STORAGE_MANIFEST_FILE)).expect("read foreign manifest"),
+        foreign_manifest_bytes,
+        "foreign instance manifest must not be rewritten before provenance validation"
+    );
+    InstanceStorageManifestV2::read_from_dir(&instance)
+        .expect("foreign instance manifest remains valid")
+        .validate_root_binding(0, foreign_root)
+        .expect("foreign instance remains bound to its original root");
+    let error = open_result.expect_err("foreign instance data must not be admitted through root A");
+    assert!(
+        error.contains("identity or digest mismatch"),
+        "unexpected foreign-instance rejection: {error}"
+    );
+}
+
+#[test]
+fn committed_resume_rejects_foreign_v2_instance_before_rebinding() {
+    let root_a = tempfile::tempdir().expect("committed root A");
+    let root_b = tempfile::tempdir().expect("committed root B");
+    create_legacy_root(root_a.path(), 2, false);
+    create_legacy_root(root_b.path(), 2, false);
+    open_storage(root_a.path(), 2).expect("commit root A migration");
+    open_storage(root_b.path(), 2).expect("commit root B migration");
+
+    let foreign_root = RootStorageManifestV2::read_from_dir(root_b.path()).expect("root B");
+    let foreign_instance = root_b.path().join("0");
+    let foreign_manifest_bytes =
+        std::fs::read(foreign_instance.join(STORAGE_MANIFEST_FILE)).expect("root B manifest");
+    std::fs::remove_dir_all(root_a.path().join("0")).expect("remove root A instance");
+    std::fs::rename(&foreign_instance, root_a.path().join("0"))
+        .expect("install root B instance under root A");
+
+    let open_result = open_storage(root_a.path(), 2);
+    assert_foreign_instance_rejected_before_rebinding(
+        root_a.path(),
+        &foreign_root,
+        &foreign_manifest_bytes,
+        open_result,
+    );
+}
+
+#[test]
+fn rollback_window_closed_rejects_foreign_v2_instance_before_rebinding() {
+    let root_a = tempfile::tempdir().expect("closed root A");
+    let root_b = tempfile::tempdir().expect("closed root B");
+    create_legacy_root(root_a.path(), 2, false);
+    create_legacy_root(root_b.path(), 2, false);
+    open_storage(root_a.path(), 2).expect("commit root A migration");
+    open_storage(root_b.path(), 2).expect("commit root B migration");
+    assert!(close_rollback_window(root_a.path()).expect("close root A rollback window"));
+    assert!(close_rollback_window(root_b.path()).expect("close root B rollback window"));
+
+    let foreign_root = RootStorageManifestV2::read_from_dir(root_b.path()).expect("root B");
+    let foreign_instance = root_b.path().join("0");
+    let foreign_manifest_bytes =
+        std::fs::read(foreign_instance.join(STORAGE_MANIFEST_FILE)).expect("root B manifest");
+    std::fs::remove_dir_all(root_a.path().join("0")).expect("remove root A instance");
+    std::fs::rename(&foreign_instance, root_a.path().join("0"))
+        .expect("install root B instance under root A");
+
+    let open_result = open_storage(root_a.path(), 2);
+    assert_foreign_instance_rejected_before_rebinding(
+        root_a.path(),
+        &foreign_root,
+        &foreign_manifest_bytes,
+        open_result,
     );
 }
 

@@ -18,7 +18,10 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 
-use kiwi_compat::manifest::{Profile, Protocol, RequiredVectorJobs, RequiredVectorRawCase};
+use kiwi_compat::manifest::{
+    Profile, Protocol, RequiredVectorFinalStateApplicability, RequiredVectorJobs,
+    RequiredVectorRawCase,
+};
 use serde::Serialize;
 
 const CANONICAL_SCHEMA: &str = "kiwi-vector-required-jobs/canonical-v1";
@@ -32,6 +35,7 @@ struct CanonicalRequiredVectorJobs<'a> {
     protocols: Vec<&'static str>,
     commands: &'a [String],
     raw_cases: BTreeMap<&'a str, Vec<CanonicalRawCase<'a>>>,
+    final_state: BTreeMap<&'a str, CanonicalFinalStateApplicability<'a>>,
     expected_node_ids: &'a [String],
     expected_item_count: usize,
     manifest_profile: &'static str,
@@ -39,10 +43,33 @@ struct CanonicalRequiredVectorJobs<'a> {
 }
 
 #[derive(Serialize)]
+struct CanonicalFinalStateApplicability<'a> {
+    applicability: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state_profile: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    observation_profile: Option<&'a str>,
+}
+
+impl<'a> From<&'a RequiredVectorFinalStateApplicability> for CanonicalFinalStateApplicability<'a> {
+    fn from(contract: &'a RequiredVectorFinalStateApplicability) -> Self {
+        Self {
+            applicability: contract.applicability(),
+            reason: contract.reason(),
+            state_profile: contract.state_profile(),
+            observation_profile: contract.observation_profile(),
+        }
+    }
+}
+
+#[derive(Serialize)]
 struct CanonicalRawCase<'a> {
     case_id: &'a str,
     evidence_kind: &'a str,
     node_ids: &'a [String],
+    request_base64_by_node: &'a BTreeMap<String, String>,
 }
 
 impl<'a> From<&'a RequiredVectorRawCase> for CanonicalRawCase<'a> {
@@ -51,6 +78,7 @@ impl<'a> From<&'a RequiredVectorRawCase> for CanonicalRawCase<'a> {
             case_id: raw_case.case_id(),
             evidence_kind: raw_case.evidence_kind(),
             node_ids: raw_case.node_ids(),
+            request_base64_by_node: raw_case.request_base64_by_node(),
         }
     }
 }
@@ -109,6 +137,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             )
         })
         .collect();
+    let final_state = registry
+        .final_state_applicability()
+        .iter()
+        .map(|(node_id, contract)| {
+            (
+                node_id.as_str(),
+                CanonicalFinalStateApplicability::from(contract),
+            )
+        })
+        .collect();
     let canonical = CanonicalRequiredVectorJobs {
         schema: CANONICAL_SCHEMA,
         job_id: registry.job_id(),
@@ -122,6 +160,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             .collect(),
         commands: registry.commands(),
         raw_cases,
+        final_state,
         expected_node_ids: registry.expected_node_ids(),
         expected_item_count: registry.expected_item_count(),
         manifest_profile: profile_name(registry.manifest_profile()),

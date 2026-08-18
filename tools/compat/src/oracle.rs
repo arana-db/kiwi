@@ -19,10 +19,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, FixedOffset, TimeDelta};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 pub const BUILD_SCHEMA: &str = "kiwi-redis-oracle-build/v3";
-pub const PROVENANCE_SCHEMA: &str = "kiwi-redis-oracle-provenance/v3";
+pub const PROVENANCE_SCHEMA: &str = "kiwi-redis-oracle-provenance/v4";
+pub const DIFFERENTIAL_EVIDENCE_SCHEMA: &str = "kiwi-vector-differential-evidence/v1";
 pub const RECIPE_ID: &str = "redis-8.8.1-linux-release-v3";
 pub const REDIS_TAG: &str = "8.8.1";
 pub const REDIS_COMMIT: &str = "77b6c308396c9700672390a210143a8496fb4b10";
@@ -40,6 +42,7 @@ const MAX_SYMLINK_DEPTH: usize = 8;
 const MAX_CALLBACK_TIMEOUT_MS: u64 = 600_000;
 const MAX_CALLBACK_TERM_GRACE_MS: u64 = 30_000;
 const MAX_CALLBACK_OUTPUT_BYTES: u64 = 16 * 1024 * 1024;
+const MAX_DIFFERENTIAL_EVIDENCE_BYTES: u64 = 128 * 1024 * 1024;
 const FILE_TYPE_MASK: u32 = 0o170000;
 const REGULAR_FILE: u32 = 0o100000;
 const SYMLINK: u32 = 0o120000;
@@ -831,6 +834,132 @@ impl BoundedCallbackResult {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct CallbackInputIdentity {
+    expected_head: String,
+    actual_head: String,
+    tree_oid: String,
+    ref_context: String,
+    input_manifest_sha256: String,
+    kiwi_sha256: String,
+    required_jobs_helper_sha256: String,
+    frozen_from_git_objects: bool,
+    readonly_mount: bool,
+    revalidated_after_callback: bool,
+    original_inputs_revalidated: bool,
+}
+
+impl CallbackInputIdentity {
+    fn validate(raw: RawCallbackInputIdentity) -> Result<Self, OracleError> {
+        require_hex40("callback_input.expected_head", &raw.expected_head)?;
+        require_hex40("callback_input.actual_head", &raw.actual_head)?;
+        require_equal(
+            "callback_input.actual_head",
+            &raw.actual_head,
+            &raw.expected_head,
+        )?;
+        require_hex40("callback_input.tree_oid", &raw.tree_oid)?;
+        validate_bounded_string(
+            "callback_input.ref_context",
+            &raw.ref_context,
+            1,
+            MAX_STRING_BYTES,
+        )?;
+        for (field, value) in [
+            (
+                "callback_input.input_manifest_sha256",
+                raw.input_manifest_sha256.as_str(),
+            ),
+            ("callback_input.kiwi_sha256", raw.kiwi_sha256.as_str()),
+            (
+                "callback_input.required_jobs_helper_sha256",
+                raw.required_jobs_helper_sha256.as_str(),
+            ),
+        ] {
+            require_sha256(field, value)?;
+        }
+        for (field, value) in [
+            (
+                "callback_input.frozen_from_git_objects",
+                raw.frozen_from_git_objects,
+            ),
+            ("callback_input.readonly_mount", raw.readonly_mount),
+            (
+                "callback_input.revalidated_after_callback",
+                raw.revalidated_after_callback,
+            ),
+            (
+                "callback_input.original_inputs_revalidated",
+                raw.original_inputs_revalidated,
+            ),
+        ] {
+            require_true(field, value)?;
+        }
+        Ok(Self {
+            expected_head: raw.expected_head,
+            actual_head: raw.actual_head,
+            tree_oid: raw.tree_oid,
+            ref_context: raw.ref_context,
+            input_manifest_sha256: raw.input_manifest_sha256,
+            kiwi_sha256: raw.kiwi_sha256,
+            required_jobs_helper_sha256: raw.required_jobs_helper_sha256,
+            frozen_from_git_objects: raw.frozen_from_git_objects,
+            readonly_mount: raw.readonly_mount,
+            revalidated_after_callback: raw.revalidated_after_callback,
+            original_inputs_revalidated: raw.original_inputs_revalidated,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct DifferentialEvidenceIdentity {
+    schema_version: String,
+    file_name: String,
+    size_bytes: u64,
+    sha256: String,
+    published_atomically: bool,
+    verified_after_publish: bool,
+}
+
+impl DifferentialEvidenceIdentity {
+    fn validate(raw: RawDifferentialEvidenceIdentity) -> Result<Self, OracleError> {
+        require_equal(
+            "differential_evidence.schema_version",
+            &raw.schema_version,
+            DIFFERENTIAL_EVIDENCE_SCHEMA,
+        )?;
+        validate_relative_path("differential_evidence.file_name", &raw.file_name)?;
+        if raw.file_name.contains('/') {
+            return invalid(
+                "differential_evidence.file_name",
+                "must be a file name without directory components",
+            );
+        }
+        validate_positive_bound(
+            "differential_evidence.size_bytes",
+            raw.size_bytes,
+            MAX_DIFFERENTIAL_EVIDENCE_BYTES,
+        )?;
+        require_sha256("differential_evidence.sha256", &raw.sha256)?;
+        require_true(
+            "differential_evidence.published_atomically",
+            raw.published_atomically,
+        )?;
+        require_true(
+            "differential_evidence.verified_after_publish",
+            raw.verified_after_publish,
+        )?;
+        Ok(Self {
+            schema_version: raw.schema_version,
+            file_name: raw.file_name,
+            size_bytes: raw.size_bytes,
+            sha256: raw.sha256,
+            published_atomically: raw.published_atomically,
+            verified_after_publish: raw.verified_after_publish,
+        })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct CleanupResult {
     redis_process_reaped: bool,
     process_group_reaped: bool,
@@ -890,6 +1019,8 @@ pub struct OracleProvenance {
     comparison: ArtifactComparison,
     runtime: RuntimeIdentity,
     callback: BoundedCallbackResult,
+    callback_input: CallbackInputIdentity,
+    differential_evidence: DifferentialEvidenceIdentity,
     cleanup: CleanupResult,
     published_after_cleanup: bool,
     published_at_utc: String,
@@ -958,6 +1089,9 @@ impl OracleProvenance {
         let comparison = ArtifactComparison::validate(raw.comparison)?;
         let runtime = RuntimeIdentity::validate(raw.runtime, &rebuild)?;
         let callback = BoundedCallbackResult::validate(raw.callback)?;
+        let callback_input = CallbackInputIdentity::validate(raw.callback_input)?;
+        let differential_evidence =
+            DifferentialEvidenceIdentity::validate(raw.differential_evidence)?;
         let cleanup = CleanupResult::validate(raw.cleanup)?;
         require_true("published_after_cleanup", raw.published_after_cleanup)?;
         let primary_finished =
@@ -1001,6 +1135,8 @@ impl OracleProvenance {
             comparison,
             runtime,
             callback,
+            callback_input,
+            differential_evidence,
             cleanup,
             published_after_cleanup: raw.published_after_cleanup,
             published_at_utc: raw.published_at_utc,
@@ -1031,12 +1167,72 @@ impl OracleProvenance {
         &self.callback
     }
 
+    pub fn callback_input(&self) -> &CallbackInputIdentity {
+        &self.callback_input
+    }
+
+    pub fn differential_evidence(&self) -> &DifferentialEvidenceIdentity {
+        &self.differential_evidence
+    }
+
     pub fn cleanup(&self) -> &CleanupResult {
         &self.cleanup
     }
 
     pub fn published_at_utc(&self) -> &str {
         &self.published_at_utc
+    }
+
+    pub fn verify_external_bindings(
+        &self,
+        expected_head: &str,
+        expected_tree: &str,
+        evidence_file_name: &str,
+        evidence: &[u8],
+    ) -> Result<(), OracleError> {
+        require_hex40("external.expected_head", expected_head)?;
+        require_hex40("external.expected_tree", expected_tree)?;
+        require_equal(
+            "callback_input.expected_head",
+            &self.callback_input.expected_head,
+            expected_head,
+        )?;
+        require_equal(
+            "callback_input.actual_head",
+            &self.callback_input.actual_head,
+            expected_head,
+        )?;
+        require_equal(
+            "callback_input.tree_oid",
+            &self.callback_input.tree_oid,
+            expected_tree,
+        )?;
+        require_equal(
+            "differential_evidence.file_name",
+            &self.differential_evidence.file_name,
+            evidence_file_name,
+        )?;
+        let size_bytes = u64::try_from(evidence.len()).map_err(|_| {
+            validation(
+                "differential_evidence.size_bytes",
+                "actual evidence length cannot be represented as u64",
+            )
+        })?;
+        if self.differential_evidence.size_bytes != size_bytes {
+            return invalid(
+                "differential_evidence.size_bytes",
+                format!(
+                    "must equal actual evidence length {size_bytes}, got {}",
+                    self.differential_evidence.size_bytes
+                ),
+            );
+        }
+        let sha256 = format!("{:x}", Sha256::digest(evidence));
+        require_equal(
+            "differential_evidence.sha256",
+            &self.differential_evidence.sha256,
+            &sha256,
+        )
     }
 }
 
@@ -1354,9 +1550,9 @@ fn validation(field: impl Into<String>, message: impl Into<String>) -> OracleErr
 
 #[derive(Debug, Error)]
 pub enum OracleError {
-    #[error("failed to parse Oracle v3 JSON: {0}")]
+    #[error("failed to parse Oracle evidence JSON: {0}")]
     Parse(#[from] serde_json::Error),
-    #[error("invalid Oracle v3 evidence at {field}: {message}")]
+    #[error("invalid Oracle evidence at {field}: {message}")]
     Validation { field: String, message: String },
 }
 
@@ -1517,6 +1713,33 @@ struct RawCleanupResult {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RawCallbackInputIdentity {
+    expected_head: String,
+    actual_head: String,
+    tree_oid: String,
+    ref_context: String,
+    input_manifest_sha256: String,
+    kiwi_sha256: String,
+    required_jobs_helper_sha256: String,
+    frozen_from_git_objects: bool,
+    readonly_mount: bool,
+    revalidated_after_callback: bool,
+    original_inputs_revalidated: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDifferentialEvidenceIdentity {
+    schema_version: String,
+    file_name: String,
+    size_bytes: u64,
+    sha256: String,
+    published_atomically: bool,
+    verified_after_publish: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawOracleProvenance {
     schema_version: String,
     primary: RawBuildEvidence,
@@ -1524,6 +1747,8 @@ struct RawOracleProvenance {
     comparison: RawArtifactComparison,
     runtime: RawRuntimeIdentity,
     callback: RawBoundedCallbackResult,
+    callback_input: RawCallbackInputIdentity,
+    differential_evidence: RawDifferentialEvidenceIdentity,
     cleanup: RawCleanupResult,
     published_after_cleanup: bool,
     published_at_utc: String,

@@ -35,6 +35,7 @@ Both configured endpoints are mandatory: unavailable endpoints fail closed rathe
 than producing a skipped test result. All datasets use a fixed seed.
 """
 
+import base64
 import hashlib
 import json
 import os
@@ -45,7 +46,7 @@ import struct
 import pytest
 import redis
 
-from raw_resp_client import RawRespConnection
+from raw_resp_client import RawRespConnection, encode_command
 
 pytestmark = pytest.mark.raw_vector_protocol
 
@@ -54,6 +55,337 @@ KIWI_PORT = int(os.getenv("KIWI_PORT", "7379"))
 REDIS8_HOST = os.getenv("VECTOR_REDIS_HOST", "127.0.0.1")
 REDIS8_PORT = int(os.getenv("VECTOR_REDIS_PORT", "6380"))
 SCORE_TOLERANCE = 1e-6
+RAW_TRANSCRIPT_SCHEMA = "kiwi-vector-wire-transcript/v1"
+FINAL_STATE_SCHEMA = "kiwi-vector-final-state/v1"
+VINFO_DIFFERENCE_IDS = {
+    b"hnsw-m": "vinfo-hnsw-m",
+    b"max-level": "vinfo-max-level",
+    b"vset-uid": "vinfo-vset-uid",
+    b"hnsw-max-node-uid": "vinfo-hnsw-max-node-uid",
+}
+TYPED_FINAL_KEY_ROLES = (b"main", b"dense3", b"string", b"missing")
+RAW_FINAL_KEY_ROLES = (
+    b"values",
+    b"fp32",
+    b"missing-scores",
+    b"missing-values",
+    b"missing-fp32",
+    b"invalid-values",
+    b"invalid-fp32",
+    b"repeated",
+    b"option",
+)
+FINAL_STATE_PROFILE_TYPES = {
+    "raw-all-missing": {},
+    "raw-repeated-vector": {b"repeated": b"vectorset"},
+    "typed-all-missing": {},
+    "typed-main-vector": {b"main": b"vectorset"},
+    "typed-main-two-member-vector": {b"main": b"vectorset"},
+    "typed-main-dense3-vector": {
+        b"main": b"vectorset",
+        b"dense3": b"vectorset",
+    },
+    "typed-string": {b"string": b"string"},
+}
+FINAL_STATE_VECTOR_MEMBERS = {
+    b"main": (b"alpha", b"beta", b"gamma", b"delta", b"", b"\x00bin\x00", b"tie-a", b"tie-b", b"ghost"),
+    b"dense3": (b"x", b"y", b"z", b"ghost"),
+    b"repeated": (b"element", b"ghost"),
+}
+
+
+def _append_jsonl(path, entry):
+    with open(path, "a", encoding="utf-8") as output:
+        output.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def _reject_duplicate_object_pairs(pairs):
+    document = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate JSON object key {key!r}")
+        document[key] = value
+    return document
+
+
+def _encoded_bytes(payload):
+    return {
+        "base64": base64.b64encode(payload).decode("ascii"),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+    }
+
+
+def _wire_exchange(command, kiwi_frame, redis_frame):
+    request = encode_command(*command)
+    request_evidence = _encoded_bytes(request)
+    kiwi_evidence = _encoded_bytes(kiwi_frame)
+    redis_evidence = _encoded_bytes(redis_frame)
+    return {
+        "command": command[0].decode("ascii"),
+        "request_base64": request_evidence["base64"],
+        "request_sha256": request_evidence["sha256"],
+        "kiwi_response_base64": kiwi_evidence["base64"],
+        "kiwi_response_sha256": kiwi_evidence["sha256"],
+        "redis_response_base64": redis_evidence["base64"],
+        "redis_response_sha256": redis_evidence["sha256"],
+    }
+
+
+def _execute_same_raw(kiwi, reference, *command):
+    kiwi_frame = kiwi.execute_raw(*command)
+    redis_frame = reference.execute_raw(*command)
+    assert kiwi_frame == redis_frame, (
+        f"final-state {command[0].decode('ascii')} differs: "
+        f"kiwi={kiwi_frame!r} redis={redis_frame!r}"
+    )
+    return _wire_exchange(command, kiwi_frame, redis_frame)
+
+
+def _normalize_raw_vemb(frame):
+    parsed, consumed = _read_resp_frame(frame)
+    assert consumed == len(frame), "VEMB final-state frame has trailing bytes"
+    prefix, payload, children = parsed
+    if (prefix in {b"$", b"_"} and payload is None) or (
+        prefix == b"_" and payload == b""
+    ):
+        return None
+    assert prefix in {b"*", b"~"}, "VEMB final-state reply must be an aggregate"
+    values = []
+    for child_prefix, child_payload, grandchildren in children:
+        assert child_prefix == b"$" and child_payload is not None and not grandchildren
+        values.append(float(child_payload))
+    return values
+
+
+def _execute_final_observation(kiwi, reference, *command):
+    kiwi_frame = kiwi.execute_raw(*command)
+    redis_frame = reference.execute_raw(*command)
+    if command[0] == b"VEMB":
+        kiwi_vector = _normalize_raw_vemb(kiwi_frame)
+        redis_vector = _normalize_raw_vemb(redis_frame)
+        if redis_vector is None:
+            assert kiwi_vector is None
+        else:
+            assert kiwi_vector is not None and len(kiwi_vector) == len(redis_vector)
+            for kiwi_value, redis_value in zip(kiwi_vector, redis_vector):
+                assert kiwi_value == pytest.approx(redis_value, abs=SCORE_TOLERANCE)
+    else:
+        assert kiwi_frame == redis_frame, (
+            f"final-state {command[0].decode('ascii')} differs: "
+            f"kiwi={kiwi_frame!r} redis={redis_frame!r}"
+        )
+    return _wire_exchange(command, kiwi_frame, redis_frame)
+
+
+def _raw_integer(exchange, command):
+    frame = base64.b64decode(exchange["kiwi_response_base64"], validate=True)
+    if not frame.startswith(b":") or not frame.endswith(b"\r\n"):
+        raise AssertionError(f"{command} must return a RESP integer frame, got {frame!r}")
+    try:
+        return int(frame[1:-2])
+    except ValueError as error:
+        raise AssertionError(f"{command} returned an invalid RESP integer {frame!r}") from error
+
+
+def _raw_type(exchange):
+    frame = base64.b64decode(exchange["kiwi_response_base64"], validate=True)
+    if not frame.startswith(b"+") or not frame.endswith(b"\r\n"):
+        raise AssertionError(f"TYPE must return a RESP simple string, got {frame!r}")
+    return frame[1:-2]
+
+
+def _profiled_final_keys(state_profile, protocol):
+    if state_profile.startswith("typed-"):
+        roles = TYPED_FINAL_KEY_ROLES
+        prefix = f"test_vdiff:p{protocol}:".encode()
+    elif state_profile.startswith("raw-"):
+        roles = RAW_FINAL_KEY_ROLES
+        prefix = f"test_vdiff:raw:p{protocol}:".encode()
+    else:
+        raise AssertionError(f"unknown final-state profile {state_profile!r}")
+    keys = []
+    for role in roles:
+        if state_profile.startswith("raw-") and role not in {
+            b"values",
+            b"fp32",
+            b"missing-scores",
+        }:
+            key = f"test_vdiff:raw:vadd:p{protocol}:".encode() + role
+        else:
+            key = prefix + role
+        keys.append((role, key))
+    return keys
+
+
+def _capture_server_final_state(
+    node_id, protocol, keys, kiwi, reference, contract=None
+):
+    if contract is None:
+        profiled_keys = [(f"key-{index}".encode(), key) for index, key in enumerate(keys)]
+        expected_types = None
+    else:
+        state_profile = contract["state_profile"]
+        profiled_keys = _profiled_final_keys(state_profile, protocol)
+        assert keys == [key for _role, key in profiled_keys], (
+            f"known keys differ from final-state profile {state_profile}"
+        )
+        expected_types = FINAL_STATE_PROFILE_TYPES[state_profile]
+    known_keys = []
+    for role, key in profiled_keys:
+        type_before = _execute_same_raw(kiwi, reference, b"TYPE", key)
+        key_type = _raw_type(type_before)
+        if key_type not in {b"none", b"string", b"vectorset"}:
+            raise AssertionError(f"TYPE returned unsupported known-key type {key_type!r}")
+        if expected_types is not None:
+            expected_type = expected_types.get(role, b"none")
+            assert key_type == expected_type, (
+                f"final-state role {role!r} must be {expected_type!r}, got {key_type!r}"
+            )
+        pttl_before = _execute_same_raw(kiwi, reference, b"PTTL", key)
+        expected_before_pttl = -2 if key_type == b"none" else -1
+        actual_before_pttl = _raw_integer(pttl_before, "PTTL")
+        assert actual_before_pttl == expected_before_pttl, (
+            f"PTTL before cleanup must be {expected_before_pttl}, "
+            f"got {actual_before_pttl} for {key!r}"
+        )
+
+        observations = []
+        if key_type == b"vectorset":
+            observations.append(
+                _execute_final_observation(kiwi, reference, b"VCARD", key)
+            )
+            if contract is not None:
+                observations.append(
+                    _execute_final_observation(kiwi, reference, b"VDIM", key)
+                )
+                for member in FINAL_STATE_VECTOR_MEMBERS[role]:
+                    observations.append(
+                        _execute_final_observation(
+                            kiwi, reference, b"VEMB", key, member
+                        )
+                    )
+        elif key_type == b"string":
+            observations.append(
+                _execute_final_observation(kiwi, reference, b"GET", key)
+            )
+
+        first_del = _execute_same_raw(kiwi, reference, b"DEL", key)
+        expected_first_del = 0 if key_type == b"none" else 1
+        actual_first_del = _raw_integer(first_del, "DEL")
+        assert actual_first_del == expected_first_del, (
+            f"first DEL must return {expected_first_del}, got {actual_first_del} "
+            f"for {key!r}"
+        )
+        type_after = _execute_same_raw(kiwi, reference, b"TYPE", key)
+        assert _raw_type(type_after) == b"none", "TYPE after cleanup must be none"
+        pttl_after = _execute_same_raw(kiwi, reference, b"PTTL", key)
+        assert _raw_integer(pttl_after, "PTTL") == -2, (
+            "PTTL after cleanup must be the missing-key sentinel -2"
+        )
+        second_del = _execute_same_raw(kiwi, reference, b"DEL", key)
+        assert _raw_integer(second_del, "DEL") == 0, (
+            "idempotent second DEL must return 0"
+        )
+
+        key_evidence = _encoded_bytes(key)
+        known_keys.append(
+            {
+                "key_role": role.decode("ascii"),
+                "key_base64": key_evidence["base64"],
+                "key_sha256": key_evidence["sha256"],
+                "before_cleanup": {
+                    "type": type_before,
+                    "pttl": pttl_before,
+                    "observations": observations,
+                },
+                "cleanup": {
+                    "first_del": first_del,
+                    "after_type": type_after,
+                    "after_pttl": pttl_after,
+                    "second_del": second_del,
+                },
+            }
+        )
+    return {
+        "schema": FINAL_STATE_SCHEMA,
+        "node_id": node_id,
+        "applicability": "server-backed",
+        "protocol": protocol,
+        "known_keys": known_keys,
+    }
+
+
+def _required_final_state_contract(node_id):
+    registry_path = os.getenv("KIWI_VECTOR_REQUIRED_JOBS")
+    required = os.getenv("KIWI_COMPAT_REQUIRE_ORACLE") == "1"
+    if not registry_path and not required:
+        return None
+    if not registry_path:
+        pytest.fail("canonical required-jobs path is missing for final-state evidence")
+    try:
+        with open(registry_path, encoding="utf-8") as source:
+            registry = json.load(
+                source, object_pairs_hook=_reject_duplicate_object_pairs
+            )
+    except (OSError, ValueError) as error:
+        pytest.fail(f"canonical required-jobs cannot be read: {error}", pytrace=False)
+    if registry.get("schema") != "kiwi-vector-required-jobs/canonical-v1":
+        pytest.fail("canonical required-jobs schema identity mismatch", pytrace=False)
+    contract = registry.get("final_state", {}).get(node_id)
+    if not isinstance(contract, dict):
+        pytest.fail(f"final-state applicability is missing for {node_id}", pytrace=False)
+    return contract
+
+
+def _record_server_final_state(node_id, protocol, keys, kiwi, reference):
+    path = os.getenv("KIWI_VECTOR_FINAL_STATE")
+    contract = _required_final_state_contract(node_id)
+    if contract is None and not path:
+        return
+    if (
+        not path
+        or set(contract) != {
+            "applicability",
+            "state_profile",
+            "observation_profile",
+        }
+        or contract["applicability"] != "server-backed"
+        or contract["observation_profile"] != "complete-vector-state-v1"
+    ):
+        pytest.fail(f"server-backed final-state ownership drifted for {node_id}")
+    _append_jsonl(
+        path,
+        _capture_server_final_state(
+            node_id, protocol, keys, kiwi, reference, contract=contract
+        ),
+    )
+
+
+@pytest.fixture(autouse=True)
+def final_state_envelope(request):
+    yield
+    if "backends" in request.fixturenames or "raw_backends" in request.fixturenames:
+        return
+    contract = _required_final_state_contract(request.node.nodeid)
+    if contract is None:
+        return
+    path = os.getenv("KIWI_VECTOR_FINAL_STATE")
+    if not path or contract.get("applicability") != "not-applicable":
+        pytest.fail(f"not-applicable final-state ownership drifted for {request.node.nodeid}")
+    if set(contract) != {"applicability", "reason"} or contract["reason"] not in {
+        "parser",
+        "comparator",
+    }:
+        pytest.fail(f"not-applicable final-state reason drifted for {request.node.nodeid}")
+    _append_jsonl(
+        path,
+        {
+            "schema": FINAL_STATE_SCHEMA,
+            "node_id": request.node.nodeid,
+            "applicability": "not-applicable",
+            "reason": contract["reason"],
+        },
+    )
 
 
 def _endpoints_overlap():
@@ -139,6 +471,25 @@ def backends(request):
         yield kiwi, reference, protocol, prefix
     finally:
         cleanup_errors = []
+        raw_kiwi = None
+        raw_reference = None
+        try:
+            raw_kiwi = RawRespConnection.connect(KIWI_HOST, KIWI_PORT, protocol)
+            raw_reference = RawRespConnection.connect(REDIS8_HOST, REDIS8_PORT, protocol)
+            _record_server_final_state(
+                request.node.nodeid,
+                protocol,
+                keys,
+                raw_kiwi,
+                raw_reference,
+            )
+        except (OSError, ValueError, EOFError, RuntimeError, AssertionError) as error:
+            cleanup_errors.append(str(error))
+        finally:
+            if raw_kiwi is not None:
+                raw_kiwi.close()
+            if raw_reference is not None:
+                raw_reference.close()
         for client in clients:
             try:
                 client.delete(*keys)
@@ -154,7 +505,7 @@ def backends(request):
 
 
 @pytest.fixture
-def raw_backends(raw_protocol):
+def raw_backends(request, raw_protocol):
     _require_distinct_endpoints()
     kiwi = None
     reference = None
@@ -174,6 +525,23 @@ def raw_backends(raw_protocol):
     except (OSError, ValueError, EOFError, AssertionError) as error:
         pytest.fail(f"trusted raw Oracle endpoint failed: {error}", pytrace=False)
     finally:
+        if kiwi is not None and reference is not None:
+            try:
+                _record_server_final_state(
+                    request.node.nodeid,
+                    raw_protocol,
+                    raw_test_keys(raw_protocol),
+                    kiwi,
+                    reference,
+                )
+            except (
+                OSError,
+                ValueError,
+                EOFError,
+                RuntimeError,
+                AssertionError,
+            ) as error:
+                cleanup_errors.append(str(error))
         for endpoint, client in (("Redis teardown", reference), ("Kiwi teardown", kiwi)):
             if client is None:
                 continue
@@ -241,16 +609,19 @@ def assert_same_raw(kiwi, reference, *command, coverage=None, case_id="zero-vect
     )
     if coverage is not None:
         coverage(
-            command[0],
+            command,
             kiwi_frame,
             reference_frame,
             case_id=case_id,
-            evidence_kind="exact-frame",
+            comparison_kind="exact-frame",
+            registered_difference_ids=(),
         )
     return kiwi_frame
 
 
-def test_raw_comparator_rejects_equal_typed_values_with_different_frames():
+def test_raw_comparator_rejects_equal_typed_values_with_different_frames(
+    monkeypatch, tmp_path
+):
     class FrameClient:
         def __init__(self, frame):
             self.frame = frame
@@ -271,6 +642,34 @@ def test_raw_comparator_rejects_equal_typed_values_with_different_frames():
             b"key",
             b"member",
         )
+
+    transcript = tmp_path / "raw-transcript.jsonl"
+    monkeypatch.setenv("KIWI_VECTOR_RAW_TRANSCRIPT", str(transcript))
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST",
+        "tests/python/test_vector_set_differential.py::"
+        "test_raw_comparator_rejects_equal_typed_values_with_different_frames (call)",
+    )
+    parts = (b"VADD", b"nul\x00key", b"FP32", b"\x00\x01\x00", b"member\x00")
+    recorder = raw_transcript_recorder(2)
+    recorder(
+        parts,
+        b":1\r\n",
+        b":1\r\n",
+        case_id="zero-vector",
+        comparison_kind="exact-frame",
+        registered_difference_ids=(),
+    )
+    record = json.loads(transcript.read_text(encoding="utf-8"))
+    request = base64.b64decode(record["request_base64"], validate=True)
+    assert request == encode_command(*parts)
+    assert b"\x00" in request
+    assert record["request_sha256"] == hashlib.sha256(request).hexdigest()
+    assert base64.b64decode(record["kiwi_response_base64"], validate=True) == b":1\r\n"
+    assert base64.b64decode(record["redis_response_base64"], validate=True) == b":1\r\n"
+
+
+test_raw_comparator_rejects_equal_typed_values_with_different_frames.transcript = True
 
 
 def _read_resp_frame(frame, offset=0):
@@ -372,12 +771,8 @@ def assert_same_vinfo_schema_raw(kiwi, reference, key, protocol, coverage=None):
     kiwi_fields = [field for field, _prefix, _payload in kiwi_pairs]
     redis_fields = [field for field, _prefix, _payload in redis_pairs]
     assert kiwi_fields == redis_fields, "VINFO field token order differs from Redis"
-    allowed_payload_differences = {
-        b"hnsw-m",
-        b"max-level",
-        b"vset-uid",
-        b"hnsw-max-node-uid",
-    }
+    allowed_payload_differences = set(VINFO_DIFFERENCE_IDS)
+    registered_difference_ids = []
     for (field, kiwi_prefix, kiwi_payload), (_, redis_prefix, redis_payload) in zip(
         kiwi_pairs, redis_pairs
     ):
@@ -388,13 +783,16 @@ def assert_same_vinfo_schema_raw(kiwi, reference, key, protocol, coverage=None):
             assert kiwi_payload == redis_payload, (
                 f"VINFO {field.decode('ascii')} value differs from Redis"
             )
+        elif kiwi_payload != redis_payload:
+            registered_difference_ids.append(VINFO_DIFFERENCE_IDS[field])
     if coverage is not None:
         coverage(
-            b"VINFO",
+            (b"VINFO", key),
             kiwi_frame,
             redis_frame,
             case_id="populated",
-            evidence_kind="raw-schema",
+            comparison_kind="raw-schema",
+            registered_difference_ids=registered_difference_ids,
         )
     return kiwi_frame, redis_frame
 
@@ -541,7 +939,7 @@ def test_raw_cleanup_requires_a_nonnegative_integer_frame():
         reset_raw_client_keys(ErrorFrameClient(), [b"key"], "fake endpoint")
 
 
-def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch):
+def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch, tmp_path):
     address = (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 6379))
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [address])
     with pytest.raises(pytest.fail.Exception, match="different endpoints"):
@@ -559,27 +957,92 @@ def test_raw_endpoint_separation_and_cleanup_idempotency_guards(monkeypatch):
     reset_raw_client_keys(client, [b"key"], "fake endpoint")
     assert client.commands == [(b"DEL", b"key"), (b"DEL", b"key")]
 
+    class StateClient:
+        def __init__(self, *, type_frame=b"+vectorset\r\n", pttl_frame=b":-1\r\n"):
+            self.type_frame = type_frame
+            self.pttl_frame = pttl_frame
 
-def raw_coverage_recorder(protocol):
-    path = os.getenv("KIWI_VECTOR_RAW_COVERAGE")
+        def execute_raw(self, *command):
+            if command[0] == b"TYPE":
+                return self.type_frame
+            if command[0] == b"PTTL":
+                return self.pttl_frame
+            if command[0] == b"VCARD":
+                return b":1\r\n"
+            if command[0] == b"DEL":
+                return b":1\r\n"
+            raise AssertionError(f"unexpected command {command!r}")
+
+    with pytest.raises(AssertionError, match="TYPE"):
+        _capture_server_final_state(
+            "tests/python/test_vector_set_differential.py::fake[resp2]",
+            2,
+            [b"key"],
+            StateClient(),
+            StateClient(type_frame=b"+string\r\n"),
+        )
+    with pytest.raises(AssertionError, match="PTTL"):
+        _capture_server_final_state(
+            "tests/python/test_vector_set_differential.py::fake[resp2]",
+            2,
+            [b"key"],
+            StateClient(),
+            StateClient(pttl_frame=b":-2\r\n"),
+        )
+
+    duplicate_registry = tmp_path / "duplicate-required-jobs.json"
+    duplicate_registry.write_text(
+        '{"schema":"invalid","schema":"kiwi-vector-required-jobs/canonical-v1",'
+        '"final_state":{"fake":{"applicability":"not-applicable",'
+        '"reason":"comparator"}}}\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KIWI_VECTOR_REQUIRED_JOBS", str(duplicate_registry))
+    with pytest.raises(pytest.fail.Exception, match="duplicate JSON object key"):
+        _required_final_state_contract("fake")
+
+
+test_raw_endpoint_separation_and_cleanup_idempotency_guards.final_state = True
+test_raw_endpoint_separation_and_cleanup_idempotency_guards.ttl = True
+
+
+def raw_transcript_recorder(protocol):
+    path = os.getenv("KIWI_VECTOR_RAW_TRANSCRIPT")
     node_id = os.getenv("PYTEST_CURRENT_TEST", "").split(" ", 1)[0]
     if not path and os.getenv("KIWI_COMPAT_REQUIRE_ORACLE") != "1":
         return lambda _command, _kiwi_frame, _redis_frame, **_metadata: None
     if not path or not node_id:
-        pytest.fail("required raw coverage destination or pytest node ID is missing")
+        pytest.fail("required raw transcript destination or pytest node ID is missing")
 
-    def record(command, kiwi_frame, redis_frame, *, case_id, evidence_kind):
+    def record(
+        command,
+        kiwi_frame,
+        redis_frame,
+        *,
+        case_id,
+        comparison_kind,
+        registered_difference_ids,
+    ):
+        request = encode_command(*command)
+        request_evidence = _encoded_bytes(request)
+        kiwi_evidence = _encoded_bytes(kiwi_frame)
+        redis_evidence = _encoded_bytes(redis_frame)
         entry = {
+            "schema": RAW_TRANSCRIPT_SCHEMA,
             "case_id": case_id,
-            "command": command.decode("ascii"),
-            "evidence_kind": evidence_kind,
+            "command": command[0].decode("ascii"),
+            "comparison_kind": comparison_kind,
             "node_id": node_id,
             "protocol": protocol,
-            "kiwi_frame_sha256": hashlib.sha256(kiwi_frame).hexdigest(),
-            "redis_frame_sha256": hashlib.sha256(redis_frame).hexdigest(),
+            "request_base64": request_evidence["base64"],
+            "request_sha256": request_evidence["sha256"],
+            "kiwi_response_base64": kiwi_evidence["base64"],
+            "kiwi_response_sha256": kiwi_evidence["sha256"],
+            "redis_response_base64": redis_evidence["base64"],
+            "redis_response_sha256": redis_evidence["sha256"],
+            "registered_difference_ids": list(registered_difference_ids),
         }
-        with open(path, "a", encoding="utf-8") as output:
-            output.write(json.dumps(entry, sort_keys=True) + "\n")
+        _append_jsonl(path, entry)
 
     return record
 
@@ -588,7 +1051,7 @@ def assert_zero_vector_raw(raw_backends, kind, payload, element):
     kiwi, reference, protocol = raw_backends
     key = f"test_vdiff:raw:p{protocol}:{kind.decode().lower()}".encode()
     reset_raw_key(kiwi, reference, key)
-    coverage = raw_coverage_recorder(protocol)
+    coverage = raw_transcript_recorder(protocol)
     assert_same_raw(
         kiwi,
         reference,

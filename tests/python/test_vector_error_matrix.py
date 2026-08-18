@@ -72,6 +72,8 @@ class ScriptedSocket:
         self.exchanges = list(exchanges)
         self.pending = []
         self.sent = []
+        self.recv_calls = 0
+        self.timeouts = []
         self.closed = False
 
     def sendall(self, payload):
@@ -82,6 +84,7 @@ class ScriptedSocket:
         self.pending.extend(response_chunks)
 
     def recv(self, length):
+        self.recv_calls += 1
         if not self.pending:
             return b""
         chunk = self.pending.pop(0)
@@ -90,12 +93,333 @@ class ScriptedSocket:
             return chunk[:length]
         return chunk
 
+    def settimeout(self, timeout):
+        self.timeouts.append(timeout)
+
     def close(self):
         self.closed = True
 
 
 def _byte_chunks(frame):
     return [bytes([byte]) for byte in frame]
+
+
+def _raw_limits(**overrides):
+    values = {
+        "max_frame_bytes": 1024,
+        "max_header_bytes": 64,
+        "max_items": 32,
+        "max_depth": 8,
+    }
+    values.update(overrides)
+    return raw_resp_client.RespFrameLimits(**values)
+
+
+def test_raw_client_rejects_unterminated_header_at_header_budget(monkeypatch):
+    command = encode_command(b"PING")
+    scripted_socket = ScriptedSocket([(command, [b"+abc"])])
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        lambda _endpoint, timeout: scripted_socket,
+    )
+
+    client = RawRespConnection.connect(
+        "header.invalid",
+        1,
+        protocol=2,
+        limits=_raw_limits(max_header_bytes=4),
+    )
+    with pytest.raises(ValueError, match="header"):
+        client.execute_raw(b"PING")
+
+    assert scripted_socket.recv_calls == 1, "reader must reject without another recv"
+    assert scripted_socket.closed
+
+
+def test_raw_client_rejects_declared_bulk_above_frame_budget_before_payload(
+    monkeypatch,
+):
+    command = encode_command(b"GET", b"large")
+    scripted_socket = ScriptedSocket([(command, [b"$100\r\n"])])
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        lambda _endpoint, timeout: scripted_socket,
+    )
+
+    client = RawRespConnection.connect(
+        "bulk.invalid",
+        1,
+        protocol=2,
+        limits=_raw_limits(max_frame_bytes=16),
+    )
+    with pytest.raises(ValueError, match="frame byte"):
+        client.execute_raw(b"GET", b"large")
+
+    assert scripted_socket.closed
+
+
+@pytest.mark.parametrize("header", [b"*4\r\n", b"%2\r\n"])
+def test_raw_client_rejects_aggregate_item_budget(monkeypatch, header):
+    command = encode_command(b"PING")
+    scripted_socket = ScriptedSocket([(command, [header])])
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        lambda _endpoint, timeout: scripted_socket,
+    )
+
+    client = RawRespConnection.connect(
+        "items.invalid",
+        1,
+        protocol=2,
+        limits=_raw_limits(max_items=4),
+    )
+    with pytest.raises(ValueError, match="item"):
+        client.execute_raw(b"PING")
+
+    assert scripted_socket.closed
+
+
+def test_raw_client_rejects_nesting_depth_budget(monkeypatch):
+    command = encode_command(b"PING")
+    response = b"*1\r\n*1\r\n*1\r\n+ok\r\n"
+    scripted_socket = ScriptedSocket([(command, [response])])
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        lambda _endpoint, timeout: scripted_socket,
+    )
+
+    client = RawRespConnection.connect(
+        "depth.invalid",
+        1,
+        protocol=2,
+        limits=_raw_limits(max_depth=2),
+    )
+    with pytest.raises(ValueError, match="depth"):
+        client.execute_raw(b"PING")
+
+    assert scripted_socket.closed
+
+
+def test_raw_client_uses_one_absolute_deadline_during_slow_progress(monkeypatch):
+    class FakeClock:
+        def __init__(self):
+            self.value = 10.0
+
+        def monotonic(self):
+            return self.value
+
+        def advance(self, seconds):
+            self.value += seconds
+
+    class SlowProgressSocket(ScriptedSocket):
+        def __init__(self, exchanges, clock):
+            super().__init__(exchanges)
+            self.clock = clock
+
+        def recv(self, length):
+            self.clock.advance(0.25)
+            return super().recv(length)
+
+    clock = FakeClock()
+    command = encode_command(b"PING")
+    scripted_socket = SlowProgressSocket(
+        [(command, _byte_chunks(b"+PONG\r\n"))],
+        clock,
+    )
+    monkeypatch.setattr(raw_resp_client, "_monotonic", clock.monotonic)
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        lambda _endpoint, timeout: scripted_socket,
+    )
+
+    client = RawRespConnection.connect(
+        "deadline.invalid",
+        1,
+        protocol=2,
+        timeout=1.0,
+        limits=_raw_limits(),
+    )
+    with pytest.raises(TimeoutError, match="deadline"):
+        client.execute_raw(b"PING")
+
+    assert scripted_socket.closed
+    assert scripted_socket.timeouts
+    assert all(timeout > 0 for timeout in scripted_socket.timeouts)
+    assert scripted_socket.timeouts == sorted(scripted_socket.timeouts, reverse=True)
+
+
+def test_raw_client_accepts_nested_binary_at_exact_limits(monkeypatch):
+    command = encode_command(b"VINFO", b"key")
+    response = b"%1\r\n+vectors\r\n*2\r\n$3\r\nx\x00y\r\n_\r\n"
+    scripted_socket = ScriptedSocket([(command, [response])])
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        lambda _endpoint, timeout: scripted_socket,
+    )
+
+    client = RawRespConnection.connect(
+        "exact.invalid",
+        1,
+        protocol=2,
+        limits=_raw_limits(
+            max_frame_bytes=len(response),
+            max_header_bytes=len(b"+vectors\r\n"),
+            max_items=5,
+            max_depth=2,
+        ),
+    )
+    try:
+        assert client.execute_raw(b"VINFO", b"key") == response
+    finally:
+        client.close()
+
+
+def test_raw_client_charges_only_current_frame_and_preserves_pipeline_tail(
+    monkeypatch,
+):
+    first_command = encode_command(b"GET", b"one")
+    second_command = encode_command(b"GET", b"two")
+    first_frame = b"$3\r\none\r\n"
+    second_frame = b"$3\r\ntwo\r\n"
+    scripted_socket = ScriptedSocket(
+        [
+            (first_command, [first_frame + second_frame]),
+            (second_command, []),
+        ]
+    )
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        lambda _endpoint, timeout: scripted_socket,
+    )
+
+    client = RawRespConnection.connect(
+        "pipeline.invalid",
+        1,
+        protocol=2,
+        limits=_raw_limits(max_frame_bytes=len(first_frame)),
+    )
+    try:
+        assert client.execute_raw(b"GET", b"one") == first_frame
+        assert client.execute_raw(b"GET", b"two") == second_frame
+    finally:
+        client.close()
+
+    assert scripted_socket.sent == [first_command, second_command]
+    assert scripted_socket.exchanges == []
+    assert scripted_socket.pending == []
+
+
+def test_raw_client_local_encoding_error_preserves_unsent_connection():
+    scripted_socket = ScriptedSocket([])
+    client = RawRespConnection(scripted_socket, protocol=2)
+
+    with pytest.raises(TypeError, match="command parts"):
+        client.execute_raw("PING")
+
+    assert client.socket is scripted_socket
+    assert not scripted_socket.closed
+    assert scripted_socket.sent == []
+
+
+@pytest.mark.parametrize(
+    ("protocol", "response"),
+    [
+        pytest.param(2, b"$-1\r\n", id="resp2-null-bulk"),
+        pytest.param(2, b"*-1\r\n", id="resp2-null-array"),
+        pytest.param(3, b"_\r\n", id="resp3-null"),
+    ],
+)
+def test_raw_client_accepts_protocol_null_sentinel(protocol, response):
+    command = encode_command(b"GET", b"missing")
+    scripted_socket = ScriptedSocket([(command, [response])])
+    client = RawRespConnection(scripted_socket, protocol=protocol)
+
+    try:
+        assert client.execute_raw(b"GET", b"missing") == response
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize(
+    ("protocol", "malformed_header"),
+    [
+        pytest.param(2, b"$-2\r\n", id="resp2-bulk-below-null"),
+        pytest.param(2, b"*-2\r\n", id="resp2-array-below-null"),
+        pytest.param(3, b"$-1\r\n", id="resp3-bulk-null-sentinel"),
+        pytest.param(3, b"*-1\r\n", id="resp3-array-null-sentinel"),
+        pytest.param(3, b"!-1\r\n", id="blob-error-null-sentinel"),
+        pytest.param(3, b"=-1\r\n", id="verbatim-null-sentinel"),
+        pytest.param(3, b"~-1\r\n", id="set-null-sentinel"),
+        pytest.param(3, b"%-1\r\n", id="map-null-sentinel"),
+        pytest.param(3, b">-1\r\n", id="push-null-sentinel"),
+        pytest.param(3, b"|-1\r\n", id="attribute-null-sentinel"),
+        pytest.param(2, b"$01\r\n", id="leading-zero-bulk"),
+        pytest.param(2, b"*+1\r\n", id="explicit-plus-array"),
+        pytest.param(3, b"!-0\r\n", id="negative-zero-blob-error"),
+        pytest.param(3, b"~-01\r\n", id="signed-leading-zero-set"),
+        pytest.param(3, b"% 1\r\n", id="space-prefixed-map"),
+        pytest.param(3, b"|1 \r\n", id="space-suffixed-attribute"),
+    ],
+)
+def test_malformed_resp_length_invalidates_connection_and_discards_trailing_frame(
+    protocol,
+    malformed_header,
+):
+    command = encode_command(b"PING")
+    trailing_frame = b"+TRAILING\r\n"
+    scripted_socket = ScriptedSocket(
+        [(command, [malformed_header + trailing_frame])]
+    )
+    client = RawRespConnection(scripted_socket, protocol=protocol)
+
+    with pytest.raises(ValueError, match="invalid RESP frame length"):
+        client.execute_raw(b"PING")
+
+    assert scripted_socket.closed
+    assert scripted_socket.pending == []
+    assert client.socket is None
+    assert client._buffer == bytearray()
+    with pytest.raises(RuntimeError, match="closed"):
+        client.execute_raw(b"PING")
+    assert scripted_socket.sent == [command]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_frame_bytes", 0),
+        ("max_header_bytes", 0),
+        ("max_items", 0),
+        ("max_depth", -1),
+    ],
+)
+def test_raw_client_rejects_invalid_frame_limits(field, value):
+    with pytest.raises(ValueError, match=field):
+        _raw_limits(**{field: value})
+
+
+@pytest.mark.parametrize("timeout", [0.0, -1.0, float("inf"), float("nan")])
+def test_raw_client_rejects_invalid_absolute_timeout_before_connect(
+    monkeypatch,
+    timeout,
+):
+    def unexpected_connect(_endpoint, timeout):
+        pytest.fail(f"invalid timeout reached socket.create_connection: {timeout!r}")
+
+    monkeypatch.setattr(
+        raw_resp_client.socket,
+        "create_connection",
+        unexpected_connect,
+    )
+    with pytest.raises(ValueError, match="timeout"):
+        RawRespConnection.connect("timeout.invalid", 1, protocol=2, timeout=timeout)
 
 
 @pytest.mark.raw_vector_protocol

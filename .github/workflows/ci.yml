@@ -310,6 +310,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -353,14 +355,18 @@ jobs:
           KIWI_REDIS_ORACLE_SOURCE="$RUNNER_TEMP/kiwi-oracle/redis-source" \
           KIWI_REDIS_ORACLE_PRIMARY_METADATA="$RUNNER_TEMP/kiwi-oracle/primary-build.json" \
           KIWI_REDIS_ORACLE_OUTPUT="$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json" \
+          KIWI_REDIS_ORACLE_EVIDENCE_OUTPUT="$RUNNER_TEMP/kiwi-oracle/vector-differential-evidence.json" \
+          KIWI_EXPECTED_HEAD="${{ github.event.pull_request.head.sha || github.sha }}" \
             bash scripts/compat/run-vector-differential.sh
 
-      - name: Upload trusted Oracle provenance
+      - name: Upload trusted Oracle evidence
         uses: actions/upload-artifact@v7
         with:
-          name: trusted-vector-oracle-provenance
+          name: trusted-vector-oracle-evidence
           retention-days: 7
-          path: ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json
+          path: |
+            ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json
+            ${{ runner.temp }}/kiwi-oracle/vector-differential-evidence.json
           if-no-files-found: error
 
   vector-cluster-fail-closed:

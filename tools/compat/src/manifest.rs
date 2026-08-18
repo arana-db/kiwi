@@ -18,6 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::de::{Error as _, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
@@ -26,6 +27,12 @@ pub const MANIFEST_SCHEMA: &str = "kiwi-redis-compat/v1";
 pub const REQUIRED_VECTOR_JOBS_SCHEMA: &str = "kiwi-vector-required-jobs/v1";
 pub const REDIS_TAG: &str = "8.8.1";
 pub const REDIS_COMMIT: &str = "77b6c308396c9700672390a210143a8496fb4b10";
+
+fn is_canonical_base64(value: &str) -> bool {
+    BASE64_STANDARD
+        .decode(value)
+        .is_ok_and(|decoded| BASE64_STANDARD.encode(decoded) == value)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct CompatibilityManifest {
@@ -186,6 +193,7 @@ pub struct RequiredVectorJobs {
     protocols: Vec<Protocol>,
     commands: Vec<String>,
     raw_cases: BTreeMap<String, Vec<RequiredVectorRawCase>>,
+    final_state_applicability: BTreeMap<String, RequiredVectorFinalStateApplicability>,
     expected_node_ids: Vec<String>,
     expected_item_count: usize,
     manifest_profile: Profile,
@@ -194,10 +202,37 @@ pub struct RequiredVectorJobs {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub struct RequiredVectorFinalStateApplicability {
+    applicability: String,
+    reason: Option<String>,
+    state_profile: Option<String>,
+    observation_profile: Option<String>,
+}
+
+impl RequiredVectorFinalStateApplicability {
+    pub fn applicability(&self) -> &str {
+        &self.applicability
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
+    pub fn state_profile(&self) -> Option<&str> {
+        self.state_profile.as_deref()
+    }
+
+    pub fn observation_profile(&self) -> Option<&str> {
+        self.observation_profile.as_deref()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct RequiredVectorRawCase {
     case_id: String,
     evidence_kind: String,
     node_ids: Vec<String>,
+    request_base64_by_node: BTreeMap<String, String>,
 }
 
 impl RequiredVectorRawCase {
@@ -211,6 +246,10 @@ impl RequiredVectorRawCase {
 
     pub fn node_ids(&self) -> &[String] {
         &self.node_ids
+    }
+
+    pub fn request_base64_by_node(&self) -> &BTreeMap<String, String> {
+        &self.request_base64_by_node
     }
 }
 
@@ -290,6 +329,80 @@ impl RequiredVectorJobs {
                     .to_string(),
             ));
         }
+        if raw_job.final_state.keys().collect::<Vec<_>>() != node_ids.keys().collect::<Vec<_>>() {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "final-state applicability must exactly cover expected pytest node IDs".to_string(),
+            ));
+        }
+        let mut final_state_applicability = BTreeMap::new();
+        for (node_id, contract) in raw_job.final_state {
+            let (applicability, reason, state_profile, observation_profile) = match (
+                contract.applicability,
+                contract.reason,
+                contract.state_profile,
+                contract.observation_profile,
+            ) {
+                (
+                    RawFinalStateApplicability::ServerBacked,
+                    None,
+                    Some(state_profile),
+                    Some(observation_profile),
+                ) if matches!(
+                    state_profile.as_str(),
+                    "raw-all-missing"
+                        | "raw-repeated-vector"
+                        | "typed-all-missing"
+                        | "typed-main-vector"
+                        | "typed-main-two-member-vector"
+                        | "typed-main-dense3-vector"
+                        | "typed-string"
+                ) && observation_profile == "complete-vector-state-v1" =>
+                {
+                    (
+                        "server-backed".to_string(),
+                        None,
+                        Some(state_profile),
+                        Some(observation_profile),
+                    )
+                }
+                (
+                    RawFinalStateApplicability::NotApplicable,
+                    Some(RawFinalStateNotApplicableReason::Parser),
+                    None,
+                    None,
+                ) => (
+                    "not-applicable".to_string(),
+                    Some("parser".to_string()),
+                    None,
+                    None,
+                ),
+                (
+                    RawFinalStateApplicability::NotApplicable,
+                    Some(RawFinalStateNotApplicableReason::Comparator),
+                    None,
+                    None,
+                ) => (
+                    "not-applicable".to_string(),
+                    Some("comparator".to_string()),
+                    None,
+                    None,
+                ),
+                _ => {
+                    return Err(ManifestError::InvalidRequiredJobs(format!(
+                        "final-state applicability for {node_id:?} has an invalid state contract"
+                    )));
+                }
+            };
+            final_state_applicability.insert(
+                node_id,
+                RequiredVectorFinalStateApplicability {
+                    applicability,
+                    reason,
+                    state_profile,
+                    observation_profile,
+                },
+            );
+        }
         for (command, raw_cases) in &raw_job.raw_cases {
             let case_ids = raw_cases
                 .iter()
@@ -302,6 +415,10 @@ impl RequiredVectorJobs {
             }
             for raw_case in raw_cases {
                 let unique = raw_case.node_ids.iter().collect::<BTreeSet<_>>();
+                let request_nodes = raw_case
+                    .request_base64_by_node
+                    .keys()
+                    .collect::<BTreeSet<_>>();
                 let valid_case_id = !raw_case.case_id.is_empty()
                     && raw_case
                         .case_id
@@ -314,6 +431,13 @@ impl RequiredVectorJobs {
                     )
                     || raw_case.node_ids.is_empty()
                     || unique.len() != raw_case.node_ids.len()
+                    || request_nodes != unique
+                    || raw_case.request_base64_by_node.values().any(|request| {
+                        request.is_empty()
+                            || request.len() > 16 * 1024
+                            || request.trim() != request
+                            || !is_canonical_base64(request)
+                    })
                     || raw_case
                         .node_ids
                         .iter()
@@ -383,11 +507,13 @@ impl RequiredVectorJobs {
                                 case_id: raw_case.case_id,
                                 evidence_kind: raw_case.evidence_kind,
                                 node_ids: raw_case.node_ids,
+                                request_base64_by_node: raw_case.request_base64_by_node,
                             })
                             .collect(),
                     )
                 })
                 .collect(),
+            final_state_applicability,
             expected_node_ids: raw_job.expected_node_ids,
             expected_item_count: raw_job.expected_item_count,
             manifest_profile,
@@ -418,6 +544,12 @@ impl RequiredVectorJobs {
 
     pub fn raw_cases(&self) -> &BTreeMap<String, Vec<RequiredVectorRawCase>> {
         &self.raw_cases
+    }
+
+    pub fn final_state_applicability(
+        &self,
+    ) -> &BTreeMap<String, RequiredVectorFinalStateApplicability> {
+        &self.final_state_applicability
     }
 
     pub fn expected_node_ids(&self) -> &[String] {
@@ -642,6 +774,7 @@ struct RawRequiredVectorJob {
     protocols: Vec<RawProtocol>,
     commands: Vec<String>,
     raw_cases: BTreeMap<String, Vec<RawRequiredVectorCase>>,
+    final_state: BTreeMap<String, RawRequiredVectorFinalStateApplicability>,
     expected_node_ids: Vec<String>,
     expected_item_count: usize,
     manifest_profile: RawProfile,
@@ -650,10 +783,36 @@ struct RawRequiredVectorJob {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct RawRequiredVectorFinalStateApplicability {
+    applicability: RawFinalStateApplicability,
+    reason: Option<RawFinalStateNotApplicableReason>,
+    state_profile: Option<String>,
+    observation_profile: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+enum RawFinalStateApplicability {
+    #[serde(rename = "server-backed")]
+    ServerBacked,
+    #[serde(rename = "not-applicable")]
+    NotApplicable,
+}
+
+#[derive(Debug, Deserialize)]
+enum RawFinalStateNotApplicableReason {
+    #[serde(rename = "parser")]
+    Parser,
+    #[serde(rename = "comparator")]
+    Comparator,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawRequiredVectorCase {
     case_id: String,
     evidence_kind: String,
     node_ids: Vec<String>,
+    request_base64_by_node: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]

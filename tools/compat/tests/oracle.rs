@@ -22,14 +22,25 @@ use kiwi_compat::oracle::{
     REDIS_TAG,
 };
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
+#[cfg(target_os = "linux")]
+use std::ffi::CString;
 use std::fs;
+#[cfg(target_os = "linux")]
+use std::io::{Seek, SeekFrom, Write};
+#[cfg(target_os = "linux")]
+use std::os::fd::{AsRawFd, FromRawFd};
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::OpenOptionsExt;
+#[cfg(target_os = "linux")]
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 #[cfg(target_os = "linux")]
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 #[cfg(target_os = "linux")]
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REDIS_SHA: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const CLI_SHA: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -56,6 +67,68 @@ fn controlled_python() -> &'static str {
         .into_iter()
         .find(|candidate| Path::new(candidate).is_file())
         .expect("an approved system Python must be installed")
+}
+
+#[cfg(target_os = "linux")]
+fn sealed_test_file(name: &str, bytes: &[u8]) -> fs::File {
+    let name = CString::new(name).expect("memfd name must not contain NUL");
+    let fd =
+        unsafe { libc::memfd_create(name.as_ptr(), libc::MFD_CLOEXEC | libc::MFD_ALLOW_SEALING) };
+    assert!(
+        fd >= 0,
+        "memfd_create failed: {}",
+        std::io::Error::last_os_error()
+    );
+    let mut file = unsafe { fs::File::from_raw_fd(fd) };
+    file.write_all(bytes).expect("write sealed test file");
+    file.seek(SeekFrom::Start(0))
+        .expect("rewind sealed test file");
+    let seals = libc::F_SEAL_WRITE | libc::F_SEAL_GROW | libc::F_SEAL_SHRINK | libc::F_SEAL_SEAL;
+    let result = unsafe { libc::fcntl(fd, libc::F_ADD_SEALS, seals) };
+    assert_eq!(
+        result,
+        0,
+        "seal test file: {}",
+        std::io::Error::last_os_error()
+    );
+    file
+}
+
+#[cfg(target_os = "linux")]
+fn strict_verifier_command(
+    provenance: &fs::File,
+    evidence: &fs::File,
+    evidence_file_name: &str,
+    expected_head: &str,
+) -> Command {
+    const PROVENANCE_CHILD_FD: i32 = 198;
+    const EVIDENCE_CHILD_FD: i32 = 199;
+    let provenance_fd = provenance.as_raw_fd();
+    let evidence_fd = evidence.as_raw_fd();
+    assert!(![PROVENANCE_CHILD_FD, EVIDENCE_CHILD_FD].contains(&provenance_fd));
+    assert!(![PROVENANCE_CHILD_FD, EVIDENCE_CHILD_FD].contains(&evidence_fd));
+
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kiwi-verify-oracle-evidence"));
+    command
+        .arg(PROVENANCE_CHILD_FD.to_string())
+        .arg(EVIDENCE_CHILD_FD.to_string())
+        .arg(evidence_file_name)
+        .arg(expected_head)
+        .arg("3333333333333333333333333333333333333333");
+    unsafe {
+        command.pre_exec(move || {
+            for (source, target) in [
+                (provenance_fd, PROVENANCE_CHILD_FD),
+                (evidence_fd, EVIDENCE_CHILD_FD),
+            ] {
+                if libc::dup2(source, target) < 0 || libc::fcntl(target, libc::F_SETFD, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+    command
 }
 
 #[cfg(target_os = "linux")]
@@ -693,7 +766,6 @@ fn oracle_build_candidate_parent_replacement_fails_without_redirected_entries() 
         r#"import json
 import os
 import pathlib
-import stat
 
 parent = pathlib.Path({parent:?})
 moved_parent = pathlib.Path({moved_parent:?})
@@ -830,6 +902,7 @@ fn oracle_verifier_rejects_existing_output_before_source_access() {
     let missing_source = test_dir.path().join("missing-source");
     let missing_primary = test_dir.path().join("missing-primary.json");
     let output_path = test_dir.path().join("oracle-provenance.json");
+    let evidence_path = test_dir.path().join("vector-differential-evidence.json");
     fs::write(&output_path, b"do-not-replace\n").unwrap();
 
     let output = Command::new("/usr/bin/bash")
@@ -840,6 +913,12 @@ fn oracle_verifier_rejects_existing_output_before_source_access() {
         .arg(&missing_primary)
         .arg("--output")
         .arg(&output_path)
+        .arg("--evidence-output")
+        .arg(&evidence_path)
+        .arg("--expected-head")
+        .arg("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        .arg("--publication-verifier")
+        .arg(env!("CARGO_BIN_EXE_kiwi-verify-oracle-evidence"))
         .arg("--callback-input")
         .arg(test_dir.path())
         .arg("--run-after-ready")
@@ -979,6 +1058,267 @@ if failures:
 
 #[test]
 #[cfg(target_os = "linux")]
+fn callback_rejects_noncanonical_script_paths() {
+    let test_dir = TestDir::new("callback-noncanonical-script");
+    let body = r##"
+import os
+import pathlib
+
+root = pathlib.Path(__file__).parent
+
+for case, script_argument in (
+    ("parent", "/callback-input/scripts/../scripts/runner.sh"),
+    ("dot", "/callback-input/scripts/./runner.sh"),
+    ("empty", "/callback-input//scripts/runner.sh"),
+):
+    case_root = root / case
+    callback_input = case_root / "callback-input"
+    callback_path = case_root / "callback"
+    (callback_input / "scripts").mkdir(parents=True)
+    callback_path.mkdir()
+    runner = callback_input / "scripts" / "runner.sh"
+    runner.write_text(
+        "#!/bin/bash\nprintf 'executed\\n' > /work/executed.marker\n",
+        encoding="utf-8",
+    )
+    runner.chmod(0o755)
+    evidence = case_root / "runtime-evidence.json"
+    evidence.write_text('{"runtime":true}', encoding="utf-8")
+    evidence.chmod(0o400)
+    aliases = controller.FrozenToolDirectory.create(case_root / "aliases", {})
+    callback_root = controller.HeldDirectory.open(callback_path)
+    callback_input_root = controller.HeldDirectory.open(callback_input)
+    callback_shell = controller.HeldExecutable.open("shell", pathlib.Path("/bin/bash"))
+    evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
+    try:
+        try:
+            controller._run_callback(
+                ["/bin/bash", script_argument],
+                callback_shell,
+                aliases,
+                callback_root,
+                callback_input_root,
+                evidence_fd,
+                "127.0.0.1",
+                1,
+            )
+        except controller.OracleError as error:
+            if "callback script path must be canonical" not in str(error):
+                raise AssertionError(
+                    f"{case} failed for an unrelated reason: {error}"
+                ) from error
+        else:
+            raise AssertionError(f"{case} callback path was accepted")
+        assert not (callback_path / "work" / "executed.marker").exists(), case
+    finally:
+        aliases.remove()
+        os.close(evidence_fd)
+        callback_shell.close()
+        callback_input_root.close()
+        callback_root.close()
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn callback_rejects_unregistered_executable() {
+    let test_dir = TestDir::new("callback-unregistered-executable");
+    let body = r##"
+import os
+import pathlib
+
+root = pathlib.Path(__file__).parent
+callback_input = root / "callback-input"
+callback_path = root / "callback"
+(callback_input / "scripts").mkdir(parents=True)
+callback_path.mkdir()
+runner = callback_input / "scripts" / "runner.py"
+runner.write_text(
+    'import pathlib\npathlib.Path("/work/executed.marker").write_text("executed\\n", encoding="utf-8")\n',
+    encoding="utf-8",
+)
+evidence = root / "runtime-evidence.json"
+evidence.write_text('{"runtime":true}', encoding="utf-8")
+evidence.chmod(0o400)
+aliases = controller.FrozenToolDirectory.create(root / "aliases", {})
+callback_root = controller.HeldDirectory.open(callback_path)
+callback_input_root = controller.HeldDirectory.open(callback_input)
+callback_shell = controller.HeldExecutable.open("shell", pathlib.Path("/bin/bash"))
+evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
+try:
+    try:
+        controller._run_callback(
+            ["/usr/bin/python3", "/callback-input/scripts/runner.py"],
+            callback_shell,
+            aliases,
+            callback_root,
+            callback_input_root,
+            evidence_fd,
+            "127.0.0.1",
+            1,
+        )
+    except controller.OracleError as error:
+        if "callback executable must be the registered shell" not in str(error):
+            raise AssertionError(f"unregistered executable failed for an unrelated reason: {error}") from error
+    else:
+        raise AssertionError("unregistered callback executable was accepted")
+    assert not (callback_path / "work" / "executed.marker").exists()
+finally:
+    aliases.remove()
+    os.close(evidence_fd)
+    callback_shell.close()
+    callback_input_root.close()
+    callback_root.close()
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn callback_symlink_identity_rejects_hard_linked_runtime_entries() {
+    let test_dir = TestDir::new("callback-runtime-symlink-hard-link");
+    let body = r##"
+import os
+import pathlib
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python").mkdir()
+for relative in controller.CALLBACK_RUNTIME_PATHS:
+    path = repository / relative
+    path.write_bytes(relative.encode("utf-8"))
+    path.chmod(0o755)
+target = repository / ".oracle-python" / "module.py"
+target.write_text("VALUE = 1\n", encoding="utf-8")
+first = repository / ".oracle-python" / "first.py"
+second = repository / ".oracle-python" / "second.py"
+first.symlink_to("module.py")
+os.link(first, second, follow_symlinks=False)
+assert first.lstat().st_ino == second.lstat().st_ino
+assert first.lstat().st_nlink == 2
+
+with controller.HeldDirectory.open(repository) as held_repository:
+    try:
+        list(controller._runtime_callback_entries(held_repository))
+    except controller.OracleError as error:
+        if "runtime callback input contains a hard link" not in str(error):
+            raise AssertionError(f"symlink hard link failed for an unrelated reason: {error}") from error
+    else:
+        raise AssertionError("hard-linked runtime symlinks were accepted")
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn callback_symlink_identity_rejects_equal_length_runtime_replacement() {
+    let test_dir = TestDir::new("callback-runtime-symlink-replacement");
+    let body = r##"
+import os
+import pathlib
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python").mkdir()
+for relative in controller.CALLBACK_RUNTIME_PATHS:
+    path = repository / relative
+    path.write_bytes(relative.encode("utf-8"))
+    path.chmod(0o755)
+python_root = repository / ".oracle-python"
+(python_root / "first.py").write_text("VALUE = 1\n", encoding="utf-8")
+(python_root / "other.py").write_text("VALUE = 2\n", encoding="utf-8")
+link = python_root / "plugin.py"
+link.symlink_to("first.py")
+before = link.lstat()
+original_readlink = controller.os.readlink
+replaced = False
+
+def replace_before_readlink(path, *, dir_fd=None):
+    global replaced
+    if path == "plugin.py" and dir_fd is not None and not replaced:
+        os.rename(
+            path,
+            "plugin-original.py",
+            src_dir_fd=dir_fd,
+            dst_dir_fd=dir_fd,
+        )
+        os.symlink("other.py", path, dir_fd=dir_fd)
+        replaced = True
+    return original_readlink(path, dir_fd=dir_fd)
+
+controller.os.readlink = replace_before_readlink
+try:
+    with controller.HeldDirectory.open(repository) as held_repository:
+        try:
+            list(controller._runtime_callback_entries(held_repository))
+        except controller.OracleError as error:
+            if "runtime callback symlink changed while reading" not in str(error):
+                raise AssertionError(f"symlink replacement failed for an unrelated reason: {error}") from error
+        else:
+            raise AssertionError("equal-length runtime symlink replacement was accepted")
+finally:
+    controller.os.readlink = original_readlink
+assert replaced
+assert link.lstat().st_ino != before.st_ino
+assert len(os.fsencode(link.readlink())) == before.st_size
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn callback_symlink_identity_rejects_hard_linked_frozen_entries() {
+    let test_dir = TestDir::new("callback-frozen-symlink-hard-link");
+    let body = r##"
+import os
+import pathlib
+import types
+
+root = pathlib.Path(__file__).parent / "frozen"
+root.mkdir()
+target = root / "target.py"
+target_content = b"VALUE = 1\n"
+target.write_bytes(target_content)
+first = root / "first.py"
+second = root / "second.py"
+first.symlink_to("target.py")
+second.symlink_to("target.py")
+target_text = "target.py"
+entries = [
+    controller._manifest_entry("first.py", "runtime", "symlink", "120000", target_text),
+    controller._manifest_entry("second.py", "runtime", "symlink", "120000", target_text),
+    controller._manifest_entry("target.py", "runtime", "regular", "100644", target_content),
+]
+entries.sort(key=lambda entry: os.fsencode(str(entry["path"])))
+manifest = {
+    "schema_version": controller.CALLBACK_INPUT_MANIFEST_SCHEMA,
+    "entry_count": len(entries),
+    "total_bytes": len(target_content) + 2 * len(os.fsencode(target_text)),
+    "entries": entries,
+}
+second.unlink()
+os.link(first, second, follow_symlinks=False)
+assert first.lstat().st_ino == second.lstat().st_ino
+assert first.lstat().st_nlink == 2
+
+with controller.HeldDirectory.open(root) as held_root:
+    snapshot = types.SimpleNamespace(root=held_root, manifest=manifest)
+    try:
+        controller._verify_frozen_callback_manifest(snapshot)
+    except controller.OracleError as error:
+        if "frozen callback input contains an unexpected hard-link relationship" not in str(error):
+            raise AssertionError(f"frozen symlink hard link failed for an unrelated reason: {error}") from error
+    else:
+        raise AssertionError("hard-linked frozen symlinks were accepted")
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_verifier_callback_input_exposes_repo_layout_read_only() {
     let test_dir = TestDir::new("verifier-callback-input");
     let body = format!(
@@ -990,18 +1330,15 @@ callback_input = root / "callback-input"
 (callback_input / "scripts").mkdir(parents=True)
 (callback_input / "resources").mkdir()
 (callback_input / "resources/value.txt").write_text("trusted-resource", encoding="utf-8")
-runner = callback_input / "scripts/runner.py"
-runner.write_text(r'''#!/usr/bin/python3
-import os, pathlib
-callback_input = pathlib.Path(os.environ["KIWI_REDIS_ORACLE_CALLBACK_INPUT"])
-value = (callback_input / "resources/value.txt").read_text(encoding="utf-8")
-try:
-    (callback_input / "resources/value.txt").write_text("changed", encoding="utf-8")
-except OSError:
-    pass
-else:
-    raise SystemExit("callback input was writable")
-pathlib.Path(os.environ["KIWI_REDIS_ORACLE_WORKDIR"]).joinpath("result.txt").write_text(value, encoding="utf-8")
+runner = callback_input / "scripts/runner.sh"
+runner.write_text(r'''#!/bin/bash
+set -euo pipefail
+value="$(cat /callback-input/resources/value.txt)"
+if printf 'changed' > /callback-input/resources/value.txt 2>/dev/null; then
+    exit 91
+fi
+printf '%s' "$value" > /work/result.txt
+printf 'executed\n' > /work/executed.marker
 ''', encoding="utf-8")
 runner.chmod(0o755)
 callback_path = root / "callback"
@@ -1012,16 +1349,26 @@ evidence.chmod(0o400)
 aliases = controller.FrozenToolDirectory.create(root / "aliases", {{}})
 callback_root = controller.HeldDirectory.open(callback_path)
 callback_input_root = controller.HeldDirectory.open(callback_input)
+callback_shell = controller.HeldExecutable.open("shell", pathlib.Path("/bin/bash"))
 evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
 try:
     controller._run_callback(
-        [str(runner)], aliases, callback_root, callback_input_root, evidence_fd, "127.0.0.1", 1
+        ["/bin/bash", "/callback-input/scripts/runner.sh"],
+        callback_shell,
+        aliases,
+        callback_root,
+        callback_input_root,
+        evidence_fd,
+        "127.0.0.1",
+        1,
     )
     assert (callback_path / "work/result.txt").read_text(encoding="utf-8") == "trusted-resource"
+    assert (callback_path / "work/executed.marker").read_text(encoding="utf-8") == "executed\n"
     assert (callback_input / "resources/value.txt").read_text(encoding="utf-8") == "trusted-resource"
 finally:
     aliases.remove()
     os.close(evidence_fd)
+    callback_shell.close()
     callback_input_root.close()
     callback_root.close()
 "#,
@@ -1244,10 +1591,11 @@ for name in ("source-a", "checkout-b", "runtime", "logs", "metadata", "tools", "
 evidence = root / "runtime-evidence.json"
 evidence.write_text('{{"runtime":true}}', encoding="utf-8")
 evidence.chmod(0o400)
-callback = root / "callback.py"
+callback = root / "mount-sandbox.py"
 callback.write_text(r'''#!/usr/bin/python3
 import json, os, pathlib, sys
 results = {{}}
+pathlib.Path("/work/executed.marker").write_text("executed\n", encoding="utf-8")
 evidence = pathlib.Path(os.environ["KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE"])
 original = evidence.read_bytes()
 mode = evidence.stat().st_mode & 0o777
@@ -1284,14 +1632,27 @@ else:
 pathlib.Path("result.json").write_text(json.dumps(results, sort_keys=True), encoding="utf-8")
 ''', encoding="utf-8")
 callback.chmod(0o755)
+wrapper = root / "mount-sandbox.sh"
+wrapper.write_text(
+    '#!/bin/bash\nexec /usr/bin/python3 -I -B /callback-input/mount-sandbox.py "$@"\n',
+    encoding="utf-8",
+)
+wrapper.chmod(0o755)
 
 parent = controller.HeldDirectory.open(root)
 callback_root = controller.HeldDirectory.open(callback_path)
 evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
 aliases = controller.FrozenToolDirectory.create(root / "aliases", {{}})
+callback_shell = controller.HeldExecutable.open("shell", pathlib.Path("/bin/bash"))
 try:
     controller._run_callback(
-        [str(callback), *(str(path) for path in protected.values()), str(verifier)],
+        [
+            "/bin/bash",
+            "/callback-input/mount-sandbox.sh",
+            *(f"/callback-input/{{path.relative_to(root)}}" for path in protected.values()),
+            "/callback-input/verifier-root",
+        ],
+        callback_shell,
         aliases,
         callback_root,
         parent,
@@ -1300,12 +1661,14 @@ try:
         1,
     )
     results = json.loads((callback_path / "work" / "result.json").read_text(encoding="utf-8"))
+    assert (callback_path / "work" / "executed.marker").read_text(encoding="utf-8") == "executed\n"
     expected = {{"evidence_restore", *protected, "verifier_rename_restore"}}
     if set(results) != expected or any(value != "blocked" for value in results.values()):
         raise AssertionError(f"callback escaped filesystem sandbox: {{results}}")
 finally:
     aliases.remove()
     os.close(evidence_fd)
+    callback_shell.close()
     callback_root.close()
     parent.close()
 "#,
@@ -1324,9 +1687,9 @@ import os
 import pathlib
 
 root = pathlib.Path({root:?})
-callback = root / "callback.py"
-callback.write_text(r'''#!/usr/bin/python3
+callback_source = r'''#!/usr/bin/python3
 import json, os, pathlib
+pathlib.Path("/work/executed.marker").write_text("executed\n", encoding="utf-8")
 evidence = json.loads(pathlib.Path(os.environ["KIWI_REDIS_ORACLE_RUNTIME_EVIDENCE"]).read_text(encoding="utf-8"))
 result = {{
     "work": pathlib.Path("/work/identity").read_text(encoding="utf-8"),
@@ -1335,8 +1698,7 @@ result = {{
     "dev": [os.stat("/dev").st_dev, os.stat("/dev").st_ino],
 }}
 pathlib.Path("/work/observed.json").write_text(json.dumps(result, sort_keys=True), encoding="utf-8")
-''', encoding="utf-8")
-callback.chmod(0o755)
+'''
 
 def replacement_sandbox(path):
     path.mkdir(mode=0o700)
@@ -1348,16 +1710,27 @@ def replacement_sandbox(path):
         (path / link).symlink_to(target)
 
 failures = []
-for attack in ("work-source", "evidence-source", "sandbox-root-target"):
+executed_cases = set()
+for attack in ("control", "work-source", "evidence-source", "sandbox-root-target"):
     case = root / attack
     callback_path = case / "callback"
     callback_path.mkdir(parents=True)
+    callback = case / "mount-race.py"
+    callback.write_text(callback_source, encoding="utf-8")
+    callback.chmod(0o755)
+    wrapper = case / "mount-race.sh"
+    wrapper.write_text(
+        '#!/bin/bash\nexec /usr/bin/python3 -I -B /callback-input/mount-race.py\n',
+        encoding="utf-8",
+    )
+    wrapper.chmod(0o755)
     evidence = case / "runtime-evidence.json"
     evidence.write_text('{{"identity":"original-evidence"}}', encoding="utf-8")
     evidence.chmod(0o400)
     aliases = controller.FrozenToolDirectory.create(case / "aliases", {{}})
     callback_root = controller.HeldDirectory.open(callback_path)
     callback_input_root = controller.HeldDirectory.open(case)
+    callback_shell = controller.HeldExecutable.open("shell", pathlib.Path("/bin/bash"))
     evidence_fd = os.open(evidence, os.O_RDONLY | os.O_CLOEXEC)
     original_mount = controller._mount
     original_setup = controller._callback_filesystem_setup
@@ -1404,13 +1777,24 @@ for attack in ("work-source", "evidence-source", "sandbox-root-target"):
     try:
         try:
             controller._run_callback(
-                [str(callback)], aliases, callback_root, callback_input_root, evidence_fd, "127.0.0.1", 1
+                ["/bin/bash", "/callback-input/mount-race.sh"],
+                callback_shell,
+                aliases,
+                callback_root,
+                callback_input_root,
+                evidence_fd,
+                "127.0.0.1",
+                1,
             )
         except controller.OracleError as error:
+            if "callback script must execute" in str(error):
+                failures.append(f"{{attack}} failed argv validation instead of mount behavior: {{error}}")
             print(f"{{attack}} rejected during setup: {{error}}")
             rejected = True
 
         if rejected:
+            if attack == "control":
+                failures.append("control callback did not execute inside the namespace")
             continue
         if attack == "work-source":
             observed_path = callback_path / "work-held" / "observed.json"
@@ -1419,6 +1803,11 @@ for attack in ("work-source", "evidence-source", "sandbox-root-target"):
                 continue
         else:
             observed_path = callback_path / "work" / "observed.json"
+        marker_path = observed_path.parent / "executed.marker"
+        if marker_path.read_text(encoding="utf-8") != "executed\n":
+            failures.append(f"{{attack}} callback execution marker is missing")
+            continue
+        executed_cases.add(attack)
         observed = json.loads(observed_path.read_text(encoding="utf-8"))
         if attack == "work-source" and observed["work"] != "original-work":
             failures.append(f"callback observed replacement work: {{observed}}")
@@ -1437,9 +1826,12 @@ for attack in ("work-source", "evidence-source", "sandbox-root-target"):
         controller._callback_filesystem_setup = original_setup
         aliases.remove()
         os.close(evidence_fd)
+        callback_shell.close()
         callback_input_root.close()
         callback_root.close()
 
+if "control" not in executed_cases:
+    failures.append("control callback never executed inside the namespace")
 if failures:
     raise AssertionError(f"callback mount setup trusted rename-replaced paths: {{failures}}")
 "#,
@@ -2002,6 +2394,93 @@ assert not list(provenance.parent.glob(".*.provenance-*")), "temporary provenanc
 
 #[test]
 #[cfg(target_os = "linux")]
+fn oracle_verifier_provenance_late_fd_close_failures_roll_back_final() {
+    let test_dir = TestDir::new("verifier-publish-late-fd-close");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import os
+import pathlib
+import stat
+
+root = pathlib.Path({root:?})
+document = json.loads(r'''{document}''')
+surviving_finals = []
+
+for failure_kind in ("published-fd", "rollback-parent-fd"):
+    case = root / failure_kind
+    case.mkdir()
+    provenance = case / "oracle-provenance.json"
+    target = controller.CandidateTarget.open(provenance)
+    original_open = controller.os.open
+    original_close = controller.os.close
+    original_dup = controller.os.dup
+    rollback_parent_fd = -1
+    published_fd = -1
+    failed_fd = -1
+    injected = False
+
+    def track_rollback_parent(fd):
+        global rollback_parent_fd
+        duplicate = original_dup(fd)
+        rollback_parent_fd = duplicate
+        return duplicate
+
+    def track_published_open(path, flags, mode=0o777, *, dir_fd=None):
+        global published_fd
+        fd = original_open(path, flags, mode, dir_fd=dir_fd)
+        if path == provenance.name and dir_fd == target.parent.fd and published_fd < 0:
+            published_fd = fd
+        return fd
+
+    def fail_late_close(fd):
+        global failed_fd, injected
+        fail_published = failure_kind == "published-fd" and fd == published_fd
+        fail_rollback_parent = (
+            failure_kind == "rollback-parent-fd" and fd == rollback_parent_fd
+        )
+        if not injected and (fail_published or fail_rollback_parent):
+            injected = True
+            failed_fd = fd
+            raise OSError(5, f"injected legacy {{failure_kind}} close failure")
+        return original_close(fd)
+
+    controller.os.dup = track_rollback_parent
+    controller.os.open = track_published_open
+    controller.os.close = fail_late_close
+    try:
+        try:
+            controller.publish_provenance(target, document, close_target=True)
+        except (controller.OracleError, OSError):
+            pass
+        else:
+            raise AssertionError(f"legacy {{failure_kind}} close failure was accepted")
+    finally:
+        controller.os.dup = original_dup
+        controller.os.open = original_open
+        controller.os.close = original_close
+        for fd in {{failed_fd, published_fd, rollback_parent_fd}}:
+            if fd >= 0:
+                try:
+                    original_close(fd)
+                except OSError:
+                    pass
+        target.close()
+    assert injected, f"legacy {{failure_kind}} close fault was not reached"
+    assert not list(case.glob(".*.provenance-*")), failure_kind
+    if provenance.exists():
+        surviving_finals.append(failure_kind)
+        provenance.unlink()
+assert not surviving_finals, surviving_finals
+"#,
+        root = test_dir.path().to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn oracle_verifier_provenance_parent_move_during_successful_close_rolls_back() {
     let test_dir = TestDir::new("verifier-publish-parent-close-move");
     let parent = test_dir.path().join("output-parent");
@@ -2153,6 +2632,7 @@ fn oracle_verifier_wrappers_keep_verification_in_linux_and_preserve_callback_arg
     assert!(!bash.contains("eval "));
     assert!(powershell.contains("wslpath"));
     assert!(powershell.contains("--callback-input"));
+    assert!(powershell.contains("--publication-verifier"));
     assert!(powershell.contains("--run-after-ready"));
     assert!(!powershell.contains("Invoke-Expression"));
     assert!(!powershell.contains("Start-Process"));
@@ -2189,6 +2669,9 @@ function global:wsl.exe {
     -Source 'D:\source path' `
     -PrimaryMetadata 'D:\primary path\primary.json' `
     -Output 'E:\out\oracle.json' `
+    -EvidenceOutput 'E:\out\evidence.json' `
+    -ExpectedHead 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' `
+    -PublicationVerifier 'G:\tools\kiwi-verify-oracle-evidence.exe' `
     -CallbackInput 'F:\callback input' `
     -RunAfterReady @('C:\callback dir\callback.exe', 'literal ; $() []')
 "#,
@@ -2245,6 +2728,12 @@ function global:wsl.exe {
         "WSL<D:\\primary path\\primary.json>".to_string(),
         "--output".to_string(),
         "WSL<E:\\out\\oracle.json>".to_string(),
+        "--evidence-output".to_string(),
+        "WSL<E:\\out\\evidence.json>".to_string(),
+        "--expected-head".to_string(),
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+        "--publication-verifier".to_string(),
+        "WSL<G:\\tools\\kiwi-verify-oracle-evidence.exe>".to_string(),
         "--callback-input".to_string(),
         "WSL<F:\\callback input>".to_string(),
         "--run-after-ready".to_string(),
@@ -2277,7 +2766,7 @@ function global:wsl.exe {
     return '/unexpected'
 }
 try {
-    & $Wrapper -Source '\\server\share\source' -PrimaryMetadata 'D:\primary.json' -Output 'E:\out.json' -CallbackInput 'F:\input' -RunAfterReady @('C:\callback.exe')
+    & $Wrapper -Source '\\server\share\source' -PrimaryMetadata 'D:\primary.json' -Output 'E:\out.json' -EvidenceOutput 'E:\evidence.json' -ExpectedHead 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' -PublicationVerifier 'G:\tools\kiwi-verify-oracle-evidence.exe' -CallbackInput 'F:\input' -RunAfterReady @('C:\callback.exe')
 } catch {
     [Console]::Out.WriteLine('ERROR:' + $_.Exception.Message)
 }
@@ -2878,6 +3367,538 @@ fn loads_the_canonical_build_and_provenance_fixtures() {
 }
 
 #[test]
+fn build_evidence_errors_do_not_claim_provenance_v4() {
+    for error in [
+        BuildEvidence::from_json("{")
+            .expect_err("malformed build evidence must fail")
+            .to_string(),
+        BuildEvidence::from_json("{}")
+            .expect_err("incomplete build evidence must fail")
+            .to_string(),
+    ] {
+        let normalized = error.to_ascii_lowercase();
+        assert!(
+            normalized.contains("oracle evidence"),
+            "error must identify the shared Oracle evidence boundary: {error}"
+        );
+        assert!(
+            !normalized.contains("provenance") && !normalized.contains("v4"),
+            "build-v3 errors must not claim provenance-v4 validation: {error}"
+        );
+    }
+}
+
+#[test]
+fn provenance_external_bindings_require_current_head_tree_and_evidence() {
+    let evidence = b"{\"schema_version\":\"kiwi-vector-differential-evidence/v1\"}\n".to_vec();
+    let mut fixture = canonical_provenance();
+    fixture["differential_evidence"]["size_bytes"] = json!(evidence.len());
+    fixture["differential_evidence"]["sha256"] = json!(format!("{:x}", Sha256::digest(&evidence)));
+    let provenance = parse_provenance(fixture);
+    let expected_head = "2222222222222222222222222222222222222222";
+    let expected_tree = "3333333333333333333333333333333333333333";
+    let evidence_file_name = "vector-differential-evidence.json";
+    let replacement_evidence = vec![b'x'; evidence.len()];
+
+    provenance
+        .verify_external_bindings(expected_head, expected_tree, evidence_file_name, &evidence)
+        .expect("canonical provenance must bind to the external CI inputs");
+
+    for result in [
+        provenance.verify_external_bindings(
+            "4444444444444444444444444444444444444444",
+            expected_tree,
+            evidence_file_name,
+            &evidence,
+        ),
+        provenance.verify_external_bindings(
+            expected_head,
+            "5555555555555555555555555555555555555555",
+            evidence_file_name,
+            &evidence,
+        ),
+        provenance.verify_external_bindings(
+            expected_head,
+            expected_tree,
+            "replacement.json",
+            &evidence,
+        ),
+        provenance.verify_external_bindings(
+            expected_head,
+            expected_tree,
+            evidence_file_name,
+            &evidence[..evidence.len() - 1],
+        ),
+        provenance.verify_external_bindings(
+            expected_head,
+            expected_tree,
+            evidence_file_name,
+            &replacement_evidence,
+        ),
+    ] {
+        assert!(result.is_err(), "external binding drift must fail closed");
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn strict_oracle_evidence_cli_parses_and_binds_the_published_files() {
+    let evidence = b"{\"schema_version\":\"kiwi-vector-differential-evidence/v1\"}\n".to_vec();
+    let mut fixture = canonical_provenance();
+    fixture["differential_evidence"]["size_bytes"] = json!(evidence.len());
+    fixture["differential_evidence"]["sha256"] = json!(format!("{:x}", Sha256::digest(&evidence)));
+    let provenance = sealed_test_file("oracle-provenance", &serde_json::to_vec(&fixture).unwrap());
+    let evidence = sealed_test_file("vector-differential-evidence", &evidence);
+
+    let invoke = |head: &str| {
+        strict_verifier_command(
+            &provenance,
+            &evidence,
+            "vector-differential-evidence.json",
+            head,
+        )
+        .output()
+        .expect("strict Oracle evidence verifier must start")
+    };
+    let accepted = invoke("2222222222222222222222222222222222222222");
+    assert!(
+        accepted.status.success(),
+        "canonical published files must pass\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&accepted.stdout),
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    let rejected = invoke("4444444444444444444444444444444444444444");
+    assert!(
+        !rejected.status.success(),
+        "external Head drift must fail closed"
+    );
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("callback_input.expected_head"),
+        "failure must identify the mismatched external binding: {}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn strict_oracle_evidence_cli_rejects_a_fifo_without_blocking() {
+    let test_dir = TestDir::new("strict-evidence-fifo");
+    let evidence_path = test_dir.path().join("vector-differential-evidence.json");
+    let provenance = sealed_test_file(
+        "oracle-provenance",
+        canonical_provenance().to_string().as_bytes(),
+    );
+    let mkfifo = Command::new("/usr/bin/mkfifo")
+        .arg(&evidence_path)
+        .status()
+        .expect("mkfifo must start");
+    assert!(mkfifo.success(), "mkfifo must create the evidence mutant");
+    let evidence = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(&evidence_path)
+        .expect("open FIFO without blocking");
+
+    let mut child = strict_verifier_command(
+        &provenance,
+        &evidence,
+        "vector-differential-evidence.json",
+        "2222222222222222222222222222222222222222",
+    )
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .expect("strict Oracle evidence verifier must start");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(status) = child.try_wait().expect("poll FIFO mutant") {
+            assert!(!status.success(), "FIFO evidence must fail closed");
+            break;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("kill blocked FIFO mutant");
+            child.wait().expect("reap blocked FIFO mutant");
+            panic!("FIFO evidence blocked the required publication gate");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn publication_binding_failure_rolls_back_both_final_files() {
+    let test_dir = TestDir::new("publication-binding-rollback");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import json
+import pathlib
+import types
+
+root = pathlib.Path({root:?})
+evidence_path = root / "vector-differential-evidence.json"
+provenance_path = root / "oracle-provenance.json"
+evidence_target = controller.CandidateTarget.open(evidence_path)
+provenance_target = controller.CandidateTarget.open(provenance_path)
+publication_verifier = controller.HeldExecutable.open(
+    "publication-verifier", pathlib.Path("/bin/true")
+)
+observed_published = False
+original_run_bounded = controller.run_bounded
+
+def reject_publication(*args, **kwargs):
+    global observed_published
+    assert evidence_path.is_file()
+    assert provenance_path.is_file()
+    observed_published = True
+    return types.SimpleNamespace(
+        timed_out=False,
+        output_truncated=False,
+        exit_code=1,
+        stderr=b"injected publication binding failure",
+        process_group_reaped=True,
+    )
+
+controller.run_bounded = reject_publication
+try:
+    try:
+        controller.publish_evidence_then_provenance(
+            evidence_target,
+            provenance_target,
+            {{"schema_version": "kiwi-vector-differential-evidence/v1"}},
+            json.loads(r'''{document}'''),
+            post_publish_verifier=publication_verifier,
+            expected_head="2222222222222222222222222222222222222222",
+            expected_tree="3333333333333333333333333333333333333333",
+            close_post_publish_verifier=True,
+        )
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError("publication binding failure was accepted")
+finally:
+    controller.run_bounded = original_run_bounded
+    publication_verifier.close()
+    evidence_target.close()
+    provenance_target.close()
+
+assert observed_published
+assert not evidence_path.exists()
+assert not provenance_path.exists()
+"#,
+        root = test_dir.path().to_string_lossy(),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn publication_binding_success_commits_both_final_files() {
+    let test_dir = TestDir::new("publication-binding-success");
+    let evidence_payload =
+        b"{\"schema_version\":\"kiwi-vector-differential-evidence/v1\",\"value\":1}\n";
+    let mut fixture = canonical_provenance();
+    fixture["differential_evidence"]["size_bytes"] = json!(evidence_payload.len());
+    fixture["differential_evidence"]["sha256"] =
+        json!(format!("{:x}", Sha256::digest(evidence_payload)));
+    let body = format!(
+        r#"import json
+import pathlib
+
+root = pathlib.Path({root:?})
+evidence_path = root / "vector-differential-evidence.json"
+provenance_path = root / "oracle-provenance.json"
+evidence_target = controller.CandidateTarget.open(evidence_path)
+provenance_target = controller.CandidateTarget.open(provenance_path)
+publication_verifier = controller.HeldExecutable.open(
+    "publication-verifier", pathlib.Path({verifier:?})
+)
+try:
+    controller.publish_evidence_then_provenance(
+        evidence_target,
+        provenance_target,
+        {{
+            "schema_version": "kiwi-vector-differential-evidence/v1",
+            "value": 1,
+        }},
+        json.loads(r'''{document}'''),
+        post_publish_verifier=publication_verifier,
+        expected_head="2222222222222222222222222222222222222222",
+        expected_tree="3333333333333333333333333333333333333333",
+        close_post_publish_verifier=True,
+    )
+finally:
+    publication_verifier.close()
+    evidence_target.close()
+    provenance_target.close()
+
+assert evidence_path.is_file()
+assert provenance_path.is_file()
+"#,
+        root = test_dir.path().to_string_lossy(),
+        verifier = env!("CARGO_BIN_EXE_kiwi-verify-oracle-evidence"),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn publication_binding_reads_held_outputs_when_visible_paths_are_swapped_and_restored() {
+    let test_dir = TestDir::new("publication-binding-held-output-fds");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import copy
+import hashlib
+import json
+import pathlib
+
+root = pathlib.Path({root:?})
+evidence_path = root / "vector-differential-evidence.json"
+provenance_path = root / "oracle-provenance.json"
+evidence_document = {{
+    "schema_version": "kiwi-vector-differential-evidence/v1",
+    "value": 1,
+}}
+evidence_payload = controller.canonical_json_bytes(evidence_document)
+valid_provenance = json.loads(r'''{document}''')
+valid_provenance["differential_evidence"] = {{
+    "schema_version": "kiwi-vector-differential-evidence/v1",
+    "file_name": evidence_path.name,
+    "size_bytes": len(evidence_payload),
+    "sha256": hashlib.sha256(evidence_payload).hexdigest(),
+    "published_atomically": True,
+    "verified_after_publish": True,
+}}
+invalid_provenance = copy.deepcopy(valid_provenance)
+invalid_provenance["callback_input"]["expected_head"] = "4" * 40
+
+evidence_target = controller.CandidateTarget.open(evidence_path)
+provenance_target = controller.CandidateTarget.open(provenance_path)
+publication_verifier = controller.HeldExecutable.open(
+    "publication-verifier", pathlib.Path({verifier:?})
+)
+original_run_bounded = controller.run_bounded
+attack_observed = False
+
+def swap_visible_outputs(executable, argv, **kwargs):
+    global attack_observed
+    evidence_backup = root / "held-evidence.json"
+    provenance_backup = root / "held-provenance.json"
+    evidence_path.rename(evidence_backup)
+    provenance_path.rename(provenance_backup)
+    evidence_path.write_bytes(evidence_payload)
+    provenance_path.write_bytes(controller.canonical_json_bytes(valid_provenance))
+    attack_observed = True
+    try:
+        return original_run_bounded(executable, argv, **kwargs)
+    finally:
+        evidence_path.unlink()
+        provenance_path.unlink()
+        evidence_backup.rename(evidence_path)
+        provenance_backup.rename(provenance_path)
+
+controller.run_bounded = swap_visible_outputs
+rejected = False
+try:
+    try:
+        controller.publish_evidence_then_provenance(
+            evidence_target,
+            provenance_target,
+            evidence_document,
+            invalid_provenance,
+            post_publish_verifier=publication_verifier,
+            expected_head="2" * 40,
+            expected_tree="3" * 40,
+            close_post_publish_verifier=True,
+        )
+    except controller.OracleError:
+        rejected = True
+finally:
+    controller.run_bounded = original_run_bounded
+    publication_verifier.close()
+    evidence_target.close()
+    provenance_target.close()
+
+assert attack_observed
+assert rejected, "visible replacement files bypassed the held-output publication gate"
+assert not evidence_path.exists()
+assert not provenance_path.exists()
+"#,
+        root = test_dir.path().to_string_lossy(),
+        verifier = env!("CARGO_BIN_EXE_kiwi-verify-oracle-evidence"),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn publication_binding_reads_sealed_output_snapshots_during_inode_rewrite_and_restore() {
+    let test_dir = TestDir::new("publication-binding-sealed-output-fds");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import copy
+import hashlib
+import json
+import pathlib
+
+root = pathlib.Path({root:?})
+evidence_path = root / "vector-differential-evidence.json"
+provenance_path = root / "oracle-provenance.json"
+evidence_document = {{"schema_version": "kiwi-vector-differential-evidence/v1"}}
+evidence_payload = controller.canonical_json_bytes(evidence_document)
+valid_provenance = json.loads(r'''{document}''')
+valid_provenance["differential_evidence"] = {{
+    "schema_version": "kiwi-vector-differential-evidence/v1",
+    "file_name": evidence_path.name,
+    "size_bytes": len(evidence_payload),
+    "sha256": hashlib.sha256(evidence_payload).hexdigest(),
+    "published_atomically": True,
+    "verified_after_publish": True,
+}}
+invalid_provenance = copy.deepcopy(valid_provenance)
+invalid_provenance["callback_input"]["expected_head"] = "4" * 40
+valid_payload = controller.canonical_json_bytes(valid_provenance)
+
+evidence_target = controller.CandidateTarget.open(evidence_path)
+provenance_target = controller.CandidateTarget.open(provenance_path)
+publication_verifier = controller.HeldExecutable.open(
+    "publication-verifier", pathlib.Path({verifier:?})
+)
+original_run_bounded = controller.run_bounded
+attack_observed = False
+
+def rewrite_published_inode(executable, argv, **kwargs):
+    global attack_observed
+    original_payload = provenance_path.read_bytes()
+    original_inode = provenance_path.stat().st_ino
+    assert len(valid_payload) == len(original_payload)
+    provenance_path.write_bytes(valid_payload)
+    assert provenance_path.stat().st_ino == original_inode
+    attack_observed = True
+    try:
+        return original_run_bounded(executable, argv, **kwargs)
+    finally:
+        provenance_path.write_bytes(original_payload)
+        assert provenance_path.stat().st_ino == original_inode
+
+controller.run_bounded = rewrite_published_inode
+rejected = False
+try:
+    try:
+        controller.publish_evidence_then_provenance(
+            evidence_target,
+            provenance_target,
+            evidence_document,
+            invalid_provenance,
+            post_publish_verifier=publication_verifier,
+            expected_head="2" * 40,
+            expected_tree="3" * 40,
+            close_post_publish_verifier=True,
+        )
+    except controller.OracleError:
+        rejected = True
+finally:
+    controller.run_bounded = original_run_bounded
+    publication_verifier.close()
+    evidence_target.close()
+    provenance_target.close()
+
+assert attack_observed
+assert rejected, "same-inode output rewrite/restore bypassed the publication gate"
+assert not evidence_path.exists()
+assert not provenance_path.exists()
+"#,
+        root = test_dir.path().to_string_lossy(),
+        verifier = env!("CARGO_BIN_EXE_kiwi-verify-oracle-evidence"),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn publication_binding_executes_a_sealed_verifier_snapshot() {
+    let test_dir = TestDir::new("publication-binding-sealed-verifier");
+    let fixture = canonical_provenance();
+    let body = format!(
+        r#"import copy
+import json
+import pathlib
+import shutil
+
+root = pathlib.Path({root:?})
+evidence_path = root / "vector-differential-evidence.json"
+provenance_path = root / "oracle-provenance.json"
+verifier_path = root / "kiwi-verify-oracle-evidence"
+shutil.copyfile(pathlib.Path({verifier:?}), verifier_path)
+verifier_path.chmod(0o700)
+original_verifier = verifier_path.read_bytes()
+original_mode = verifier_path.stat().st_mode & 0o777
+true_program = pathlib.Path("/bin/true").read_bytes()
+assert len(true_program) <= len(original_verifier)
+replacement_verifier = true_program + b"\0" * (len(original_verifier) - len(true_program))
+
+valid_provenance = json.loads(r'''{document}''')
+invalid_provenance = copy.deepcopy(valid_provenance)
+invalid_provenance["callback_input"]["expected_head"] = "4" * 40
+evidence_document = {{"schema_version": "kiwi-vector-differential-evidence/v1"}}
+evidence_target = controller.CandidateTarget.open(evidence_path)
+provenance_target = controller.CandidateTarget.open(provenance_path)
+publication_verifier = controller.HeldExecutable.open(
+    "publication-verifier", verifier_path
+)
+original_run_bounded = controller.run_bounded
+attack_observed = False
+
+def rewrite_verifier_inode(executable, argv, **kwargs):
+    global attack_observed
+    verifier_path.write_bytes(replacement_verifier)
+    verifier_path.chmod(original_mode)
+    attack_observed = True
+    try:
+        return original_run_bounded(executable, argv, **kwargs)
+    finally:
+        verifier_path.write_bytes(original_verifier)
+        verifier_path.chmod(original_mode)
+
+controller.run_bounded = rewrite_verifier_inode
+rejected = False
+try:
+    try:
+        controller.publish_evidence_then_provenance(
+            evidence_target,
+            provenance_target,
+            evidence_document,
+            invalid_provenance,
+            post_publish_verifier=publication_verifier,
+            expected_head="2" * 40,
+            expected_tree="3" * 40,
+            close_post_publish_verifier=True,
+        )
+    except controller.OracleError:
+        rejected = True
+finally:
+    controller.run_bounded = original_run_bounded
+    publication_verifier.close()
+    evidence_target.close()
+    provenance_target.close()
+
+assert attack_observed
+assert rejected, "same-inode rewrite/execute/restore bypassed the publication gate"
+assert not evidence_path.exists()
+assert not provenance_path.exists()
+"#,
+        root = test_dir.path().to_string_lossy(),
+        verifier = env!("CARGO_BIN_EXE_kiwi-verify-oracle-evidence"),
+        document = fixture,
+    );
+    assert_probe_succeeds(run_python_probe(&test_dir, &body));
+}
+
+#[test]
 fn rejects_non_exact_schema_source_and_recipe_identity() {
     for (path, value) in [
         (&["schema_version"][..], json!("kiwi-redis-oracle-build/v2")),
@@ -3302,6 +4323,1418 @@ fn rejects_missing_key_for_every_canonical_nested_field() {
 }
 
 #[test]
+fn oracle_provenance_v4_requires_frozen_callback_input_and_atomic_differential_evidence() {
+    parse_provenance(canonical_provenance());
+
+    for (path, value) in [
+        (
+            &["callback_input", "expected_head"][..],
+            json!("not-a-head"),
+        ),
+        (
+            &["callback_input", "actual_head"][..],
+            json!("1111111111111111111111111111111111111111"),
+        ),
+        (&["callback_input", "tree_oid"][..], json!("not-a-tree")),
+        (
+            &["callback_input", "input_manifest_sha256"][..],
+            json!("not-a-hash"),
+        ),
+        (&["callback_input", "kiwi_sha256"][..], json!("not-a-hash")),
+        (
+            &["callback_input", "required_jobs_helper_sha256"][..],
+            json!("not-a-hash"),
+        ),
+        (
+            &["callback_input", "frozen_from_git_objects"][..],
+            json!(false),
+        ),
+        (&["callback_input", "readonly_mount"][..], json!(false)),
+        (
+            &["callback_input", "revalidated_after_callback"][..],
+            json!(false),
+        ),
+        (
+            &["callback_input", "original_inputs_revalidated"][..],
+            json!(false),
+        ),
+        (
+            &["differential_evidence", "schema_version"][..],
+            json!("wrong-schema"),
+        ),
+        (
+            &["differential_evidence", "file_name"][..],
+            json!("../escape.json"),
+        ),
+        (&["differential_evidence", "size_bytes"][..], json!(0)),
+        (
+            &["differential_evidence", "sha256"][..],
+            json!("not-a-hash"),
+        ),
+        (
+            &["differential_evidence", "published_atomically"][..],
+            json!(false),
+        ),
+        (
+            &["differential_evidence", "verified_after_publish"][..],
+            json!(false),
+        ),
+    ] {
+        let mut mutant = canonical_provenance();
+        set_path(&mut mutant, path, value);
+        assert_provenance_rejected(mutant);
+    }
+
+    let mut oversized_evidence = canonical_provenance();
+    oversized_evidence["differential_evidence"]["size_bytes"] = json!(128_u64 * 1024 * 1024 + 1);
+    assert_provenance_rejected(oversized_evidence);
+
+    let mut uppercase_head = canonical_provenance();
+    uppercase_head["callback_input"]["expected_head"] =
+        json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    uppercase_head["callback_input"]["actual_head"] =
+        json!("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
+    assert_provenance_rejected(uppercase_head);
+}
+
+#[test]
+fn frozen_callback_controller_contract_is_wired() {
+    let controller = include_str!("../../../scripts/compat/oracle_controller.py");
+
+    for required in [
+        "kiwi-redis-oracle-provenance/v4",
+        "kiwi-vector-differential-evidence/v1",
+        "MAX_CALLBACK_INPUT_ENTRIES = 8192",
+        "MAX_CALLBACK_INPUT_FILE_BYTES = 512 * 1024 * 1024",
+        "MAX_CALLBACK_INPUT_TOTAL_BYTES = 1024 * 1024 * 1024",
+        "MAX_DIFFERENTIAL_EVIDENCE_BYTES = 128 * 1024 * 1024",
+        "def _validate_callback_repository(",
+        "def _materialize_callback_input(",
+        "def _revalidate_callback_input(",
+        "def _collect_differential_evidence(",
+        "def publish_evidence_then_provenance(",
+        "def _verify_published_binding(",
+        "PYTHONNOUSERSITE",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+        "--expected-head",
+        "--evidence-output",
+        "--publication-verifier",
+    ] {
+        assert!(
+            controller.contains(required),
+            "frozen callback controller is missing {required}"
+        );
+    }
+
+    let verify = controller
+        .find("def verify_oracle(")
+        .expect("controller must expose the final verifier");
+    let verifier = &controller[verify..];
+    let materialize = verifier
+        .find("callback_input_snapshot = _materialize_callback_input(")
+        .expect("controller must materialize frozen callback input");
+    let callback = verifier
+        .find("callback_document = _run_callback(")
+        .expect("controller must run the callback");
+    let collect = verifier
+        .find("differential_evidence_document = _collect_differential_evidence(")
+        .expect("controller must collect callback evidence");
+    let after_collect = &verifier[collect..];
+    let cleanup_frozen_revalidation = after_collect
+        .find("_revalidate_callback_input(")
+        .expect("controller must revalidate frozen and original inputs after evidence collection");
+    let temp_removal = after_collect
+        .find("cleanup(\"verifier temp root remove\"")
+        .expect("controller must remove the verifier temp root before publication");
+    let frozen_input_close = after_collect
+        .find("cleanup(\"callback input close after verifier removal\"")
+        .expect("controller must retain the frozen input descriptor through temp removal");
+    let cleanup_final_revalidation = after_collect
+        .find("callback_input_document = _finalize_callback_input_document(")
+        .expect("controller must build callback input evidence from cleanup-final revalidation");
+    let callback_repository_close = after_collect
+        .find("cleanup(\"callback repository close\"")
+        .expect("controller must close the callback repository after final revalidation");
+    let evidence_publish = verifier
+        .find("publish_evidence_then_provenance(")
+        .expect("controller must publish evidence transactionally");
+    assert!(materialize < callback);
+    assert!(callback < evidence_publish);
+    assert!(collect < evidence_publish);
+    assert!(cleanup_frozen_revalidation < temp_removal);
+    assert!(temp_removal < frozen_input_close);
+    assert!(temp_removal < cleanup_final_revalidation);
+    assert!(cleanup_final_revalidation < callback_repository_close);
+    assert!(collect + cleanup_final_revalidation < evidence_publish);
+}
+
+#[test]
+fn provenance_v4_controller_produces_callback_and_evidence_identity() {
+    let controller = include_str!("../../../scripts/compat/oracle_controller.py");
+    assert!(controller.contains("PROVENANCE_SCHEMA = \"kiwi-redis-oracle-provenance/v4\""));
+    assert!(controller.contains("\"callback_input\": callback_input_document"));
+    assert!(
+        controller.contains(
+            "final_provenance[\"differential_evidence\"] = differential_evidence_identity"
+        )
+    );
+    assert!(controller.contains("publish_evidence_then_provenance("));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn frozen_callback_json_contract_rejects_non_finite_values() {
+    let test_dir = TestDir::new("frozen-callback-non-finite-json");
+    let body = r##"
+for token in (b"NaN", b"Infinity", b"-Infinity"):
+    payload = b'{"value":' + token + b'}'
+    try:
+        controller._strict_json_bytes(payload, "strict input")
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError(f"strict JSON accepted {token!r}")
+
+    try:
+        controller._parse_json_lines(payload + b"\n", "JSONL evidence")
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError(f"JSONL evidence accepted {token!r}")
+
+for value in (float("nan"), float("inf"), float("-inf")):
+    try:
+        controller.canonical_json_bytes({"value": value})
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError(f"canonical JSON accepted non-finite value {value!r}")
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn provenance_v4_publication_rejects_non_finite_values_without_final_files() {
+    let test_dir = TestDir::new("provenance-v4-non-finite-publication");
+    let body = r##"
+import pathlib
+
+root = pathlib.Path(__file__).parent
+
+def provenance():
+    return {
+        "schema_version": "kiwi-redis-oracle-provenance/v4",
+        "primary": {
+            "started_at_utc": "2026-08-17T00:00:00Z",
+            "finished_at_utc": "2026-08-17T00:00:01Z",
+        },
+        "rebuild": {
+            "started_at_utc": "2026-08-17T00:00:01Z",
+            "finished_at_utc": "2026-08-17T00:00:02Z",
+        },
+        "callback": {
+            "started_at_utc": "2026-08-17T00:00:02Z",
+            "finished_at_utc": "2026-08-17T00:00:03Z",
+        },
+        "cleanup": {"completed_at_utc": "2026-08-17T00:00:04Z"},
+        "published_at_utc": "2026-08-17T00:00:05Z",
+    }
+
+for location in ("evidence", "provenance"):
+    for label, value in (("nan", float("nan")), ("infinity", float("inf")), ("negative-infinity", float("-inf"))):
+        case = root / f"{location}-{label}"
+        case.mkdir()
+        evidence_target = controller.CandidateTarget.open(case / "evidence.json")
+        provenance_target = controller.CandidateTarget.open(case / "provenance.json")
+        evidence = {
+            "schema_version": "kiwi-vector-differential-evidence/v1",
+            "value": value if location == "evidence" else 1,
+        }
+        document = provenance()
+        document["value"] = value if location == "provenance" else 1
+        try:
+            try:
+                controller.publish_evidence_then_provenance(
+                    evidence_target, provenance_target, evidence, document
+                )
+            except controller.OracleError:
+                pass
+            else:
+                raise AssertionError(f"{location} publication accepted {label}")
+        finally:
+            evidence_target.close()
+            provenance_target.close()
+        assert not (case / "evidence.json").exists()
+        assert not (case / "provenance.json").exists()
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn frozen_callback_input_enforces_bounds_before_reading_the_next_entry() {
+    let test_dir = TestDir::new("frozen-callback-bounds");
+    let body = r##"
+import os
+import pathlib
+import subprocess
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+home = root / "home"
+temporary = root / "tmp"
+for directory in (repository, home, temporary):
+    directory.mkdir()
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python" / "empty-a").mkdir(parents=True)
+(repository / "tracked-a").write_bytes(b"A")
+(repository / "tracked-b").write_bytes(b"B")
+(repository / "target" / "debug" / "kiwi").write_bytes(b"K")
+(repository / "target" / "debug" / "kiwi-required-vector-jobs").write_bytes(b"J")
+for executable in (
+    repository / "target" / "debug" / "kiwi",
+    repository / "target" / "debug" / "kiwi-required-vector-jobs",
+):
+    executable.chmod(0o755)
+subprocess.run(["/usr/bin/git", "-C", repository, "init", "-q"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.email", "oracle@example.invalid"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.name", "Oracle Test"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "add", "tracked-a", "tracked-b"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "commit", "-qm", "fixture"], check=True)
+expected_head = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", "HEAD"], text=True
+).strip()
+
+with controller.HeldDirectory.open(repository) as held_repository:
+    with controller.HeldExecutable.open("git", pathlib.Path("/usr/bin/git")) as git:
+        env = controller._sanitized_environment("/usr/bin:/bin", home, temporary)
+        identity = controller._validate_callback_repository(
+            held_repository, expected_head, git, env
+        )
+        assert len(identity.tracked_entries) == 2
+
+        exact_entries = controller.CallbackInputLimits(
+            max_entries=6,
+            max_file_bytes=16,
+            max_total_bytes=16,
+        )
+        exact_destination = root / "exact-entries"
+        exact_destination.mkdir()
+        with controller.HeldDirectory.open(exact_destination) as held_destination:
+            snapshot = controller._materialize_callback_input(
+                held_repository,
+                held_destination,
+                identity,
+                git,
+                env,
+                limits=exact_entries,
+            )
+        assert snapshot.manifest["entry_count"] == 4
+
+        (repository / ".oracle-python" / "empty-b").mkdir()
+        over_destination = root / "over-entries"
+        over_destination.mkdir()
+        python_root_identity = (repository / ".oracle-python").stat()
+        original_listdir = controller.os.listdir
+
+        def reject_unbounded_python_listdir(path):
+            if isinstance(path, int):
+                current = os.fstat(path)
+                if (
+                    current.st_dev == python_root_identity.st_dev
+                    and current.st_ino == python_root_identity.st_ino
+                ):
+                    raise AssertionError("runtime callback directory used unbounded listdir")
+            return original_listdir(path)
+
+        controller.os.listdir = reject_unbounded_python_listdir
+        try:
+            with controller.HeldDirectory.open(over_destination) as held_destination:
+                try:
+                    controller._materialize_callback_input(
+                        held_repository,
+                        held_destination,
+                        identity,
+                        git,
+                        env,
+                        limits=exact_entries,
+                    )
+                except controller.OracleError as error:
+                    assert "entry-count bound" in str(error)
+                else:
+                    raise AssertionError("limit+1 empty runtime directory was accepted")
+        finally:
+            controller.os.listdir = original_listdir
+        (repository / ".oracle-python" / "empty-b").rmdir()
+
+        tracked_limit = controller.CallbackInputLimits(
+            max_entries=16,
+            max_file_bytes=16,
+            max_total_bytes=1,
+        )
+        tracked_destination = root / "tracked-over-total"
+        tracked_destination.mkdir()
+        second_blob_oid = identity.tracked_entries[1][2]
+        second_blob = (
+            repository
+            / ".git"
+            / "objects"
+            / second_blob_oid[:2]
+            / second_blob_oid[2:]
+        )
+        second_blob.unlink()
+        with controller.HeldDirectory.open(tracked_destination) as held_destination:
+            try:
+                controller._materialize_callback_input(
+                    held_repository,
+                    held_destination,
+                    identity,
+                    git,
+                    env,
+                    limits=tracked_limit,
+                )
+            except controller.OracleError as error:
+                assert "aggregate byte bound" in str(error)
+            else:
+                raise AssertionError("tracked aggregate limit+1 was accepted")
+
+        (repository / ".oracle-python" / "a.py").write_bytes(b"P")
+        exact_runtime = controller.CallbackInputLimits(
+            max_entries=16,
+            max_file_bytes=2,
+            max_total_bytes=5,
+        )
+        entries = list(
+            controller._runtime_callback_entries(
+                held_repository,
+                limits=exact_runtime,
+                initial_entry_count=2,
+                initial_total_bytes=2,
+            )
+        )
+        assert [entry[0] for entry in entries] == [
+            "target/debug/kiwi",
+            "target/debug/kiwi-required-vector-jobs",
+            ".oracle-python/a.py",
+        ]
+
+        over_path = repository / ".oracle-python" / "z.py"
+        over_path.write_bytes(b"Z")
+        over_inode = over_path.stat().st_ino
+        original_read = controller.os.read
+        over_file_read = False
+
+        def reject_over_file_read(fd, size):
+            global over_file_read
+            if os.fstat(fd).st_ino == over_inode:
+                over_file_read = True
+            return original_read(fd, size)
+
+        controller.os.read = reject_over_file_read
+        try:
+            try:
+                list(
+                    controller._runtime_callback_entries(
+                        held_repository,
+                        limits=exact_runtime,
+                        initial_entry_count=2,
+                        initial_total_bytes=2,
+                    )
+                )
+            except controller.OracleError as error:
+                assert "aggregate byte bound" in str(error)
+            else:
+                raise AssertionError("runtime aggregate limit+1 was accepted")
+        finally:
+            controller.os.read = original_read
+        assert not over_file_read, "over-limit runtime file was read before rejection"
+
+        over_path.write_bytes(b"ZZZ")
+        per_file_limit = controller.CallbackInputLimits(
+            max_entries=16,
+            max_file_bytes=2,
+            max_total_bytes=32,
+        )
+        over_inode = over_path.stat().st_ino
+        over_file_read = False
+        controller.os.read = reject_over_file_read
+        try:
+            try:
+                list(
+                    controller._runtime_callback_entries(
+                        held_repository,
+                        limits=per_file_limit,
+                    )
+                )
+            except controller.OracleError as error:
+                assert "file byte bound" in str(error)
+            else:
+                raise AssertionError("per-file limit+1 was accepted")
+        finally:
+            controller.os.read = original_read
+        assert not over_file_read, "oversized runtime file was read before rejection"
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn frozen_callback_tree_oid_matches_expected_head_tree_under_valid_oid_mutant() {
+    let test_dir = TestDir::new("frozen-callback-tree-oid");
+    let body = r##"
+import pathlib
+import subprocess
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+home = root / "home"
+temporary = root / "tmp"
+destination = root / "frozen"
+for directory in (repository, home, temporary, destination):
+    directory.mkdir()
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python").mkdir()
+(repository / "tracked.txt").write_text("wrong tree\n", encoding="utf-8")
+subprocess.run(["/usr/bin/git", "-C", repository, "init", "-q"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.email", "oracle@example.invalid"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.name", "Oracle Test"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "add", "tracked.txt"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "commit", "-qm", "wrong-tree"], check=True)
+wrong_tree = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", "HEAD^{tree}"], text=True
+).strip()
+(repository / "tracked.txt").write_text("expected tree\n", encoding="utf-8")
+subprocess.run(["/usr/bin/git", "-C", repository, "add", "tracked.txt"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "commit", "-qm", "expected-tree"], check=True)
+expected_head = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", "HEAD"], text=True
+).strip()
+expected_tree = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", f"{expected_head}^{{tree}}"],
+    text=True,
+).strip()
+assert wrong_tree != expected_tree
+(repository / "target" / "debug" / "kiwi").write_bytes(b"kiwi")
+(repository / "target" / "debug" / "kiwi-required-vector-jobs").write_bytes(b"jobs")
+for executable in (
+    repository / "target" / "debug" / "kiwi",
+    repository / "target" / "debug" / "kiwi-required-vector-jobs",
+):
+    executable.chmod(0o755)
+
+with controller.HeldDirectory.open(repository) as held_repository:
+    with controller.HeldExecutable.open("git", pathlib.Path("/usr/bin/git")) as git:
+        env = controller._sanitized_environment("/usr/bin:/bin", home, temporary)
+        original_git_text = controller._callback_git_text
+
+        def wrong_tree_mutant(git_tool, source, arguments, command_env):
+            if arguments == ["rev-parse", f"{expected_head}^{{tree}}"]:
+                return wrong_tree
+            return original_git_text(git_tool, source, arguments, command_env)
+
+        controller._callback_git_text = wrong_tree_mutant
+        try:
+            try:
+                controller._validate_callback_repository(
+                    held_repository, expected_head, git, env
+                )
+            except controller.OracleError as error:
+                assert "tree OID differs from expected Head" in str(error)
+            else:
+                raise AssertionError("valid but wrong expected-Head tree OID was accepted")
+        finally:
+            controller._callback_git_text = original_git_text
+
+        identity = controller._validate_callback_repository(
+            held_repository, expected_head, git, env
+        )
+        with controller.HeldDirectory.open(destination) as held_destination:
+            snapshot = controller._materialize_callback_input(
+                held_repository, held_destination, identity, git, env
+            )
+        provenance_callback_input = dict(snapshot.document)
+        assert identity.tree_oid == expected_tree
+        assert snapshot.document["tree_oid"] == expected_tree
+        assert provenance_callback_input["tree_oid"] == expected_tree
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn frozen_callback_head_race_uses_expected_commit_bytes_or_fails_before_callback() {
+    let test_dir = TestDir::new("frozen-callback-head-race");
+    let body = r##"
+import pathlib
+import subprocess
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+destination = root / "frozen"
+home = root / "home"
+temporary = root / "tmp"
+for directory in (repository, destination, home, temporary):
+    directory.mkdir()
+(repository / "scripts").mkdir()
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python").mkdir()
+callback = repository / "scripts" / "callback.sh"
+expected_bytes = b"#!/bin/sh\nprintf 'expected-head-bytes\\n'\n"
+replacement_bytes = b"#!/bin/sh\nprintf 'replacement-head-bytes\\n'\n"
+callback.write_bytes(expected_bytes)
+callback.chmod(0o755)
+(repository / "target" / "debug" / "kiwi").write_bytes(b"kiwi-runtime")
+(repository / "target" / "debug" / "kiwi-required-vector-jobs").write_bytes(b"jobs-runtime")
+(repository / ".oracle-python" / "plugin.py").write_text("PLUGIN = 'frozen'\n", encoding="utf-8")
+for executable in (
+    repository / "target" / "debug" / "kiwi",
+    repository / "target" / "debug" / "kiwi-required-vector-jobs",
+):
+    executable.chmod(0o755)
+subprocess.run(["/usr/bin/git", "-C", repository, "init", "-q"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.email", "oracle@example.invalid"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.name", "Oracle Test"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "add", "scripts/callback.sh"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "commit", "-qm", "expected"], check=True)
+expected_head = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", "HEAD"], text=True
+).strip()
+callback.write_bytes(replacement_bytes)
+subprocess.run(["/usr/bin/git", "-C", repository, "add", "scripts/callback.sh"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "commit", "-qm", "replacement"], check=True)
+replacement_head = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", "HEAD"], text=True
+).strip()
+subprocess.run(["/usr/bin/git", "-C", repository, "update-ref", "HEAD", expected_head], check=True)
+callback.write_bytes(expected_bytes)
+
+original_git_text = controller._callback_git_text
+state = {"switched": False}
+
+def race_git_text(git, source, arguments, env):
+    result = original_git_text(git, source, arguments, env)
+    if arguments == ["rev-parse", "HEAD^{commit}"] and not state["switched"]:
+        state["switched"] = True
+        subprocess.run(
+            ["/usr/bin/git", "-C", repository, "update-ref", "HEAD", replacement_head],
+            check=True,
+        )
+        callback.write_bytes(replacement_bytes)
+    return result
+
+callback_marker = root / "callback-invoked"
+controller._callback_git_text = race_git_text
+try:
+    with controller.HeldDirectory.open(repository) as held_repository:
+        with controller.HeldDirectory.open(destination) as held_destination:
+            with controller.HeldExecutable.open("git", pathlib.Path("/usr/bin/git")) as git:
+                env = controller._sanitized_environment("/usr/bin:/bin", home, temporary)
+                try:
+                    identity = controller._validate_callback_repository(
+                        held_repository, expected_head, git, env
+                    )
+                    controller._materialize_callback_input(
+                        held_repository, held_destination, identity, git, env
+                    )
+                except controller.OracleError as error:
+                    if "HEAD changed while validating callback input" not in str(error):
+                        raise AssertionError(
+                            f"HEAD race failed for an unrelated reason: {error}"
+                        ) from error
+                    assert not callback_marker.exists()
+                else:
+                    frozen = destination / "scripts" / "callback.sh"
+                    observed = subprocess.check_output(["/bin/sh", frozen], text=True)
+                    if observed != "expected-head-bytes\n":
+                        raise AssertionError(
+                            f"callback consumed bytes outside expected Head {expected_head}: {observed!r}"
+                        )
+                    callback_marker.write_text("invoked\n", encoding="utf-8")
+                    assert callback_marker.read_text(encoding="utf-8") == "invoked\n"
+finally:
+    controller._callback_git_text = original_git_text
+assert state["switched"]
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn frozen_callback_cleanup_final_revalidation_blocks_late_original_input_drift() {
+    let test_dir = TestDir::new("frozen-callback-cleanup-final-revalidation");
+    let body = r##"
+import os
+import pathlib
+import subprocess
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+home = root / "home"
+temporary = root / "tmp"
+for directory in (repository, home, temporary):
+    directory.mkdir()
+(repository / "scripts").mkdir()
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python").mkdir()
+fixtures = {
+    "scripts/callback.sh": b"#!/bin/sh\nprintf 'tracked-callback\\n'\n",
+    "target/debug/kiwi": b"kiwi-runtime",
+    "target/debug/kiwi-required-vector-jobs": b"jobs-runtime",
+    ".oracle-python/plugin.py": b"PLUGIN = 'frozen'\n",
+}
+for relative, payload in fixtures.items():
+    path = repository / relative
+    path.write_bytes(payload)
+for relative in (
+    "scripts/callback.sh",
+    "target/debug/kiwi",
+    "target/debug/kiwi-required-vector-jobs",
+):
+    (repository / relative).chmod(0o755)
+subprocess.run(["/usr/bin/git", "-C", repository, "init", "-q"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.email", "oracle@example.invalid"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "config", "user.name", "Oracle Test"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "add", "scripts/callback.sh"], check=True)
+subprocess.run(["/usr/bin/git", "-C", repository, "commit", "-qm", "fixture"], check=True)
+expected_head = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", "HEAD"], text=True
+).strip()
+
+provenance = {
+    "schema_version": "kiwi-redis-oracle-provenance/v4",
+    "primary": {
+        "started_at_utc": "2026-08-17T00:00:00Z",
+        "finished_at_utc": "2026-08-17T00:00:01Z",
+    },
+    "rebuild": {
+        "started_at_utc": "2026-08-17T00:00:01Z",
+        "finished_at_utc": "2026-08-17T00:00:02Z",
+    },
+    "callback": {
+        "started_at_utc": "2026-08-17T00:00:02Z",
+        "finished_at_utc": "2026-08-17T00:00:03Z",
+    },
+    "cleanup": {"completed_at_utc": "2026-08-17T00:00:04Z"},
+    "published_at_utc": "2026-08-17T00:00:05Z",
+}
+
+covered = set()
+with controller.HeldDirectory.open(repository) as held_repository:
+    with controller.HeldExecutable.open("git", pathlib.Path("/usr/bin/git")) as git:
+        env = controller._sanitized_environment("/usr/bin:/bin", home, temporary)
+        for relative, original_bytes in fixtures.items():
+            original_path = repository / relative
+            original_mode = original_path.stat().st_mode & 0o777
+            for mutation in ("same-inode-rewrite", "inode-replacement"):
+                case_name = relative.replace("/", "-") + "-" + mutation
+                case_root = root / case_name
+                frozen_root = case_root / "frozen"
+                frozen_root.mkdir(parents=True)
+                evidence_path = case_root / "evidence.json"
+                provenance_path = case_root / "provenance.json"
+                try:
+                    with controller.HeldDirectory.open(frozen_root) as held_frozen:
+                        identity = controller._validate_callback_repository(
+                            held_repository, expected_head, git, env
+                        )
+                        snapshot = controller._materialize_callback_input(
+                            held_repository, held_frozen, identity, git, env
+                        )
+                        controller._revalidate_callback_input(
+                            snapshot, held_repository, git, env
+                        )
+                        frozen_bytes = (frozen_root / relative).read_bytes()
+                        assert frozen_bytes == original_bytes
+
+                        before_inode = original_path.stat().st_ino
+                        replacement_bytes = (
+                            b"S" if mutation == "same-inode-rewrite" else b"I"
+                        ) * len(original_bytes)
+                        if mutation == "same-inode-rewrite":
+                            with original_path.open("r+b") as mutable:
+                                mutable.write(replacement_bytes)
+                                mutable.truncate()
+                                mutable.flush()
+                                os.fsync(mutable.fileno())
+                            assert original_path.stat().st_ino == before_inode
+                        else:
+                            replacement = original_path.with_name(
+                                original_path.name + ".replacement"
+                            )
+                            replacement.write_bytes(replacement_bytes)
+                            replacement.chmod(original_mode)
+                            os.replace(replacement, original_path)
+                            assert original_path.stat().st_ino != before_inode
+                        assert (frozen_root / relative).read_bytes() == frozen_bytes
+
+                        evidence_target = controller.CandidateTarget.open(evidence_path)
+                        provenance_target = controller.CandidateTarget.open(provenance_path)
+                        try:
+                            try:
+                                callback_input_document = (
+                                    controller._finalize_callback_input_document(
+                                        snapshot, held_repository, git, env
+                                    )
+                                )
+                                final_provenance = dict(provenance)
+                                final_provenance["callback_input"] = callback_input_document
+                                controller.publish_evidence_then_provenance(
+                                    evidence_target,
+                                    provenance_target,
+                                    {
+                                        "schema_version": "kiwi-vector-differential-evidence/v1",
+                                        "case": case_name,
+                                    },
+                                    final_provenance,
+                                )
+                            except controller.OracleError as error:
+                                expected_error = (
+                                    "Kiwi checkout has tracked changes"
+                                    if relative == "scripts/callback.sh"
+                                    else "original callback runtime inputs changed"
+                                )
+                                if expected_error not in str(error):
+                                    raise AssertionError(
+                                        f"late {relative} {mutation} drift failed for "
+                                        f"an unrelated reason: {error}"
+                                    ) from error
+                        finally:
+                            evidence_target.close()
+                            provenance_target.close()
+
+                        if evidence_path.exists() or provenance_path.exists():
+                            raise AssertionError(
+                                f"late {relative} {mutation} drift reached publication: "
+                                f"evidence={evidence_path.exists()} provenance={provenance_path.exists()}"
+                            )
+                        covered.add(f"{relative}:{mutation}")
+                finally:
+                    original_path.write_bytes(original_bytes)
+                    original_path.chmod(original_mode)
+
+assert covered == {
+    f"{relative}:{mutation}"
+    for relative in fixtures
+    for mutation in ("same-inode-rewrite", "inode-replacement")
+}
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn provenance_v4_evidence_allowlist_rejects_git_and_nested_artifacts() {
+    let test_dir = TestDir::new("provenance-v4-evidence-artifacts");
+    let body = r##"
+import pathlib
+
+root = pathlib.Path(__file__).parent
+for index, relative in enumerate((".git", ".git/config", "nested/artifact")):
+    work = root / f"work-{index}"
+    work.mkdir()
+    artifact = work / relative
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text("unexpected", encoding="utf-8")
+    with controller.HeldDirectory.open(work) as held_work:
+        try:
+            controller._collect_differential_evidence(
+                held_work, -1, None, {}, {}, []
+            )
+        except controller.OracleError as error:
+            if relative not in str(error):
+                raise AssertionError(
+                    f"evidence allowlist hid {relative!r} instead of reporting it: {error}"
+                )
+        else:
+            raise AssertionError(f"evidence allowlist accepted {relative!r}")
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn frozen_callback_executes_head_object_bytes_and_rejects_original_drift() {
+    let test_dir = TestDir::new("frozen-callback");
+    let body = r##"
+import os
+import pathlib
+import subprocess
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+destination = root / "frozen"
+home = root / "home"
+temporary = root / "tmp"
+repository.mkdir()
+destination.mkdir()
+home.mkdir()
+temporary.mkdir()
+(repository / "scripts").mkdir()
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python").mkdir()
+(repository / "scripts" / "callback.sh").write_text(
+    "#!/bin/sh\nprintf 'HEAD-object-bytes\\n'\n", encoding="utf-8"
+)
+(repository / "tracked.txt").write_text("tracked-from-head\n", encoding="utf-8")
+(repository / "target" / "debug" / "kiwi").write_bytes(b"kiwi-runtime")
+(repository / "target" / "debug" / "kiwi-required-vector-jobs").write_bytes(b"jobs-runtime")
+(repository / ".oracle-python" / "plugin.py").write_text(
+    "PLUGIN = 'frozen'\n", encoding="utf-8"
+)
+for executable in (
+    repository / "scripts" / "callback.sh",
+    repository / "target" / "debug" / "kiwi",
+    repository / "target" / "debug" / "kiwi-required-vector-jobs",
+):
+    executable.chmod(0o755)
+subprocess.run(["/usr/bin/git", "-C", repository, "init", "-q"], check=True)
+subprocess.run(
+    ["/usr/bin/git", "-C", repository, "config", "user.email", "oracle@example.invalid"],
+    check=True,
+)
+subprocess.run(
+    ["/usr/bin/git", "-C", repository, "config", "user.name", "Oracle Test"],
+    check=True,
+)
+subprocess.run(
+    ["/usr/bin/git", "-C", repository, "add", "scripts/callback.sh", "tracked.txt"],
+    check=True,
+)
+subprocess.run(["/usr/bin/git", "-C", repository, "commit", "-qm", "fixture"], check=True)
+expected_head = subprocess.check_output(
+    ["/usr/bin/git", "-C", repository, "rev-parse", "HEAD"], text=True
+).strip()
+
+with controller.HeldDirectory.open(repository) as held_repository:
+    with controller.HeldDirectory.open(destination) as held_destination:
+        with controller.HeldExecutable.open("git", pathlib.Path("/usr/bin/git")) as git:
+            env = controller._sanitized_environment("/usr/bin:/bin", home, temporary)
+            identity = controller._validate_callback_repository(
+                held_repository, expected_head, git, env
+            )
+            snapshot = controller._materialize_callback_input(
+                held_repository, held_destination, identity, git, env
+            )
+            (repository / "scripts" / "callback.sh").write_text(
+                "#!/bin/sh\nprintf 'host-replacement\\n'\n", encoding="utf-8"
+            )
+            observed = subprocess.check_output(
+                ["/bin/sh", destination / "scripts" / "callback.sh"], text=True
+            )
+            assert observed == "HEAD-object-bytes\n"
+            try:
+                controller._revalidate_callback_input(snapshot, held_repository, git, env)
+            except controller.OracleError:
+                pass
+            else:
+                raise AssertionError("tracked original-input drift was accepted")
+
+            (repository / "scripts" / "callback.sh").write_text(
+                "#!/bin/sh\nprintf 'HEAD-object-bytes\\n'\n", encoding="utf-8"
+            )
+            (repository / ".oracle-python" / "plugin.py").write_text(
+                "PLUGIN = 'host replacement'\n", encoding="utf-8"
+            )
+            try:
+                controller._revalidate_callback_input(snapshot, held_repository, git, env)
+            except controller.OracleError:
+                pass
+            else:
+                raise AssertionError("runtime dependency drift was accepted")
+            (repository / ".oracle-python" / "plugin.py").write_text(
+                "PLUGIN = 'frozen'\n", encoding="utf-8"
+            )
+
+            covered_runtime_mutations = set()
+            for relative in (
+                "target/debug/kiwi",
+                "target/debug/kiwi-required-vector-jobs",
+            ):
+                source_path = repository / relative
+                original_bytes = source_path.read_bytes()
+                original_mode = source_path.stat().st_mode & 0o777
+                for mutation in ("same-inode-rewrite", "inode-replacement"):
+                    case_name = relative.replace("/", "-") + "-" + mutation
+                    case_root = root / case_name
+                    frozen_root = case_root / "frozen"
+                    frozen_root.mkdir(parents=True)
+                    evidence_final = case_root / "evidence.json"
+                    provenance_final = case_root / "provenance.json"
+                    try:
+                        with controller.HeldDirectory.open(frozen_root) as held_frozen:
+                            case_identity = controller._validate_callback_repository(
+                                held_repository, expected_head, git, env
+                            )
+                            case_snapshot = controller._materialize_callback_input(
+                                held_repository, held_frozen, case_identity, git, env
+                            )
+                            frozen_path = frozen_root / relative
+                            assert frozen_path.read_bytes() == original_bytes
+                            before_inode = source_path.stat().st_ino
+                            replacement_bytes = (
+                                b"R" if mutation == "same-inode-rewrite" else b"P"
+                            ) * len(original_bytes)
+                            if mutation == "same-inode-rewrite":
+                                with source_path.open("r+b") as mutable:
+                                    mutable.write(replacement_bytes)
+                                    mutable.truncate()
+                                    mutable.flush()
+                                    os.fsync(mutable.fileno())
+                                assert source_path.stat().st_ino == before_inode
+                            else:
+                                replacement = source_path.with_name(source_path.name + ".replacement")
+                                replacement.write_bytes(replacement_bytes)
+                                replacement.chmod(original_mode)
+                                os.replace(replacement, source_path)
+                                assert source_path.stat().st_ino != before_inode
+
+                            assert frozen_path.read_bytes() == original_bytes
+                            evidence_target = controller.CandidateTarget.open(evidence_final)
+                            provenance_target = controller.CandidateTarget.open(provenance_final)
+                            try:
+                                try:
+                                    controller._revalidate_callback_input(
+                                        case_snapshot, held_repository, git, env
+                                    )
+                                except controller.OracleError:
+                                    pass
+                                else:
+                                    controller.publish_evidence_then_provenance(
+                                        evidence_target,
+                                        provenance_target,
+                                        {
+                                            "schema_version": "kiwi-vector-differential-evidence/v1",
+                                            "case": case_name,
+                                        },
+                                        {
+                                            "schema_version": "kiwi-redis-oracle-provenance/v4",
+                                            "primary": {
+                                                "started_at_utc": "2026-08-17T00:00:00Z",
+                                                "finished_at_utc": "2026-08-17T00:00:01Z",
+                                            },
+                                            "rebuild": {
+                                                "started_at_utc": "2026-08-17T00:00:01Z",
+                                                "finished_at_utc": "2026-08-17T00:00:02Z",
+                                            },
+                                            "callback": {
+                                                "started_at_utc": "2026-08-17T00:00:02Z",
+                                                "finished_at_utc": "2026-08-17T00:00:03Z",
+                                            },
+                                            "cleanup": {
+                                                "completed_at_utc": "2026-08-17T00:00:04Z"
+                                            },
+                                            "published_at_utc": "2026-08-17T00:00:05Z",
+                                        },
+                                    )
+                                    raise AssertionError(
+                                        f"{relative} {mutation} reached publication"
+                                    )
+                            finally:
+                                evidence_target.close()
+                                provenance_target.close()
+                            assert not evidence_final.exists()
+                            assert not provenance_final.exists()
+                            covered_runtime_mutations.add(f"{relative}:{mutation}")
+                    finally:
+                        source_path.write_bytes(original_bytes)
+                        source_path.chmod(original_mode)
+
+            assert covered_runtime_mutations == {
+                "target/debug/kiwi:same-inode-rewrite",
+                "target/debug/kiwi:inode-replacement",
+                "target/debug/kiwi-required-vector-jobs:same-inode-rewrite",
+                "target/debug/kiwi-required-vector-jobs:inode-replacement",
+            }
+
+            (repository / "target" / "debug" / "kiwi-required-vector-jobs").unlink()
+            os.link(
+                repository / "target" / "debug" / "kiwi",
+                repository / "target" / "debug" / "kiwi-required-vector-jobs",
+            )
+            try:
+                list(controller._runtime_callback_entries(held_repository))
+            except controller.OracleError:
+                pass
+            else:
+                raise AssertionError("runtime hard-link relationship was accepted")
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn provenance_v4_publication_close_faults_roll_back_both_final_files() {
+    let test_dir = TestDir::new("provenance-v4-publication-close");
+    let body = r##"
+import pathlib
+
+root = pathlib.Path(__file__).parent
+evidence_document = {
+    "schema_version": "kiwi-vector-differential-evidence/v1",
+    "payload": "evidence",
+}
+provenance_document = {
+    "schema_version": "kiwi-redis-oracle-provenance/v4",
+    "primary": {
+        "started_at_utc": "2026-08-17T00:00:00Z",
+        "finished_at_utc": "2026-08-17T00:00:01Z",
+    },
+    "rebuild": {
+        "started_at_utc": "2026-08-17T00:00:01Z",
+        "finished_at_utc": "2026-08-17T00:00:02Z",
+    },
+    "callback": {
+        "started_at_utc": "2026-08-17T00:00:02Z",
+        "finished_at_utc": "2026-08-17T00:00:03Z",
+    },
+    "cleanup": {"completed_at_utc": "2026-08-17T00:00:04Z"},
+    "published_at_utc": "2026-08-17T00:00:05Z",
+}
+
+def targets(case):
+    directory = root / case
+    evidence_parent = directory / "evidence-parent"
+    provenance_parent = directory / "provenance-parent"
+    evidence_parent.mkdir(parents=True)
+    provenance_parent.mkdir()
+    return (
+        controller.CandidateTarget.open(evidence_parent / "evidence.json"),
+        controller.CandidateTarget.open(provenance_parent / "provenance.json"),
+    )
+
+def assert_clean(case, evidence_target, provenance_target):
+    assert not evidence_target.path.exists(), case
+    assert not provenance_target.path.exists(), case
+    assert not list(evidence_target.path.parent.glob(".*.evidence-*")), case
+    assert not list(provenance_target.path.parent.glob(".*.provenance-*")), case
+
+evidence_target, provenance_target = targets("published-output-fd")
+original_open = controller.os.open
+original_close = controller.os.close
+published_output_fds = {}
+injected = False
+
+def track_published_output_open(path, flags, mode=0o777, *, dir_fd=None):
+    fd = original_open(path, flags, mode, dir_fd=dir_fd)
+    if (
+        path in {"evidence.json", "provenance.json"}
+        and path not in published_output_fds
+    ):
+        published_output_fds[path] = fd
+    return fd
+
+def fail_published_output_close(fd):
+    global injected
+    if fd in published_output_fds.values() and not injected:
+        injected = True
+        raise OSError(5, "injected PublishedOutput.fd close failure")
+    return original_close(fd)
+
+controller.os.open = track_published_output_open
+controller.os.close = fail_published_output_close
+try:
+    try:
+        controller.publish_evidence_then_provenance(
+            evidence_target,
+            provenance_target,
+            evidence_document,
+            provenance_document,
+            close_targets=True,
+        )
+    except (controller.OracleError, OSError):
+        pass
+    else:
+        raise AssertionError("PublishedOutput.fd close failure was accepted")
+finally:
+    controller.os.open = original_open
+    controller.os.close = original_close
+    for fd in published_output_fds.values():
+        try:
+            original_close(fd)
+        except OSError:
+            pass
+    evidence_target.close()
+    provenance_target.close()
+assert injected, "PublishedOutput.fd close fault was not reached"
+assert_clean("published-output-fd", evidence_target, provenance_target)
+
+rollback_parent_survivors = []
+for failed_basename in ("evidence.json", "provenance.json"):
+    case = "candidate-" + failed_basename.removesuffix(".json") + "-parent-fd"
+    evidence_target, provenance_target = targets(case)
+    original_close = controller.os.close
+    failed_parent_fd = (
+        evidence_target.parent.fd
+        if failed_basename == "evidence.json"
+        else provenance_target.parent.fd
+    )
+    injected = False
+
+    def fail_candidate_parent_close(fd):
+        global injected
+        if fd == failed_parent_fd and not injected:
+            injected = True
+            raise OSError(5, f"injected {failed_basename} parent FD close failure")
+        return original_close(fd)
+
+    controller.os.close = fail_candidate_parent_close
+    try:
+        try:
+            controller.publish_evidence_then_provenance(
+                evidence_target,
+                provenance_target,
+                evidence_document,
+                provenance_document,
+                close_targets=True,
+            )
+        except (controller.OracleError, OSError):
+            pass
+        else:
+            raise AssertionError(f"{failed_basename} parent close failure was accepted")
+    finally:
+        controller.os.close = original_close
+        evidence_target.close()
+        provenance_target.close()
+    assert injected, f"{failed_basename} parent close fault was not reached"
+    assert_clean(case, evidence_target, provenance_target)
+
+for failed_basename in ("evidence.json", "provenance.json"):
+    case = "rollback-" + failed_basename.removesuffix(".json") + "-parent-fd"
+    evidence_target, provenance_target = targets(case)
+    original_dup = controller.os.dup
+    original_close = controller.os.close
+    parent_names = {
+        evidence_target.parent.fd: "evidence.json",
+        provenance_target.parent.fd: "provenance.json",
+    }
+    rollback_parent_fds = {}
+    injected = False
+
+    def track_rollback_parent(fd):
+        duplicate = original_dup(fd)
+        rollback_parent_fds[parent_names[fd]] = duplicate
+        return duplicate
+
+    def fail_rollback_parent_close(fd):
+        global injected
+        if fd == rollback_parent_fds.get(failed_basename) and not injected:
+            injected = True
+            raise OSError(5, f"injected {failed_basename} rollback-parent close failure")
+        return original_close(fd)
+
+    controller.os.dup = track_rollback_parent
+    controller.os.close = fail_rollback_parent_close
+    try:
+        try:
+            controller.publish_evidence_then_provenance(
+                evidence_target,
+                provenance_target,
+                evidence_document,
+                provenance_document,
+                close_targets=True,
+            )
+        except (controller.OracleError, OSError):
+            pass
+        else:
+            raise AssertionError(
+                f"{failed_basename} rollback-parent close failure was accepted"
+            )
+    finally:
+        controller.os.dup = original_dup
+        controller.os.close = original_close
+        for fd in rollback_parent_fds.values():
+            try:
+                original_close(fd)
+            except OSError:
+                pass
+        evidence_target.close()
+        provenance_target.close()
+    assert injected, f"{failed_basename} rollback-parent close fault was not reached"
+    if evidence_target.path.exists() or provenance_target.path.exists():
+        rollback_parent_survivors.append(failed_basename)
+    assert not list(evidence_target.path.parent.glob(".*.evidence-*")), case
+    assert not list(provenance_target.path.parent.glob(".*.provenance-*")), case
+    for final_path in (evidence_target.path, provenance_target.path):
+        if final_path.exists():
+            final_path.unlink()
+assert not rollback_parent_survivors, rollback_parent_survivors
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn provenance_v4_publication_faults_roll_back_both_final_files() {
+    let test_dir = TestDir::new("provenance-v4-publication");
+    let body = r##"
+import hashlib
+import json
+import os
+import pathlib
+
+root = pathlib.Path(__file__).parent
+evidence_document = {
+    "schema_version": "kiwi-vector-differential-evidence/v1",
+    "payload": "evidence",
+}
+provenance_document = {
+    "schema_version": "kiwi-redis-oracle-provenance/v4",
+    "primary": {
+        "started_at_utc": "2026-08-17T00:00:00Z",
+        "finished_at_utc": "2026-08-17T00:00:01Z",
+    },
+    "rebuild": {
+        "started_at_utc": "2026-08-17T00:00:01Z",
+        "finished_at_utc": "2026-08-17T00:00:02Z",
+    },
+    "callback": {
+        "started_at_utc": "2026-08-17T00:00:02Z",
+        "finished_at_utc": "2026-08-17T00:00:03Z",
+    },
+    "cleanup": {"completed_at_utc": "2026-08-17T00:00:04Z"},
+    "published_at_utc": "2026-08-17T00:00:05Z",
+}
+
+def targets(case, distinct_parents=False):
+    directory = root / case
+    directory.mkdir()
+    evidence_parent = directory
+    provenance_parent = directory
+    if distinct_parents:
+        evidence_parent = directory / "evidence-parent"
+        provenance_parent = directory / "provenance-parent"
+        evidence_parent.mkdir()
+        provenance_parent.mkdir()
+    return (
+        controller.CandidateTarget.open(evidence_parent / "evidence.json"),
+        controller.CandidateTarget.open(provenance_parent / "provenance.json"),
+    )
+
+evidence_target, provenance_target = targets("success")
+try:
+    identity = controller.publish_evidence_then_provenance(
+        evidence_target, provenance_target, evidence_document, provenance_document
+    )
+    evidence = evidence_target.path.read_bytes()
+    provenance = json.loads(provenance_target.path.read_text(encoding="utf-8"))
+    assert identity["size_bytes"] == len(evidence)
+    assert identity["sha256"] == hashlib.sha256(evidence).hexdigest()
+    assert provenance["differential_evidence"] == identity
+finally:
+    evidence_target.close()
+    provenance_target.close()
+
+def run_fault(case, kind, fail_at, distinct_parents=False):
+    evidence_target, provenance_target = targets(case, distinct_parents)
+    evidence_path = evidence_target.path
+    provenance_path = provenance_target.path
+    original_open = controller.os.open
+    original_write = controller.os.write
+    original_fsync = controller.os.fsync
+    original_rename = controller._rename_noreplace
+    calls = {"write": 0, "fsync": 0, "rename": 0, "verify": 0}
+    final_open_counts = {}
+
+    def fail(name):
+        calls[name] += 1
+        if name == kind and calls[name] == fail_at:
+            raise OSError(5, f"injected {name} failure")
+
+    def write(fd, payload):
+        fail("write")
+        return original_write(fd, payload)
+
+    def fsync(fd):
+        fail("fsync")
+        return original_fsync(fd)
+
+    def open_file(path, flags, mode=0o777, *, dir_fd=None):
+        if (
+            path in {"evidence.json", "provenance.json"}
+            and flags & os.O_ACCMODE == os.O_RDONLY
+        ):
+            final_open_counts[path] = final_open_counts.get(path, 0) + 1
+            if final_open_counts[path] == 2:
+                fail("verify")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    def rename(directory_fd, source, target):
+        fail("rename")
+        return original_rename(directory_fd, source, target)
+
+    controller.os.open = open_file
+    controller.os.write = write
+    controller.os.fsync = fsync
+    controller._rename_noreplace = rename
+    try:
+        try:
+            controller.publish_evidence_then_provenance(
+                evidence_target, provenance_target, evidence_document, provenance_document
+            )
+        except (controller.OracleError, OSError):
+            pass
+        else:
+            raise AssertionError(f"{case} fault was accepted")
+    finally:
+        controller.os.open = original_open
+        controller.os.write = original_write
+        controller.os.fsync = original_fsync
+        controller._rename_noreplace = original_rename
+        evidence_target.close()
+        provenance_target.close()
+    assert not evidence_path.exists(), case
+    assert not provenance_path.exists(), case
+
+for case, kind, fail_at in (
+    ("evidence-write", "write", 1),
+    ("evidence-file-fsync", "fsync", 1),
+    ("evidence-rename", "rename", 1),
+    ("evidence-parent-fsync", "fsync", 2),
+    ("provenance-write", "write", 2),
+    ("provenance-file-fsync", "fsync", 3),
+    ("provenance-parent-fsync", "fsync", 4),
+    ("provenance-rename", "rename", 2),
+    ("post-evidence-rehash", "verify", 1),
+    ("post-provenance-rehash", "verify", 2),
+    ("final-transaction-parent-fsync", "fsync", 5),
+):
+    run_fault(case, kind, fail_at)
+
+for case, fail_at in (
+    ("distinct-provenance-parent-fsync", 4),
+    ("distinct-final-evidence-parent-fsync", 5),
+    ("distinct-final-provenance-parent-fsync", 6),
+):
+    run_fault(case, "fsync", fail_at, distinct_parents=True)
+
+original_limit = controller.MAX_DIFFERENTIAL_EVIDENCE_BYTES
+controller.MAX_DIFFERENTIAL_EVIDENCE_BYTES = 32
+evidence_target, provenance_target = targets("oversized-evidence")
+try:
+    try:
+        controller.publish_evidence_then_provenance(
+            evidence_target,
+            provenance_target,
+            {"schema_version": "kiwi-vector-differential-evidence/v1", "pad": "x" * 64},
+            provenance_document,
+        )
+    except controller.OracleError:
+        pass
+    else:
+        raise AssertionError("oversized evidence was accepted")
+finally:
+    controller.MAX_DIFFERENTIAL_EVIDENCE_BYTES = original_limit
+    evidence_target.close()
+    provenance_target.close()
+assert not (root / "oversized-evidence" / "evidence.json").exists()
+assert not (root / "oversized-evidence" / "provenance.json").exists()
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
 fn accepts_symlink_resolution_at_the_eight_hop_limit() {
     let mut fixture = canonical_build("primary");
     let mut artifacts = Vec::new();
@@ -3356,6 +5789,27 @@ fn canonical_provenance() -> Value {
             "timed_out": false,
             "output_truncated": false,
             "process_group_reaped": true
+        },
+        "callback_input": {
+            "expected_head": "2222222222222222222222222222222222222222",
+            "actual_head": "2222222222222222222222222222222222222222",
+            "tree_oid": "3333333333333333333333333333333333333333",
+            "ref_context": "refs/pull/422/head",
+            "input_manifest_sha256": TOOL_SHA,
+            "kiwi_sha256": CLI_SHA,
+            "required_jobs_helper_sha256": REDIS_SHA,
+            "frozen_from_git_objects": true,
+            "readonly_mount": true,
+            "revalidated_after_callback": true,
+            "original_inputs_revalidated": true
+        },
+        "differential_evidence": {
+            "schema_version": "kiwi-vector-differential-evidence/v1",
+            "file_name": "vector-differential-evidence.json",
+            "size_bytes": 4096,
+            "sha256": TOOL_SHA,
+            "published_atomically": true,
+            "verified_after_publish": true
         },
         "cleanup": {
             "redis_process_reaped": true,
