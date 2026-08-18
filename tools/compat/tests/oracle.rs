@@ -1213,6 +1213,46 @@ with controller.HeldDirectory.open(repository) as held_repository:
 
 #[test]
 #[cfg(target_os = "linux")]
+fn callback_runtime_fifo_replacement_fails_without_blocking() {
+    let test_dir = TestDir::new("callback-runtime-fifo");
+    let body = r##"
+import os
+import pathlib
+import signal
+import time
+
+root = pathlib.Path(__file__).parent
+repository = root / "repository"
+(repository / "target" / "debug").mkdir(parents=True)
+(repository / ".oracle-python").mkdir()
+os.mkfifo(repository / "target" / "debug" / "kiwi")
+helper = repository / "target" / "debug" / "kiwi-required-vector-jobs"
+helper.write_bytes(b"jobs-runtime")
+helper.chmod(0o755)
+
+def reject_block(_signum, _frame):
+    raise AssertionError("runtime FIFO open blocked")
+
+signal.signal(signal.SIGALRM, reject_block)
+signal.alarm(2)
+started = time.monotonic()
+try:
+    with controller.HeldDirectory.open(repository) as held_repository:
+        try:
+            list(controller._runtime_callback_entries(held_repository))
+        except controller.OracleError:
+            pass
+        else:
+            raise AssertionError("runtime FIFO was accepted")
+finally:
+    signal.alarm(0)
+assert time.monotonic() - started < 1
+"##;
+    assert_probe_succeeds(run_python_probe(&test_dir, body));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
 fn callback_symlink_identity_rejects_equal_length_runtime_replacement() {
     let test_dir = TestDir::new("callback-runtime-symlink-replacement");
     let body = r##"
@@ -5183,12 +5223,22 @@ temporary.mkdir()
 (repository / ".oracle-python" / "plugin.py").write_text(
     "PLUGIN = 'frozen'\n", encoding="utf-8"
 )
+(repository / "target" / "debug" / "deps").mkdir()
 for executable in (
     repository / "scripts" / "callback.sh",
     repository / "target" / "debug" / "kiwi",
     repository / "target" / "debug" / "kiwi-required-vector-jobs",
 ):
     executable.chmod(0o755)
+for executable in (
+    repository / "target" / "debug" / "kiwi",
+    repository / "target" / "debug" / "kiwi-required-vector-jobs",
+):
+    os.link(
+        executable,
+        repository / "target" / "debug" / "deps" / f"{executable.name}-cargo-artifact",
+    )
+    assert executable.stat().st_nlink == 2
 subprocess.run(["/usr/bin/git", "-C", repository, "init", "-q"], check=True)
 subprocess.run(
     ["/usr/bin/git", "-C", repository, "config", "user.email", "oracle@example.invalid"],
@@ -5217,6 +5267,16 @@ with controller.HeldDirectory.open(repository) as held_repository:
             snapshot = controller._materialize_callback_input(
                 held_repository, held_destination, identity, git, env
             )
+            for relative in controller.CALLBACK_RUNTIME_PATHS:
+                source_runtime = repository / relative
+                frozen_runtime = destination / relative
+                assert source_runtime.stat().st_nlink == 2
+                assert frozen_runtime.stat().st_nlink == 1
+                assert source_runtime.stat().st_ino != frozen_runtime.stat().st_ino
+                assert source_runtime.read_bytes() == frozen_runtime.read_bytes()
+                assert (source_runtime.stat().st_mode & 0o777) == (
+                    frozen_runtime.stat().st_mode & 0o777
+                )
             (repository / "scripts" / "callback.sh").write_text(
                 "#!/bin/sh\nprintf 'host-replacement\\n'\n", encoding="utf-8"
             )
@@ -5247,6 +5307,36 @@ with controller.HeldDirectory.open(repository) as held_repository:
                 "PLUGIN = 'frozen'\n", encoding="utf-8"
             )
 
+            replay_source = repository / "target" / "debug" / "kiwi"
+            replay_original = replay_source.read_bytes()
+            replay_bytes = b"M" * len(replay_original)
+            replay_root = root / "hard-link-replay"
+            replay_root.mkdir()
+            replay_source.write_bytes(replay_bytes)
+            try:
+                with controller.HeldDirectory.open(replay_root) as held_replay:
+                    replay_identity = controller._validate_callback_repository(
+                        held_repository, expected_head, git, env
+                    )
+                    replay_snapshot = controller._materialize_callback_input(
+                        held_repository, held_replay, replay_identity, git, env
+                    )
+                    assert (replay_root / "target" / "debug" / "kiwi").read_bytes() == replay_bytes
+                    replay_source.write_bytes(replay_original)
+                    replay_source.write_bytes(replay_bytes)
+                    try:
+                        controller._revalidate_callback_input(
+                            replay_snapshot, held_repository, git, env
+                        )
+                    except controller.OracleError:
+                        pass
+                    else:
+                        raise AssertionError(
+                            "hard-linked runtime content replay was accepted"
+                        )
+            finally:
+                replay_source.write_bytes(replay_original)
+
             covered_runtime_mutations = set()
             for relative in (
                 "target/debug/kiwi",
@@ -5255,7 +5345,11 @@ with controller.HeldDirectory.open(repository) as held_repository:
                 source_path = repository / relative
                 original_bytes = source_path.read_bytes()
                 original_mode = source_path.stat().st_mode & 0o777
-                for mutation in ("same-inode-rewrite", "inode-replacement"):
+                for mutation in (
+                    "same-inode-rewrite",
+                    "inode-replacement",
+                    "same-bytes-inode-replacement",
+                ):
                     case_name = relative.replace("/", "-") + "-" + mutation
                     case_root = root / case_name
                     frozen_root = case_root / "frozen"
@@ -5274,8 +5368,13 @@ with controller.HeldDirectory.open(repository) as held_repository:
                             assert frozen_path.read_bytes() == original_bytes
                             before_inode = source_path.stat().st_ino
                             replacement_bytes = (
-                                b"R" if mutation == "same-inode-rewrite" else b"P"
-                            ) * len(original_bytes)
+                                original_bytes
+                                if mutation == "same-bytes-inode-replacement"
+                                else (
+                                    b"R" if mutation == "same-inode-rewrite" else b"P"
+                                )
+                                * len(original_bytes)
+                            )
                             if mutation == "same-inode-rewrite":
                                 with source_path.open("r+b") as mutable:
                                     mutable.write(replacement_bytes)
@@ -5344,8 +5443,10 @@ with controller.HeldDirectory.open(repository) as held_repository:
             assert covered_runtime_mutations == {
                 "target/debug/kiwi:same-inode-rewrite",
                 "target/debug/kiwi:inode-replacement",
+                "target/debug/kiwi:same-bytes-inode-replacement",
                 "target/debug/kiwi-required-vector-jobs:same-inode-rewrite",
                 "target/debug/kiwi-required-vector-jobs:inode-replacement",
+                "target/debug/kiwi-required-vector-jobs:same-bytes-inode-replacement",
             }
 
             (repository / "target" / "debug" / "kiwi-required-vector-jobs").unlink()

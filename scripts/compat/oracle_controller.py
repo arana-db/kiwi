@@ -132,6 +132,10 @@ def _same_identity(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
+def _same_runtime_input_state(left: os.stat_result, right: os.stat_result) -> bool:
+    return _same_identity(left, right) and left.st_ctime_ns == right.st_ctime_ns
+
+
 def _same_directory_object(left: os.stat_result, right: os.stat_result) -> bool:
     return (
         left.st_dev,
@@ -398,7 +402,7 @@ class HeldDirectory:
             before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
             fd = os.open(
                 name,
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
                 dir_fd=directory_fd,
             )
         finally:
@@ -3281,6 +3285,7 @@ class CallbackInputSnapshot:
     repository: CallbackRepositoryIdentity
     manifest: dict[str, object]
     runtime_manifest: tuple[dict[str, object], ...]
+    runtime_source_identities: tuple[tuple[str, str, int, int, int, int, int, int], ...]
     document: dict[str, object]
     full_revalidation_count: int = 0
 
@@ -3476,13 +3481,18 @@ def _read_callback_regular(
     *,
     budget: _CallbackInputBudget | None = None,
     expected_metadata: os.stat_result | None = None,
+    allow_external_hardlinks: bool = False,
 ) -> tuple[bytes, os.stat_result]:
     fd = root.open_regular(relative)
     try:
         metadata = os.fstat(fd)
-        if expected_metadata is not None and not _same_identity(expected_metadata, metadata):
+        if expected_metadata is not None and not _same_runtime_input_state(
+            expected_metadata, metadata
+        ):
             raise OracleError(f"runtime callback input changed before reading: {relative}")
-        if metadata.st_nlink != 1:
+        if metadata.st_nlink < 1 or (
+            metadata.st_nlink != 1 and not allow_external_hardlinks
+        ):
             raise OracleError(f"runtime callback input has invalid size or hard-link count: {relative}")
         if budget is not None:
             budget.reserve(relative, metadata.st_size, file_entry=True)
@@ -3495,6 +3505,9 @@ def _read_callback_regular(
                 break
             content.extend(chunk)
         if len(content) != metadata.st_size:
+            raise OracleError(f"runtime callback input changed while reading: {relative}")
+        current = os.fstat(fd)
+        if not _same_runtime_input_state(metadata, current):
             raise OracleError(f"runtime callback input changed while reading: {relative}")
         return bytes(content), metadata
     finally:
@@ -3520,7 +3533,12 @@ def _runtime_callback_entries(
     )
     identities: set[tuple[int, int]] = set()
     for relative in CALLBACK_RUNTIME_PATHS:
-        content, metadata = _read_callback_regular(source, relative, budget=budget)
+        content, metadata = _read_callback_regular(
+            source,
+            relative,
+            budget=budget,
+            allow_external_hardlinks=True,
+        )
         identity = (metadata.st_dev, metadata.st_ino)
         if identity in identities:
             raise OracleError("runtime callback inputs contain an unexpected hard-link relationship")
@@ -3623,6 +3641,21 @@ def _ensure_callback_parent(root: pathlib.Path, relative: str) -> pathlib.Path:
     return target
 
 
+def _runtime_source_identity(
+    path: str, kind: str, metadata: os.stat_result
+) -> tuple[str, str, int, int, int, int, int, int]:
+    return (
+        path,
+        kind,
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_nlink,
+        metadata.st_ctime_ns,
+    )
+
+
 def _manifest_entry(
     path: str,
     source: str,
@@ -3678,6 +3711,7 @@ def _materialize_callback_input(
     if os.listdir(destination.fd):
         raise OracleError("controller-owned callback input must start empty")
     manifest_entries: list[dict[str, object]] = []
+    runtime_source_identities: list[tuple[str, str, int, int, int, int, int, int]] = []
     budget = _CallbackInputBudget(limits)
     for path, mode, oid, expected_size in identity.tracked_entries:
         budget.reserve(path, expected_size, file_entry=True)
@@ -3714,7 +3748,7 @@ def _materialize_callback_input(
                 _manifest_entry(path, "git", "regular", mode, content, blob_oid=oid)
             )
 
-    for path, kind, mode, content, _metadata in _runtime_callback_entries(
+    for path, kind, mode, content, metadata in _runtime_callback_entries(
         source, limits=limits, _budget=budget
     ):
         if any(entry["path"] == path for entry in manifest_entries):
@@ -3742,6 +3776,7 @@ def _materialize_callback_input(
             manifest_entries.append(
                 _manifest_entry(path, "runtime", kind, f"{mode | 0o100000:06o}", content)
             )
+        runtime_source_identities.append(_runtime_source_identity(path, kind, metadata))
 
     manifest_entries.sort(key=lambda entry: os.fsencode(str(entry["path"])))
     _validate_callback_manifest_symlinks(manifest_entries)
@@ -3773,11 +3808,13 @@ def _materialize_callback_input(
     runtime_manifest = tuple(
         entry for entry in manifest_entries if entry["source"] == "runtime"
     )
+    runtime_source_identities.sort(key=lambda entry: os.fsencode(entry[0]))
     snapshot = CallbackInputSnapshot(
         root=destination,
         repository=identity,
         manifest=manifest,
         runtime_manifest=runtime_manifest,
+        runtime_source_identities=tuple(runtime_source_identities),
         document=document,
     )
     _verify_frozen_callback_manifest(snapshot)
@@ -3868,7 +3905,8 @@ def _validate_original_callback_inputs(
     if current != snapshot.repository:
         raise OracleError("Kiwi repository identity changed during callback")
     runtime_manifest = []
-    for path, kind, mode, content, _metadata in _runtime_callback_entries(
+    runtime_source_identities = []
+    for path, kind, mode, content, metadata in _runtime_callback_entries(
         source,
         initial_entry_count=len(snapshot.repository.tracked_entries),
         initial_total_bytes=sum(
@@ -3884,11 +3922,15 @@ def _validate_original_callback_inputs(
                 content,
             )
         )
+        runtime_source_identities.append(_runtime_source_identity(path, kind, metadata))
     runtime_manifest.sort(key=lambda entry: os.fsencode(str(entry["path"])))
+    runtime_source_identities.sort(key=lambda entry: os.fsencode(entry[0]))
     if canonical_json_bytes({"entries": runtime_manifest}) != canonical_json_bytes(
         {"entries": list(snapshot.runtime_manifest)}
     ):
         raise OracleError("original callback runtime inputs changed during callback")
+    if tuple(runtime_source_identities) != snapshot.runtime_source_identities:
+        raise OracleError("original callback runtime input identities changed during callback")
 
 
 def _revalidate_callback_input(
