@@ -449,14 +449,34 @@ mod tests {
         let db_path = temp_dir.path().join("data");
         let marker_path =
             snapshot_install_marker_path(&db_path).expect("test DB path should support a marker");
+        let digest = "0".repeat(64);
         let marker = serde_json::json!({
-            "version": 2,
-            "id": "future-snapshot",
-            "index": 8,
-            "term": 3,
-            "db": db_path,
-            "workdir": temp_dir.path().join("snapshots"),
-            "instances": 1
+            "version": 3,
+            "phase": "staged_validated",
+            "snapshot_id": "future-snapshot",
+            "last_log_index": 8,
+            "last_log_term": 3,
+            "db_instance_num": 1,
+            "target_name": "data",
+            "staged_name": ".restore_temp_future",
+            "backup_name": ".data.snapshot-install-backup-future",
+            "pending_snapshot_data_name": ".snapshot-install-future.tar",
+            "pending_raft_meta_name": ".snapshot-install-future.raft-meta.json",
+            "pending_checkpoint_meta_name": ".snapshot-install-future.checkpoint-meta.json",
+            "snapshot_archive_digest": digest,
+            "raft_metadata_digest": digest,
+            "checkpoint_metadata_digest": digest,
+            "old_storage": null,
+            "new_storage": {
+                "root_manifest_id": "future-root",
+                "root_manifest_digest": digest,
+                "instance_manifests": [{
+                    "instance_id": 0,
+                    "manifest_digest": digest,
+                    "storage_incarnation": 1
+                }],
+                "logical_instance_digests": [digest]
+            }
         });
         fs::write(
             &marker_path,
@@ -483,7 +503,9 @@ mod tests {
                 Err(error) => error,
             };
         assert!(
-            error.to_string().contains("unsupported marker version 2"),
+            error
+                .to_string()
+                .contains("unsupported snapshot install marker version 3, expected 2"),
             "unexpected startup refusal: {error}"
         );
         assert!(

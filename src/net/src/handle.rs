@@ -21,6 +21,7 @@ use bytes::Bytes;
 use client::Client;
 use cmd::CmdFlags;
 use cmd::table::CmdTable;
+use cmd::vector::admission::VectorAdmissionLimits;
 use executor::{CmdExecution, CmdExecutor};
 use log::error;
 use resp::encode::RespEncoder;
@@ -137,6 +138,7 @@ pub async fn process_connection_with_storage_client(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    vector_admission_limits: VectorAdmissionLimits,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
     process_connection_with_storage_client_until_cancelled(
@@ -144,6 +146,7 @@ pub async fn process_connection_with_storage_client(
         storage_client,
         cmd_table,
         executor,
+        vector_admission_limits,
         leader_gate,
         CancellationToken::new(),
     )
@@ -157,6 +160,7 @@ pub async fn process_connection_with_storage_client_until_cancelled(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    vector_admission_limits: VectorAdmissionLimits,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
     shutdown: CancellationToken,
 ) -> std::io::Result<()> {
@@ -166,6 +170,7 @@ pub async fn process_connection_with_storage_client_until_cancelled(
         storage_client,
         cmd_table,
         executor,
+        vector_admission_limits,
         leader_gate,
         shutdown,
     )

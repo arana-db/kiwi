@@ -3,31 +3,31 @@ document: kiwi-sdd
 title: Kiwi 架构设计与 SDD 开发计划
 status: accepted-design
 authority: sole-project-entry
-version: 2
-updated_at: 2026-08-02
+version: 4
+updated_at: 2026-08-11
 baseline_repository: arana-db/kiwi
 baseline_branch: main
-baseline_ref: 9820162ebdf2d26aa6349e704efe8737b2e73e4a
+baseline_ref: 733888fc90ad8ef039947e87b08d7500a405954a
 wp0_pr_number: 414
 wp0_pr_base_ref: 0c4795ec716299598686fc7c5e0fac03a30e044d
 wp0_pr_head_ref: e2bfc7deb481590a757f0034874b7f21a4a31aa2
 wp0_merge_parent_ref: cbcbadc27068634d851ab0ed63989d2214ab2408
 wp0_merge_ref: 9820162ebdf2d26aa6349e704efe8737b2e73e4a
-wp0_exact_main_verification_ref: none
-wp0_exact_main_verification_run: none
-wp0_exact_main_verification_status: pending
-github_snapshot_at: 2026-08-02T12:57:50Z
+wp0_exact_main_verification_ref: 688d905fec31b54aec76f36676f55efd8b5cfa17
+wp0_exact_main_verification_run: 30801285622
+wp0_exact_main_verification_status: passed
+github_snapshot_at: 2026-08-06T04:36:21Z
 redis_oracle_tag: 8.8.1
 redis_oracle_ref: 77b6c308396c9700672390a210143a8496fb4b10
 required_runtime_mode: cache-off
 executable_scope: M0-M6
 long_term_scope: M0-M10
-current_work_package: WP0
-current_work_package_status: implemented
-current_plan: .planning/SDD.md#wp0
-current_issue: 413
-current_pr: 414
-next_safe_action: repair-post-merge-validation-under-416-then-verify-wp0
+current_work_package: WP8
+current_work_package_status: in-progress
+current_plan: docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md
+current_issue: 421
+current_pr: 422
+next_safe_action: execute-wp8-runtime-raw-resp-client-red-tests
 ---
 
 # Kiwi 架构设计与 SDD 开发计划
@@ -109,7 +109,7 @@ abandoned
 
 WP0 是一次性的 planning-only bootstrap：它的交付物就是本 SDD，因此 WP0
 章节同时承担 spec 和 implementation plan，`current_plan` 指向本文件内的 WP0
-锚点。WP1-WP7 不适用该例外，进入 ready 前必须建立独立 spec 和 plan。
+锚点。WP1-WP8 不适用该例外，进入 ready 前必须建立独立 spec 和 plan。
 
 ## 2. 产品目标、范围与非目标
 
@@ -143,7 +143,7 @@ M7 到 M10 进入长期架构，但不进入当前实现：
 - M6 通过并由用户另行批准前实现 Embedded Redis Hot Tier。
 - 当前实现真正的 Multi-Key、跨 Slot 原子性或 2PC。
 - Multiple DB、Multi-Raft、resharding。
-- VectorSet、全文索引、AI 数据库或 Agent Memory 主线。
+- Vector Set Phase 2、HNSW、量化扩展、全文索引、AI 数据库或 Agent Memory 主线；PR #356 已合并的 Phase 1 表面只允许在 WP8 内做正确性、恢复、兼容性和门禁闭环。
 - TOML 配置迁移。
 - Small Object Compact Encoding。
 - 重新引入通用 Engine facade。
@@ -162,32 +162,33 @@ M7 到 M10 进入长期架构，但不进入当前实现：
 | D | Discussion、RFC、Proposal | 设计输入，必须显式采纳 |
 | E | 历史计划、旧周报、过期 Issue、草稿 | 背景，不形成当前任务 |
 
-### 3.2 2026-08-02T12:57:50Z 实时快照
+### 3.2 2026-08-06T04:36:21Z 实时快照
 
 - Repository：arana-db/kiwi。
 - Default branch：main。
-- main：9820162ebdf2d26aa6349e704efe8737b2e73e4a。
-- Open Issues：63；#415 是 WP1 Oracle provenance 实施 Issue，#416 是 WP0 合并后验证修复 Issue。
-- Discussions：17，其中 1 个关闭，没有 accepted answer。
+- main：733888fc90ad8ef039947e87b08d7500a405954a。
+- Open Issues：64；#415 是 WP1 Oracle provenance 实施 Issue，#418 跟踪 Vector differential，#421 是 WP8 primary Issue。
+- Discussions：18，其中 1 个关闭，没有 accepted answer。
 - PR #409：MERGED，对应 merge commit 0c4795ec716299598686fc7c5e0fac03a30e044d。
 - Issue #407：CLOSED，关闭时间 2026-08-02T04:44:40Z。
 - PR #412：MERGED，Head 9d1f83360eb52ed23b48b2e5cb1159c93e26e7af，merge commit cbcbadc27068634d851ab0ed63989d2214ab2408；Issue #143 已关闭。
 - PR #414：MERGED，base 0c4795ec716299598686fc7c5e0fac03a30e044d，Head e2bfc7deb481590a757f0034874b7f21a4a31aa2，merge commit 9820162ebdf2d26aa6349e704efe8737b2e73e4a；Issue #413 已关闭。
-- main@9820162ebdf2d26aa6349e704efe8737b2e73e4a 的 push CI run 30747510551 已完成但失败；唯一失败项是 planning SDD validation，其使用旧 baseline 累计了先合并的 PR #412 路径。
-- PR #356：OPEN，Head f1f8d7539812efd4c6c5e99d540744976d4f6261，CONFLICTING/DIRTY，Windows build 和 LeakSanitizer 检查失败；VectorSet 不进入当前主线。
+- PR #417：MERGED，merge commit 688d905fec31b54aec76f36676f55efd8b5cfa17；其 main push CI run 30801285622 成功，完成 WP0 exact-main verification。
+- PR #356：MERGED，最终 Head 4e404b61cec1ece8f8750e0a0631839cce7f4ddc，merge commit 733888fc90ad8ef039947e87b08d7500a405954a；VectorSet Phase 1 已进入当前主线。
+- main commit 733888fc90ad8ef039947e87b08d7500a405954a 的 push CI run 31070395799、CodeQL run 31070395803 和 Benchmark run 31070395773 已成功；这些 job 没有执行 Trusted Vector differential 或 required 三节点 Vector cluster gate。
 - PR #261：OPEN，Head fb092812234a54ad3757d35a62ad033136e422c7，GitHub 当前返回 mergeable/mergeStateStatus UNKNOWN，属于长期滞留 PR。
 
 该快照只用于编制本版本。开始任一工作包、创建 PR、复审或验收前必须重新查询实时状态。
 
 ### 3.3 开放 Issue 分类
 
-当前 63 个开放 Issue 按 SDD 用途分为：
+当前 64 个开放 Issue 继续按 SDD 用途分类；数量会随实时状态变化，不作为工作包授权：
 
-| 分类 | 数量 | 处理 |
-|---|---:|---|
-| 当前主路线 | 22 | 映射到 M0-M6 当前主路线的 WP0-WP7 工作包 |
-| 需要源码复核、重新定界或产品决定 | 25 | 先审计或决策，不直接实施 |
-| 已过期、被替代或与当前方向冲突 | 16 | 不进入当前实现，后续单独治理 |
+| 分类 | 处理 |
+|---|---|
+| 当前主路线 | 映射到 M0-M6 当前主路线的 WP0-WP8 工作包 |
+| 需要源码复核、重新定界或产品决定 | 先审计或决策，不直接实施 |
+| 已过期、被替代或与当前方向冲突 | 不进入当前实现，后续单独治理 |
 
 Issue 数量和分类会变化，工作包只依赖明确列出的 Issue，不依赖总数。
 
@@ -217,6 +218,9 @@ Issue 数量和分类会变化，工作包只依赖明确列出的 Issue，不�
 | Graceful shutdown | [#408](https://github.com/arana-db/kiwi/issues/408) | WP3 child |
 | Real INFO state | [#410](https://github.com/arana-db/kiwi/issues/410) | WP7 related |
 | SDD control plane | [#413](https://github.com/arana-db/kiwi/issues/413) | WP0 primary |
+| Trusted Redis Oracle | [#415](https://github.com/arana-db/kiwi/issues/415) | WP1 implementation dependency；WP8 full-scope PR 内闭环 |
+| Vector differential | [#418](https://github.com/arana-db/kiwi/issues/418) | WP8 related |
+| VectorSet lifecycle | [#421](https://github.com/arana-db/kiwi/issues/421) | WP8 primary |
 
 [Issue #407](https://github.com/arana-db/kiwi/issues/407) 已关闭，
 [PR #409](https://github.com/arana-db/kiwi/pull/409) 已合并。后续只对账剩余
@@ -252,7 +256,7 @@ TTL、generation、compaction、snapshot 和 replay 语义，不重复规划 DEL
 | 分类 | Discussion | 用途 |
 |---|---|---|
 | 当前设计输入 | [#330](https://github.com/arana-db/kiwi/discussions/330) | Raft apply 工作分解 |
-| 当前设计输入 | [#331](https://github.com/arana-db/kiwi/discussions/331) | VectorSet 候选设计，当前 Frozen |
+| 当前决定来源 | [#331](https://github.com/arana-db/kiwi/discussions/331) | VectorSet Phase 1 设计来源；Phase 2 继续 Frozen，合并后闭环由 WP8 管理 |
 | 当前设计输入 | [#344](https://github.com/arana-db/kiwi/discussions/344) | Storage 生产化候选项 |
 | 当前设计输入 | [#345](https://github.com/arana-db/kiwi/discussions/345) | Compact Encoding 预研，Deferred |
 | 当前决定来源 | [#346](https://github.com/arana-db/kiwi/discussions/346) | 当前不支持真正 Multi-Key |
@@ -261,7 +265,7 @@ TTL、generation、compaction、snapshot 和 replay 语义，不重复规划 DEL
 | 历史背景 | #48、#49、#169、#176、#232、#235、#236、#241、#257 | 不进入当前实现 |
 | 已过期 | [#301](https://github.com/arana-db/kiwi/discussions/301) | 不再作为当前 Vector/FT 路线 |
 
-Discussion 没有 accepted answer；除 #346 已被本 SDD 采纳为 D017 外，其余都不能单独定义当前产品行为。
+Discussion 没有 accepted answer；#346 已被本 SDD 采纳为 D017，#331 的已合并 Phase 1 事实和闭环边界由 D019/WP8 接纳；其他 Discussion 不能单独定义当前产品行为。
 
 ## 4. 当前系统架构
 
@@ -296,7 +300,7 @@ flowchart LR
     StorageServer["StorageServer<br/>存储 Runtime 调度"]
     Cmd["Cmd::execute<br/>命令语义"]
     Storage["Storage / Redis instances"]
-    RocksDB["RocksDB<br/>当前 6 个 CF"]
+    RocksDB["RocksDB<br/>当前 7 个 CF"]
 
     Client --> Net
     Net --> Channel
@@ -320,9 +324,9 @@ flowchart LR
 ### 4.3 当前存储事实
 
 - RocksDB 是业务数据、类型、编码和 TTL etime 的唯一持久化权威。
-- 主数据库固定使用六个 CF：default/meta/string、hash、set、list、zset-data、zset-score。
+- 主数据库使用七个 CF：default/meta/string、hash、set、list、zset-data、zset-score、vector-data。
 - CF 名称、index、comparator、compaction filter、batch 路由和 Raft checkpoint 列表分散硬编码。
-- 当前没有统一 StorageManifest。
+- 当前每个 instance 有只保存 version、storage incarnation 和 next generation 的 StorageManifest v1；它尚不能表达全局 topology、CF/comparator/codec、snapshot compatibility 和可恢复 migration。
 - ExpirationManager 是进程内索引，启动时不从 RocksDB 重建。
 - CompactSpecificKey 当前只记录日志并返回成功，未执行真实物理清理。
 
@@ -333,14 +337,14 @@ flowchart LR
 - Raft log、vote 和 committed state 使用普通 RocksDB write/put 后即确认完成，尚缺显式 stable-storage 语义证明。
 - Snapshot install 已有 staged restore、pause、install marker、RocksDB reopen 和切换骨架。
 - Snapshot archive 当前完整驻留内存。
-- Snapshot metadata 允许未来版本，而 install marker 对未知版本 fail closed，策略不一致。
+- Snapshot writer 当前使用 v2，reader 拒绝真实 Base v1 和未来版本；Base v1 compatibility、install phase recovery 和完整 manifest pairing 尚未闭合。
 
 ### 4.5 当前生命周期和验证事实
 
 - RuntimeManager 当前先停止 storage runtime，再停止 network runtime。
 - network、StorageServer、cluster gRPC 和 Raft bridge 的长期任务没有统一 supervisor。
 - Storage 到 Raft bridge 使用无界 channel。
-- Redis 8.8.1 compatibility manifest 当前只覆盖 ZMSCORE、SUBSTR、TOUCH、SCAN。
+- Redis 8.8.1 compatibility manifest 已登记 Vector 命令和 known differences，但正常 CI 排除 Vector differential，尚无可信 Oracle 执行证据。
 - CI 尚未形成完整 Oracle、raw RESP differential、TCL、deterministic Raft simulator、process crash matrix 和真实磁盘 upgrade/rollback 矩阵。
 - Embedded Redis Hot Tier 当前没有生产依赖、loader、FFI 或 Cache ON 数据路径。
 
@@ -485,8 +489,8 @@ Standalone 和 Cluster 不能形成两套 Redis 可观察语义、磁盘格式�
 
 | ID | Target invariant | Current | Gap | Work Package | Acceptance |
 |---|---|---|---|---|---|
-| `INV-01` | 所有架构和验收结论绑定 exact Git SHA。 | 本 SDD 和源码证据索引已绑定 baseline_ref。 | 后续实现、PR 和 exact-main 证据仍需逐次绑定最终 SHA。 | WP0-WP7 | 每个工作包记录 Base、Head、merge SHA 和 exact-main 验证 SHA。 |
-| `INV-02` | RocksDB 保存完整、权威、可恢复的业务状态。 | RocksDB 是当前业务数据权威。 | CF/格式 manifest、真实 close/reopen 和故障恢复证据未闭合。 | WP2、WP4、WP5、WP7 | manifest、durable apply、重启、损坏和 snapshot 恢复门禁全部通过。 |
+| `INV-01` | 所有架构和验收结论绑定 exact Git SHA。 | 本 SDD 和源码证据索引已绑定 baseline_ref。 | 后续实现、PR 和 exact-main 证据仍需逐次绑定最终 SHA。 | WP0-WP8 | 每个工作包记录 Base、Head、merge SHA 和 exact-main 验证 SHA。 |
+| `INV-02` | RocksDB 保存完整、权威、可恢复的业务状态。 | RocksDB 是当前业务数据权威。 | CF/格式 manifest、真实 close/reopen 和故障恢复证据未闭合。 | WP2、WP4、WP5、WP7、WP8 | manifest、durable apply、重启、损坏和 snapshot 恢复门禁全部通过。 |
 | `INV-03` | standalone mutation 直接写 RocksDB；cluster client mutation 必须先经 Raft；Raft apply 不得再次提交 Raft。 | standalone 与 cluster 路由已经分离，apply 有独立入口。 | cluster 全命令覆盖和反向绕过证明不足。 | WP4、WP6 | 路由矩阵和回归测试证明所有 mutation 只有一条合法路径。 |
 | `INV-04` | mutation 持久化成功后才能推进 last_applied。 | 当前只能证明 RocksDB batch write 返回成功后才推进进程内 last_applied。 | 原子性、批准的 durability profile、I/O failure 和崩溃窗口证据不足。 | WP4 | fault injection 证明 Durable 前不会推进 last_applied。 |
 | `INV-05` | Raft vote、log 和 committed state 只能在满足 OpenRaft 持久化合同后确认完成。 | 当前实现使用普通 RocksDB write/put 持久化 vote、log 和状态。 | sync 语义和 callback 完成点缺少完整故障证明。 | WP4 | OpenRaft storage suite、fsync profile 和故障矩阵通过。 |
@@ -496,12 +500,12 @@ Standalone 和 Cluster 不能形成两套 Redis 可观察语义、磁盘格式�
 | `INV-09` | 所有长期任务必须有 owner、cancellation token、JoinHandle 和确定性 join。 | 多个长期任务仍由裸 `tokio::spawn` 启动。 | owner、取消和 join 责任未统一。 | WP3 | lifecycle registry 和退出测试证明无 detached task。 |
 | `INV-10` | shutdown 必须先停止 admission，再 drain 依赖，最后关闭 RocksDB。 | 当前 manager 先停止 storage，再停止 network。 | 关闭顺序与依赖方向相反。 | WP3 | 并发 shutdown 测试证明 admission→drain→RocksDB 顺序。 |
 | `INV-11` | persisted etime 是 TTL 权威；内存索引只能是可丢失优化。 | etime 已持久化，expiration manager 是辅助索引。 | restart、compaction、generation 和 stale-index 证据不足。 | WP5 | 删除内存索引后重建、重启和 TTL differential 通过。 |
-| `INV-12` | 所有 CF 消费者由同一可验证 manifest 闭合。 | CF 列表分散在创建、扫描、TTL、compaction 和 snapshot 路径。 | 没有单一 manifest 和消费者闭包检查。 | WP2 | manifest consumer-closure checker 和新增 CF 变异测试通过。 |
-| `INV-13` | 未知 disk、snapshot、comparator 或 manifest 版本默认 fail closed。 | snapshot install marker 对未知 marker version fail closed，但 snapshot metadata 接受未来版本。 | 版本策略不一致。 | WP2、WP5 | 所有未知/未来版本负向测试一致拒绝。 |
+| `INV-12` | 所有 CF 消费者由同一可验证 manifest 闭合。 | VectorDataCF 已加入，当前 per-instance manifest v1 只保存 incarnation/generation，CF 列表仍分散在创建、扫描、TTL、compaction 和 snapshot 路径。 | 缺少 Root/Instance manifest v2 和消费者闭包检查。 | WP2、WP8 | manifest consumer-closure checker 和新增 CF 变异测试通过。 |
+| `INV-13` | 未知 disk、snapshot、comparator 或 manifest 版本默认 fail closed。 | snapshot v2 和 marker 对未知版本 fail closed，但真实 Base v1 snapshot 尚未进入显式兼容范围。 | 已知历史版本兼容与未知未来版本拒绝需要同时证明。 | WP2、WP5、WP8 | Base v1 正向恢复和未知/未来版本负向测试通过。 |
 | `INV-14` | Snapshot build、install、普通 apply、reopen 和 shutdown 必须由同一 gate 建立顺序。 | 各路径有局部锁和 staged install。 | 缺少覆盖全部状态转换的统一 gate。 | WP3、WP5 | 并发 build/install/apply/reopen/shutdown 矩阵无竞态和旧状态可见。 |
 | `INV-15` | 旧 Storage、Redis、DB、CF、iterator 或 snapshot handle 不得跨 reopen/swap 继续使用。 | reopen 和 install 会替换部分顶层对象。 | 跨层缓存 handle 的失效证明不足。 | WP2、WP5 | generation/handle 负向测试证明旧对象全部拒绝使用。 |
 | `INV-16` | 每个 Binlog 必须有明确 db、instance、slot/group 和 generation 语义。 | db_id 固定为 0，slot 从 key 推导，instance 由本机 topology 推导，缺少 group/generation。 | replay、迁移和 stale generation 语义未定义。 | WP2、WP4、WP5 | 编码 round-trip、cluster replay 和 generation rejection 通过。 |
-| `INV-17` | Redis 兼容结论必须来自固定 Oracle、raw response 和最终状态的可复现实验。 | 已固定 Redis 8.8.1 tag/commit 和 provenance 合同。 | manifest、raw-frame differential 和独立重建尚未全部完成。 | WP1、WP6、WP7 | exact Oracle 重建 hash equality 与兼容矩阵通过。 |
+| `INV-17` | Redis 兼容结论必须来自固定 Oracle、raw response 和最终状态的可复现实验。 | 已固定 Redis 8.8.1 tag/commit 和 provenance 合同。 | Vector differential 被正常 CI 排除，独立重建和 runtime identity 尚未完成。 | WP1、WP6、WP7、WP8 | exact Oracle 重建 hash equality、raw RESP2/RESP3 differential 与兼容矩阵通过。 |
 | `INV-18` | 非幂等写结果未知时标记 SUBMIT_UNKNOWN，不盲目重试。 | 当前没有端到端 typed SUBMIT_UNKNOWN，相关失败压成通用错误。 | 断线、超时和提交后响应丢失仍可能混同普通失败。 | WP4、WP7 | fault history 区分 safe failure、success 和 SUBMIT_UNKNOWN。 |
 | `INV-19` | INFO 和 metrics 只消费真实 provider，不维护硬编码影子状态。 | INFO 仍包含硬编码版本、平台、PID、端口和 uptime。 | runtime、storage 和 Raft provider 未闭合。 | WP7 | provider contract 测试和真实进程 INFO/metrics 对账通过。 |
 | `INV-20` | M6 前 Embedded Redis Hot Tier 保持 frozen。 | D009 和当前 scope 已冻结 M7/M8 热层实施，生产路径中不存在 Hot Tier。 | 无实现 Gap；必须持续防止实现 PR 隐式解除冻结。 | WP7 | M6 gate、用户批准和新 Decision 同时存在后才可解除。 |
@@ -819,7 +823,7 @@ flowchart LR
 
 M1 和 M2 可在边界清晰的独立工作包中有限并行。M4、M5 只以 Cache OFF 为 required 模式。M7-M8 在 M6 PASS 和用户重新批准前保持 frozen。M10 需要单 Group 容量和故障域证据。
 
-## 12. WP0-WP7 可执行工作包
+## 12. WP0-WP8 可执行工作包
 
 ### 12.1 工作包依赖
 
@@ -833,6 +837,7 @@ flowchart LR
     WP5["WP5<br/>TTL/Snapshot/Compaction"]
     WP6["WP6<br/>Redis Core Semantics"]
     WP7["WP7<br/>Fault Matrix/M6"]
+    WP8["WP8<br/>VectorSet Post-Merge Closure"]
 
     WP0 --> WP1
     WP0 --> WP2
@@ -848,6 +853,7 @@ flowchart LR
     WP4 --> WP7
     WP5 --> WP7
     WP6 --> WP7
+    WP0 --> WP8
 ~~~
 
 建议执行波次：
@@ -857,8 +863,9 @@ flowchart LR
 3. Wave 2：WP4 和 WP6；两者不能共享实现分支。
 4. Wave 3：WP5。
 5. Wave 4：WP7 和 M6 Gate Review。
+6. Wave X：WP8 是 D019 明确授权的合并后紧急闭环；它在一个 Draft PR 内实现并验收所消费的 WP1-WP7 特定合同，不把这些工作包的无关范围伪装为已 accepted。
 
-同一 worktree 和同一 current_work_package 仍只允许一个 in-progress 工作包。并行工作包必须有独立 Issue、spec、plan、branch、recovery 和 PR。
+同一 worktree 和同一 current_work_package 仍只允许一个 in-progress 工作包。并行工作包必须有独立 Issue、spec、plan、branch 和 recovery；D019 只允许这些隔离任务按顺序聚合到同一个 WP8 Draft PR，不允许并发写同一分支。
 
 每个工作包都必须显式给出 Status、Primary Issue handling、Parent/Related、
 Requirements、Dependencies、Scope、Non-goals、Acceptance criteria 和
@@ -869,7 +876,7 @@ Acceptance criteria；缺少任一字段时，工作包不得进入 ready。
 
 ### WP0：单一 SDD 控制面与事实对账
 
-状态：implemented。
+状态：accepted。
 
 目标：
 
@@ -904,7 +911,7 @@ Acceptance criteria；缺少任一字段时，工作包不得进入 ready。
 Primary Issue handling：
 
 - Primary Issue：[#413](https://github.com/arana-db/kiwi/issues/413)。
-- Issue #413 只覆盖单一 SDD 控制面、事实基线与交付追踪，不吸收 WP1-WP7 的运行时实施。
+- Issue #413 只覆盖单一 SDD 控制面、事实基线与交付追踪，不吸收 WP1-WP8 的运行时实施。
 - 只有完整满足本工作包退出门禁的 PR 才能使用 `Fixes #413` 或 `Closes #413`；部分交付使用 `Refs #413` 或 `Related #413`。
 
 Parent / Related：N/A。
@@ -919,8 +926,9 @@ Post-merge validation repair：[#416](https://github.com/arana-db/kiwi/issues/41
 - merge 固定区间：cbcbadc27068634d851ab0ed63989d2214ab2408..9820162ebdf2d26aa6349e704efe8737b2e73e4a；
 - PR #414 于 2026-08-02T12:17:13Z 合并，Issue #413 随后关闭；
 - main push CI run 30747510551 / job 91495496924 失败，原因是旧 baseline_ref 把先合并的 PR #412 的 7 个源码路径计入 WP0，而不是 WP0 产物本身失败。
-- WP0 exact-main verification：status=pending，ref=none，run=none。
-- 状态提升为 passed/verified 时，必须同时将 baseline_ref 推进到 verification ref 或其后的 main 提交；保留旧 merge ref 会使验收证据不属于已记录的 baseline main 历史。
+- PR #417 修复固定提交区间验证并于 2026-08-03 合并为 688d905fec31b54aec76f36676f55efd8b5cfa17；
+- WP0 exact-main verification：status=passed，ref=688d905fec31b54aec76f36676f55efd8b5cfa17，run=30801285622。
+- baseline_ref 已推进到该 verification ref 的后继 main commit 733888fc90ad8ef039947e87b08d7500a405954a，WP0 的 Requirement、Issue、文档和残留风险完成对账。
 
 Requirement：
 
@@ -929,15 +937,15 @@ Requirement：
 依赖：
 
 - PR base main@0c4795ec716299598686fc7c5e0fac03a30e044d 的源码事实基线；
-- 2026-08-02T12:57:50Z 的 GitHub 快照；
+- 2026-08-06T04:36:21Z 的 GitHub 快照；
 - 无前置工作包；本节按 planning-only bootstrap 例外同时作为 WP0 plan。
 
 非目标：
 
 - 不修改 Runtime、Storage、Raft、协议、构建或测试行为；
-- 不实现 WP1-WP7；
+- 不实现 WP1-WP8；
 - 不实现未来的自动 PR traceability checker；
-- 不以 PR #414 已合并或 Issue #413 已关闭自动授权后续源码工作；只有合并后 exact-main 验证通过才能继续进入 verified/accepted。
+- 不以 PR #414 已合并或 Issue #413 已关闭自动授权后续源码工作；WP0 已用独立 exact-main run 完成 accepted 对账，后续工作仍需各自授权。
 
 退出门禁：
 
@@ -952,7 +960,7 @@ Requirement：
 - `python scripts/validate_sdd.py --self-test` 的失败路径变异测试；
 - `python scripts/validate_sdd.py` 的 Markdown 链接、占位词、围栏和状态断言；
 - WP0 exact-main 状态提升时，baseline_ref 必须推进到 verification ref 或其后的 main 提交，并在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；
-- 63 个 REQ 和 18 个 Decision 的唯一注册、范围展开和引用全集闭包；
+- 68 个 REQ 和 19 个 Decision 的唯一注册、范围展开和引用全集闭包；
 - WP0、primary Issue #413、PR #414 和 20 个预期产物的一致性断言；
 - live Issue #413、开放 Issue 数量、关键 PR 状态和远端 main 复核；
 - 独立只读审查不得留下 Critical 或 Important finding。
@@ -1404,6 +1412,93 @@ Requirement：
 - required Linux CI、sanitizers、soak、upgrade/rollback 和 operations drill；
 - G1-G7 每项绑定 exact Head、环境、命令、artifact、结果和未覆盖风险。
 
+<a id="wp8"></a>
+
+### WP8：VectorSet 合并后生命周期、兼容性与门禁闭环
+
+状态：in-progress。
+
+Primary Issue handling：
+
+- Primary Issue：[#421](https://github.com/arana-db/kiwi/issues/421)。
+- [PR #356](https://github.com/arana-db/kiwi/pull/356) 是已合并事实和缺口来源，不作为当前开放 Issue。
+- 只有 #415、#418、#421 的 required acceptance 与本工作包退出门禁全部闭合时，聚合 PR 才能使用 `Fixes`。
+
+Implementation PR：[#422](https://github.com/arana-db/kiwi/pull/422)。
+
+Parent / Related：
+
+- [PR #356](https://github.com/arana-db/kiwi/pull/356)；
+- [Issue #415](https://github.com/arana-db/kiwi/issues/415)；
+- [Issue #418](https://github.com/arana-db/kiwi/issues/418)；
+- [Issue #325](https://github.com/arana-db/kiwi/issues/325)；
+- [Issue #340](https://github.com/arana-db/kiwi/issues/340)；
+- [Issue #342](https://github.com/arana-db/kiwi/issues/342)；
+- [Discussion #331](https://github.com/arana-db/kiwi/discussions/331)。
+
+Requirement：
+
+- REQ-VECTOR-001 至 REQ-VECTOR-005；
+- REQ-COMPAT-001 至 REQ-COMPAT-003；
+- REQ-COMPAT-007 至 REQ-COMPAT-010；
+- REQ-STORAGE-001 至 REQ-STORAGE-006；
+- REQ-RAFT-001；
+- REQ-RAFT-002；
+- REQ-RAFT-005；
+- REQ-RAFT-008；
+- REQ-STABILITY-002；
+- REQ-STABILITY-003；
+- REQ-OBS-001；
+- REQ-OBS-002；
+- REQ-WORK-005 至 REQ-WORK-007。
+
+依赖：
+
+- WP0 accepted；
+- exact main 包含 PR #356，即 733888fc90ad8ef039947e87b08d7500a405954a 或其后继；
+- D019 明确授权在一个 Draft PR 中聚合 #415 Trusted Oracle 和 WP8 产品闭环；
+- 复用 WP1-WP7 已定义的 Oracle、manifest/topology、runtime、Raft、snapshot、Redis semantics 和 fault-gate 合同，并按本文限定范围逐项实施和验收；D019 不要求这些工作包的无关范围先行 accepted；
+- 用户已确认 [VectorSet 合并后全量闭环设计](../docs/superpowers/specs/2026-08-06-vector-set-post-merge-remediation-design.md)；[VectorSet 合并后全量闭环实施总计划](../docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md) 和三个逐文件工作流计划已建立。
+
+主要范围：
+
+- Root/Instance StorageManifest v2、真实 Base 六 CF → 七 CF staged migration、已合并 Vector-v1 七 CF manifest v1 → v2 staged migration、故障恢复和与 source profile 对应的受控 rollback；
+- Base v1/Head v2 snapshot 兼容、SnapshotInstallMarker 状态机、全量 Vector meta/member/incarnation 校验；
+- VSIM key-scoped session、单一串行时刻和确定性并发 barrier；
+- network runtime 深拷贝前的无分配 Vector admission，以及 VADD 类型化错误优先级；
+- Trusted Redis 8.8.1 独立双构建、完整 artifact equality、runtime identity 和 cleanup-before-publish；
+- raw RESP2/RESP3 differential、独立协议客户端、known difference/skip registry；
+- 三节点 Leader/Follower cluster fail-closed required gate、capability 收敛；
+- cargo-audit rkyv optional dependency reachability sentinel；
+- exact-ref evidence、CI contract 和合并后写回。
+
+非目标：
+
+- 不实现 HNSW、IVF、Q8/BIN、VEMB RAW、新 Vector 命令、全文索引或其他 AI 主线扩展；
+- 不启用 Vector Raft mutation 或把 cluster fail-closed 描述成 replicated support；
+- 不把 Redis、redis-rs、Oracle controller 或 Redis-derived code 放进 production server dependency；
+- 不用普通 green CI、端口 PING、版本字符串、strip 后 hash、被 skip 的 pytest 或抽样校验代替 required 证据；
+- 不自动 merge、修改 branch protection、关闭 Issue 或 Resolve 历史评论。
+
+退出门禁：
+
+- 真实非空 Base 目录和 Base v1 snapshot 的 upgrade、每阶段 interruption、Head retry、reopen 和受控 Base rollback 通过；
+- manifest、snapshot、incarnation、generation、compaction 和 consumer closure 无未解释分叉；
+- VSIM 结果对应合法串行时刻，所有 Vector payload 在 StorageCommand 前完成 bounded admission；
+- Trusted Oracle primary/rebuild 完整 artifact manifest 和 binary SHA-256 相等，正式 runtime 只来自 rebuild artifact，cleanup 成功后才发布 provenance；
+- Vector RESP2/RESP3 differential 和三节点 cluster gate 非零执行且零 skip/xfail；
+- rkyv reachability 变化会使 CI 失败；所有 required checks 绑定 exact Head；
+- 无未处理 P0/P1，#415、#418、#421 和所有 known difference/skip 残留完成对账。
+
+验证门禁：
+
+- `git diff --check`、SDD validator normal/self-test、format、Clippy 和 changed-path Rust/Python tests；
+- WSL/Linux Trusted Oracle 双构建、held tool identity、deadline/output cap/process cleanup 和 provenance mutation tests；
+- Base/Head migration、snapshot v1/v2、multi-instance、close/reopen 和 fault-injection matrix；
+- raw Vector differential、manifest/CI contract、network admission spy 和 deterministic VSIM concurrency tests；
+- dedicated Linux three-node cluster gate、cargo-audit 和 rkyv feature-graph sentinel；
+- final-Head GitHub checks、review threads、Issue state 和 exact-main verification 复核。
+
 ### 支持轨道
 
 #### Block Cache
@@ -1580,7 +1675,7 @@ docs/sdd/WP-N/
 - Cache ON；
 - arana-db/redis 生产 fork 改造；
 - native loader、FFI、发行接入；
-- VectorSet/AI 主线；
+- Vector Set Phase 2、HNSW、量化扩展和其他 AI 主线；PR #356 已合并的 Phase 1 表面只允许 WP8 做正确性、恢复、兼容性和门禁闭环；
 - Multi-Raft。
 
 ### Deferred
@@ -1601,19 +1696,19 @@ docs/sdd/WP-N/
 
 | 字段 | 当前值 |
 |---|---|
-| Baseline | main@9820162ebdf2d26aa6349e704efe8737b2e73e4a |
-| Current milestone | M0 |
-| Current work package | WP0 |
-| Status | implemented |
-| Current plan | [.planning/SDD.md 的 WP0 章节](#wp0) |
-| Current Issue | [#413](https://github.com/arana-db/kiwi/issues/413) |
-| Current PR | [#414](https://github.com/arana-db/kiwi/pull/414) |
-| WP0 exact-main verification | pending |
+| Baseline | main@733888fc90ad8ef039947e87b08d7500a405954a |
+| Current milestone | M0-M6 / WP8 |
+| Current work package | WP8 |
+| Status | in-progress |
+| Current plan | [WP8 VectorSet 合并后全量闭环实施总计划](../docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md) |
+| Current Issue | [#421](https://github.com/arana-db/kiwi/issues/421) |
+| Current PR | [#422](https://github.com/arana-db/kiwi/pull/422) |
+| WP0 exact-main verification | passed |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | 完成 #416 的固定提交区间验证修复；合并后在 exact main 重跑门禁，WP0 进入 verified/accepted 后才恢复 #415 |
+| Next safe action | 提交并顺序集成 WP8 Runtime/Protocol Task 1-5，然后在独立 worktree 启动 Trusted Oracle/CI/Security 实施计划 |
 
-PR #414 已合并且 Issue #413 已关闭，但 main push CI 的 planning SDD validation 因并发合并后的漂移 baseline 失败。WP0 因此只能标记为 implemented，不能标记为 verified 或 accepted。Issue #416 负责修复固定提交区间验证；在其合并并于 exact main 复验前，不进入 #415 或 WP1-WP7 的源码实现。
+PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 Vector Set Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。Storage/Recovery Task 1→7 已完成、集成并通过 exact-ref migration/rollback/snapshot 矩阵；独立 `codex/wp8-runtime-protocol` worktree 已从聚合 Head 建立。Runtime/Protocol Task 1 的无分配 `Bytes` admission 纯函数、Task 2 的 Cmd hook/双层 `GatedCmd` 顺序、Task 3 的 ParsedCommand Bytes 保留/Config 必填传播/真实 TCP storage spy/admission-before-copy 合同、Task 4 的 VADD typed parse outcome、Redis `arity=-5` dispatcher 边界、unknown trailing option 精确错误和 argv-shape heuristic 删除，以及 Task 5 的 function-scoped raw RESP2/RESP3 client、完整 frame reader、collection 零联网和五命令 Issue #421 operational-limit governance，均已完成 tests-first、变异验证和 changed-path 回归；正式双端 raw differential 仍由后续 verifier-supervised Trusted Oracle/CI runner 执行。下一安全动作是提交并顺序集成 Runtime/Protocol Task 1-5，然后启动 Trusted Oracle/CI/Security 实施计划。
 
 ## 18. 决策门禁
 
@@ -1633,9 +1728,10 @@ PR #414 已合并且 Issue #413 已关闭，但 main push CI 的 planning SDD va
 | D016 | 未知持久化版本默认 fail closed |
 | D017 | 当前不支持真正 Multi-Key |
 | D018 | 兼容性与故障验证使用分层门禁 |
+| D019 | 一个 Draft PR 聚合 VectorSet 合并后全量闭环，但保持独立任务、worktree 和验收门禁 |
 
 以下已批准 Decision 属于治理、测试来源或 M7-M10 冻结范围，同样受本 SDD
-追踪，但不授权 WP0-WP7 增加对应生产能力：
+追踪，但不授权 WP0-WP8 增加对应生产能力：
 
 | Decision | 映射 |
 |---|---|
@@ -1654,7 +1750,7 @@ Deferred Requirement：
 - `REQ-RAFT-003`；
 - `REQ-RAFT-004`。
 
-WP0-WP7 的 Requirement 字段覆盖当前 M0-M6 实施范围；以上范围映射到
+WP0-WP8 的 Requirement 字段覆盖当前 M0-M6 实施范围；以上范围映射到
 M7-M10 或 frozen/deferred 合同，不构成当前实现授权。验证器只从各 WP 的
 Requirement 字段和本 Deferred Requirement 字段计算全集，不接受注释或无关
 段落中的偶然 ID 命中。

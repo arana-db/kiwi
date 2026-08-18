@@ -347,7 +347,7 @@ def test_vinfo_reports_flat_phase1_fields(vector_client):
     vadd_values(client, key, [1, 0, 0], b"a")
     vadd_values(client, key, [0, 1, 0], b"b")
     info = vinfo_fields(client.execute_command(b"VINFO", key), protocol)
-    assert info[b"quant-type"] == b"fp32"
+    assert info[b"quant-type"] == b"f32"
     assert info[b"hnsw-m"] == 0
     assert info[b"vector-dim"] == 3
     assert info[b"projection-input-dim"] == 0

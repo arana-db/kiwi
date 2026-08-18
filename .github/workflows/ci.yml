@@ -36,6 +36,11 @@ jobs:
   planning-docs:
     name: planning SDD validation
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -231,10 +236,16 @@ jobs:
       - name: Build runtime baseline tool
         run: cargo build -p runtime-baseline --bin kiwi-runtime-baseline
 
+      - name: Enable Oracle user namespace sandbox
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --mount --pid --fork true
+
       - name: Run Unit Test with retry
         uses: nick-fields/retry@v4
         with:
-          timeout_minutes: 30
+          timeout_minutes: ${{ matrix.os == 'windows-latest' && 45 || 30 }}
           max_attempts: 2
           command: bash -o pipefail -c "make test 2>&1 | tee cargo-test.log"
 
@@ -294,6 +305,121 @@ jobs:
       - name: Run integration tests
         run: bash tests/run_python_integration.sh
 
+  trusted-vector-differential:
+    name: trusted Vector differential
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential protobuf-compiler python3-pip
+
+      - name: Enable Oracle user namespace sandbox
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --mount --pid --fork true
+
+      - name: Prepare callback Python dependencies
+        run: |
+          /usr/bin/python3 -m pip install --target .oracle-python \
+            'pytest>=7.0.0' 'pytest-timeout>=2.1.0' 'redis>=5.0.0'
+
+      - name: Prepare exact Redis 8.8.1 source
+        run: |
+          mkdir -p "$RUNNER_TEMP/kiwi-oracle"
+          git clone --no-checkout https://github.com/redis/redis.git \
+            "$RUNNER_TEMP/kiwi-oracle/redis-source"
+          git -C "$RUNNER_TEMP/kiwi-oracle/redis-source" checkout --detach \
+            77b6c308396c9700672390a210143a8496fb4b10
+
+      - name: Run required trusted Vector differential
+        run: |
+          KIWI_COMPAT_REQUIRE_ORACLE=1 \
+          KIWI_REDIS_ORACLE_SOURCE="$RUNNER_TEMP/kiwi-oracle/redis-source" \
+          KIWI_REDIS_ORACLE_PRIMARY_METADATA="$RUNNER_TEMP/kiwi-oracle/primary-build.json" \
+          KIWI_REDIS_ORACLE_OUTPUT="$RUNNER_TEMP/kiwi-oracle/oracle-provenance.json" \
+          KIWI_REDIS_ORACLE_EVIDENCE_OUTPUT="$RUNNER_TEMP/kiwi-oracle/vector-differential-evidence.json" \
+          KIWI_EXPECTED_HEAD="${{ github.event.pull_request.head.sha || github.sha }}" \
+            bash scripts/compat/run-vector-differential.sh
+
+      - name: Upload trusted Oracle evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: trusted-vector-oracle-evidence
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/kiwi-oracle/oracle-provenance.json
+            ${{ runner.temp }}/kiwi-oracle/vector-differential-evidence.json
+          if-no-files-found: error
+
+  vector-cluster-fail-closed:
+    name: Vector cluster fail-closed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install build and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential protobuf-compiler
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.x'
+
+      - name: Install cluster test dependencies
+        run: python3 -m pip install 'pytest>=7.0.0' 'redis>=5.0.0'
+
+      - name: Build current Head Kiwi
+        run: cargo build --locked --bin kiwi
+
+      - name: Prepare pinned grpcurl
+        run: |
+          curl -fsSL --proto '=https' --tlsv1.2 \
+            https://github.com/fullstorydev/grpcurl/releases/download/v1.9.3/grpcurl_1.9.3_linux_x86_64.tar.gz \
+            -o "$RUNNER_TEMP/grpcurl.tar.gz"
+          echo 'a926b62a85787ccf73ef8736b3ae554f1242e39d92bb8767a79d6dd23b11d1d5  grpcurl.tar.gz' \
+            | (cd "$RUNNER_TEMP" && sha256sum -c -)
+          tar -xzf "$RUNNER_TEMP/grpcurl.tar.gz" -C "$RUNNER_TEMP" grpcurl
+
+      - name: Run required three-node Vector cluster gate
+        run: |
+          KIWI_RUN_CLUSTER_TESTS=1 \
+          KIWI_BINARY="$GITHUB_WORKSPACE/target/debug/kiwi" \
+          KIWI_GRPCURL="$RUNNER_TEMP/grpcurl" \
+            bash scripts/ci/run-vector-cluster.sh
+
   sanitizers:
     name: Sanitizers (${{ matrix.sanitizer }})
     runs-on: ubuntu-latest
@@ -318,6 +444,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y protobuf-compiler llvm
+
+      - name: Enable Oracle user namespace sandbox
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          unshare --user --map-root-user --mount --pid --fork true
 
       - name: Run tests with ${{ matrix.sanitizer }} sanitizer
         env:
@@ -428,6 +559,12 @@ jobs:
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+
+      - name: Verify rkyv advisory remains unreachable
+        run: bash scripts/ci/check-rkyv-reachability.sh
 
       - name: Security audit
         run: cargo audit

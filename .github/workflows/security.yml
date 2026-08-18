@@ -29,9 +29,9 @@ permissions:
   contents: read
 
 jobs:
-  # Check for known vulnerabilities in dependencies
-  # Non-blocking: reports findings but does not fail the PR check.
-  # Fix the reported vulnerabilities separately by updating dependencies.
+  # Scheduled visibility for known dependency vulnerabilities. The PR-blocking
+  # rkyv reachability sentinel and cargo audit run in ci.yml static-analysis;
+  # this non-blocking job does not replace that gate.
   cargo-audit:
     name: cargo audit
     runs-on: ubuntu-latest
