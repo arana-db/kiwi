@@ -104,6 +104,27 @@ pub fn create_legacy_root(root: &Path, instance_count: usize, vector: bool) {
     }
 }
 
+pub fn create_base_v1_root_with_wrong_list_comparator(root: &Path) {
+    std::fs::create_dir_all(root).expect("create legacy root");
+    let instance = root.join("0");
+    let descriptors = BASE_CF_NAMES.iter().map(|name| {
+        let options = if *name == "list_data_cf" {
+            Options::default()
+        } else {
+            cf_options(name)
+        };
+        ColumnFamilyDescriptor::new(*name, options)
+    });
+    let mut options = Options::default();
+    options.create_if_missing(true);
+    options.create_missing_column_families(true);
+    let db = DB::open_cf_descriptors(&options, &instance, descriptors)
+        .expect("create Base-v1 RocksDB with wrong persisted list comparator");
+    let default = db.cf_handle("default").expect("default CF");
+    db.put_cf(&default, b"string:alpha", b"value-0")
+        .expect("write Base-v1 sentinel");
+}
+
 pub fn list_cf(instance: &Path) -> Vec<String> {
     let mut names = DB::list_cf(&Options::default(), instance).expect("list column families");
     names.sort();

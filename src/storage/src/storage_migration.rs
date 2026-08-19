@@ -40,7 +40,9 @@ use crate::custom_comparator::{
     zsets_score_key_compare,
 };
 use crate::durable_fs::{sync_directory, sync_parent_directory};
-use crate::error::{InvalidFormatSnafu, IoSnafu, Result, RocksSnafu};
+use crate::error::{
+    InvalidFormatSnafu, IoSnafu, Result, RocksSnafu, map_existing_strict_rocks_open,
+};
 use crate::storage_manifest::{
     InstanceStorageManifestV2, ManifestDigest, MigrationPhase, MigrationSourceProfile,
     MigrationTransaction, ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2, SLOT_MAPPING_VERSION,
@@ -1844,8 +1846,11 @@ fn open_instance_strict(instance: &Path, options: &StorageOptions, names: &[&str
     let mut db_options = options.options.clone();
     db_options.create_if_missing(false);
     db_options.create_missing_column_families(false);
-    DB::open_cf_descriptors(&db_options, instance, descriptors_for(options, names))
-        .context(RocksSnafu)
+    map_existing_strict_rocks_open(DB::open_cf_descriptors(
+        &db_options,
+        instance,
+        descriptors_for(options, names),
+    ))
 }
 
 fn logical_cf_digest(db: &DB, cf_name: &str) -> Result<(u64, [u8; 32])> {
