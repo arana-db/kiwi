@@ -64,6 +64,7 @@ quote = "1.0"
 syn = { version = "3.0", features = ["extra-traits", "full"] }
 env_logger = "0.11"
 log = "0.4"
+libc = "0.2.186"
 # Kiwi uses the Arana-maintained arana-db/rust-rocksdb fork to provide the
 # TableProperties Collector/Factory FFI required by Storage LogIndex. The
 # maintenance tag names the baseline; Cargo.lock records the resolved commit.

@@ -32,7 +32,10 @@ use storage::{
 };
 use uuid::Uuid;
 
-use support::legacy_storage::{VECTOR_CF_NAMES, create_legacy_root, list_cf, read_sentinel};
+use support::legacy_storage::{
+    VECTOR_CF_NAMES, create_base_v1_root_with_wrong_list_comparator, create_legacy_root, list_cf,
+    read_sentinel,
+};
 use support::vector_v1_storage::{
     create_vector_v1_root, rewrite_first_member_incarnation, vector_member_key,
     vector_member_value, vector_meta_key, vector_meta_value,
@@ -57,6 +60,49 @@ fn open_storage(root: &std::path::Path, instance_count: usize) -> Result<(), Str
     drop(receiver);
     storage.close();
     Ok(())
+}
+
+fn assert_storage_compatibility_refusal(
+    error: &storage::error::Error,
+    storage: &storage::storage::Storage,
+    expected_on_disk: &str,
+    expected_action: &str,
+    expected_cause_parts: &[&str],
+) {
+    let display = error.to_string();
+    assert_eq!(
+        display.matches("storage compatibility refusal:").count(),
+        1,
+        "compatibility envelope must appear exactly once: {display}"
+    );
+    for marker in ["current=", "on_disk=", "action=", "cause="] {
+        assert_eq!(
+            display.matches(marker).count(),
+            1,
+            "field {marker} must appear exactly once: {display}"
+        );
+    }
+    assert!(
+        !display.contains('\r') && !display.contains('\n'),
+        "diagnostic must remain one line: {display:?}"
+    );
+    assert!(
+        display.contains(expected_on_disk),
+        "unexpected error: {display}"
+    );
+    assert!(
+        display.contains(expected_action),
+        "unexpected error: {display}"
+    );
+    for expected in expected_cause_parts {
+        assert!(
+            display.contains(expected),
+            "missing cause evidence {expected:?}: {display}"
+        );
+    }
+    assert!(storage.insts.is_empty());
+    assert!(storage.db_path().is_none());
+    assert!(!storage.is_opened.load(std::sync::atomic::Ordering::SeqCst));
 }
 
 #[test]
@@ -230,6 +276,116 @@ fn unknown_cf_partial_manifest_or_mixed_v1_v2_fails_before_shadow_creation() {
     });
     assert!(classify_storage_root(partial.path(), 1, &options).is_err());
     assert!(!partial.path().join(ROOT_STORAGE_MANIFEST_FILE).exists());
+}
+
+#[test]
+fn storage_open_reports_unregistered_legacy_cf_before_journal_creation() {
+    let temp = tempfile::tempdir().expect("unknown legacy root");
+    create_legacy_root(temp.path(), 1, false);
+    {
+        let instance = temp.path().join("0");
+        let mut db_options = Options::default();
+        db_options.create_if_missing(false);
+        db_options.create_missing_column_families(false);
+        let db = DB::open_cf_descriptors(
+            &db_options,
+            &instance,
+            support::legacy_storage::descriptors(&support::legacy_storage::BASE_CF_NAMES),
+        )
+        .expect("open Base-v1 fixture");
+        db.create_cf("unknown_cf", &Options::default())
+            .expect("create unknown CF");
+    }
+    let cf_before = list_cf(&temp.path().join("0"));
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let _runtime_guard = runtime.enter();
+    let mut storage = storage::storage::Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .expect_err("unregistered legacy CF must fail production admission");
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "legacy-without-root-manifest",
+        "logical export",
+        &["unregistered legacy column-family layout", "unknown_cf"],
+    );
+    assert_eq!(list_cf(&temp.path().join("0")), cf_before);
+    assert!(!temp.path().join(ROOT_STORAGE_MANIFEST_FILE).exists());
+    assert!(
+        std::fs::read_dir(temp.path())
+            .expect("read legacy root")
+            .all(|entry| {
+                let name = entry.expect("root entry").file_name();
+                let name = name.to_string_lossy();
+                !name.starts_with(".kiwi-shadow-") && !name.starts_with(".kiwi-backup-")
+            })
+    );
+}
+
+#[test]
+fn storage_open_reports_base_v1_persisted_comparator_mismatch_before_journal() {
+    let temp = tempfile::tempdir().expect("wrong comparator legacy root");
+    create_base_v1_root_with_wrong_list_comparator(temp.path());
+    let cf_before = list_cf(&temp.path().join("0"));
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let _runtime_guard = runtime.enter();
+    let mut storage = storage::storage::Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .expect_err("wrong persisted legacy comparator must fail before migration journal");
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "rocksdb-strict-open%3Dinvalid-argument",
+        "current Kiwi already attempted staged migration",
+        &["comparator", "floyd.ListsDataKeyComparator"],
+    );
+    assert!(!error.to_string().ends_with("cause=RocksDB error"));
+    assert_eq!(list_cf(&temp.path().join("0")), cf_before);
+    assert!(!temp.path().join(ROOT_STORAGE_MANIFEST_FILE).exists());
+    assert!(
+        std::fs::read_dir(temp.path())
+            .expect("read legacy root")
+            .all(|entry| {
+                let name = entry.expect("root entry").file_name();
+                let name = name.to_string_lossy();
+                !name.starts_with(".kiwi-shadow-") && !name.starts_with(".kiwi-backup-")
+            })
+    );
+}
+
+#[test]
+fn storage_open_escapes_field_injection_from_legacy_path() {
+    let temp = tempfile::tempdir().expect("field injection root");
+    #[cfg(unix)]
+    let (injected_name, escaped_name) = (
+        "bad; current=fake\ncause=fake",
+        "%3B current%3Dfake%0Acause%3Dfake",
+    );
+    #[cfg(not(unix))]
+    let (injected_name, escaped_name) = (
+        "bad; current=fake%cause=fake",
+        "%3B current%3Dfake%25cause%3Dfake",
+    );
+    std::fs::write(temp.path().join(injected_name), b"unexpected").expect("write unexpected entry");
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let _runtime_guard = runtime.enter();
+    let mut storage = storage::storage::Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .expect_err("unexpected legacy path must fail production admission");
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "legacy-without-root-manifest",
+        "logical export",
+        &[escaped_name],
+    );
+    assert!(temp.path().join(injected_name).is_file());
 }
 
 #[test]
@@ -476,6 +632,18 @@ fn run_fault_retry(
     let _guard = fail_next_storage_migration(temp.path(), fault);
     let error = open_storage(temp.path(), 2).expect_err("migration fault must stop admission");
     assert!(error.contains("injected storage migration failure"));
+    assert_eq!(
+        error.matches("storage compatibility refusal:").count(),
+        1,
+        "production migration fault must cross the admission envelope exactly once: {error}"
+    );
+    for marker in ["current=", "on_disk=", "action=", "cause="] {
+        assert_eq!(
+            error.matches(marker).count(),
+            1,
+            "production migration fault is missing {marker}: {error}"
+        );
+    }
 
     let interrupted = RootStorageManifestV2::read_from_dir(temp.path()).expect("journal");
     let transaction = interrupted.migration().expect("migration transaction");
@@ -1451,7 +1619,13 @@ async fn live_open_rejects_missing_vector_cf_instead_of_creating_it() {
     let error = storage
         .open(Arc::new(StorageOptions::default()), temp.path())
         .expect_err("live open must not add the missing Vector CF");
-    assert!(error.to_string().contains("RocksDB") || error.to_string().contains("column family"));
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "rocksdb-strict-open%3Dinvalid-argument",
+        "compatible",
+        &["Column family", "vector_data_cf"],
+    );
     let mut expected: Vec<String> = support::legacy_storage::BASE_CF_NAMES
         .iter()
         .map(|name| (*name).to_string())
