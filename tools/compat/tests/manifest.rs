@@ -542,7 +542,8 @@ fn repository_vector_operational_limits_are_explicitly_governed() {
     }
 
     let yaml = include_str!("../../../tests/compat/redis-8.8.1/manifest.yaml");
-    validate_operational_limits(yaml).unwrap();
+    validate_operational_limits(yaml)
+        .expect("repository operational-limit governance must remain valid");
 
     let reason_index = yaml
         .find("reason: \"Operational-limit difference:")
