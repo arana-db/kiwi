@@ -134,7 +134,7 @@ operational-limit difference 全部改为 #418。只允许改 issue URL；以下
 `.cargo/audit.toml` 的 owner 精确改为 `security-deps / Issue #430`。potential path、
 unreachable 状态和 `remove_when` 不变。`ci_contract` 必须在 advisory 的紧邻治理
 comment block 内要求该唯一 owner，且拒绝恢复成 WP8 / #421 或在无关位置追加伪 owner。
-#430 保持 OPEN，直到豁免按其验收条件真正移除。
+Issue #430 保持 OPEN，直到豁免按其验收条件真正移除。
 
 ### 4.3 STATE / KANBAN
 

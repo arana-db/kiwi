@@ -443,6 +443,7 @@ fn rejects_known_difference_governance_fields_when_missing() {
 fn repository_vector_operational_limits_are_explicitly_governed() {
     const ISSUE_418: &str = "https://github.com/arana-db/kiwi/issues/418";
     const ISSUE_421: &str = "https://github.com/arana-db/kiwi/issues/421";
+    const ISSUE_999: &str = "https://github.com/arana-db/kiwi/issues/999";
     const OPERATIONAL_LIMIT_PREFIX: &str = "Operational-limit difference:";
 
     fn validate_operational_limits(yaml: &str) -> Result<(), String> {
@@ -556,6 +557,17 @@ fn repository_vector_operational_limits_are_explicitly_governed() {
     assert!(
         validate_operational_limits(&reverted).is_err(),
         "restoring one operational-limit owner to Issue #421 must fail"
+    );
+
+    let mut foreign_owner = yaml.to_owned();
+    foreign_owner.replace_range(issue_index..issue_index + ISSUE_418.len(), ISSUE_999);
+    assert!(
+        !foreign_owner.contains(ISSUE_421),
+        "the foreign-owner mutant must not rely on the Issue #421 substring scan"
+    );
+    assert!(
+        validate_operational_limits(&foreign_owner).is_err(),
+        "an operational-limit difference owned by an unapproved Issue must fail"
     );
 }
 
