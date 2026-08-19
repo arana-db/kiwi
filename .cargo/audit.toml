@@ -23,7 +23,7 @@
 [advisories]
 ignore = [
   # RUSTSEC-2026-0235: rkyv 0.7.46
-  # owner: WP8 / Issue #421
+  # owner: security-deps / Issue #430
   # potential_path: openraft -> byte-unit -> rust_decimal
   # current_status: unreachable optional dependency
   # Evidence: the locked offline all-targets all-features inverse tree is empty.

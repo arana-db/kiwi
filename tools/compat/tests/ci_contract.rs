@@ -970,23 +970,51 @@ fn validate_rkyv_sentinel_source(source: &str) -> Result<(), String> {
 }
 
 fn validate_rkyv_audit_governance(source: &str) -> Result<(), String> {
-    let advisory_ignore_count = source
-        .lines()
-        .filter(|line| line.trim() == "\"RUSTSEC-2026-0235\",")
-        .count();
-    if advisory_ignore_count != 1 {
+    let lines = source.lines().collect::<Vec<_>>();
+    let advisory_lines = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == "\"RUSTSEC-2026-0235\",")
+        .collect::<Vec<_>>();
+    if advisory_lines.len() != 1 {
         return Err(format!(
-            "audit governance must ignore RUSTSEC-2026-0235 exactly once, got {advisory_ignore_count}"
+            "audit governance must ignore RUSTSEC-2026-0235 exactly once, got {}",
+            advisory_lines.len()
         ));
     }
+    let advisory_index = advisory_lines[0].0;
+    let mut block_start = advisory_index;
+    while block_start > 0 && lines[block_start - 1].trim_start().starts_with('#') {
+        block_start -= 1;
+    }
+    let governance_block = &lines[block_start..advisory_index];
+
+    let owner_lines = governance_block
+        .iter()
+        .filter(|line| line.trim_start().starts_with("# owner:"))
+        .collect::<Vec<_>>();
+    if owner_lines.len() != 1 || owner_lines[0].trim() != "# owner: security-deps / Issue #430" {
+        return Err(
+            "RUSTSEC-2026-0235 owner must be exactly security-deps / Issue #430 in its governance block"
+                .to_string(),
+        );
+    }
     for required in [
-        "owner: WP8 / Issue #421",
-        "potential_path: openraft -> byte-unit -> rust_decimal",
-        "current_status: unreachable optional dependency",
-        "remove_when:",
+        "# RUSTSEC-2026-0235: rkyv 0.7.46",
+        "# potential_path: openraft -> byte-unit -> rust_decimal",
+        "# current_status: unreachable optional dependency",
+        "# remove_when: rkyv@0.7.46 becomes reachable, or dependencies permit an",
+        "# advisory-free version without this exception.",
     ] {
-        if !source.contains(required) {
-            return Err(format!("audit governance is missing {required}"));
+        if governance_block
+            .iter()
+            .filter(|line| line.trim() == required)
+            .count()
+            != 1
+        {
+            return Err(format!(
+                "RUSTSEC-2026-0235 governance block must contain exactly one {required}"
+            ));
         }
     }
     if source.contains("Raft wire serialization") {
@@ -1219,6 +1247,72 @@ fn rkyv_audit_ignore_has_owner_path_status_and_removal_condition() {
     let source = normalized_fixture(include_str!("../../../.cargo/audit.toml"));
     validate_rkyv_audit_governance(&source)
         .expect("rkyv advisory ignore must carry accurate governance");
+
+    let restored_wp8_owner = source.replacen(
+        "# owner: security-deps / Issue #430",
+        "# owner: WP8 / Issue #421",
+        1,
+    );
+    assert!(
+        validate_rkyv_audit_governance(&restored_wp8_owner).is_err(),
+        "audit governance accepted the retired WP8 / Issue #421 owner"
+    );
+
+    let missing_owner = source.replacen("  # owner: security-deps / Issue #430\n", "", 1);
+    assert!(
+        validate_rkyv_audit_governance(&missing_owner).is_err(),
+        "audit governance accepted a missing advisory owner"
+    );
+
+    let duplicate_owner = source.replacen(
+        "  # owner: security-deps / Issue #430\n",
+        "  # owner: security-deps / Issue #430\n  # owner: security-deps / Issue #430\n",
+        1,
+    );
+    assert!(
+        validate_rkyv_audit_governance(&duplicate_owner).is_err(),
+        "audit governance accepted duplicate advisory owners"
+    );
+
+    let unrelated_owner = format!("{restored_wp8_owner}\n# owner: security-deps / Issue #430\n");
+    assert!(
+        validate_rkyv_audit_governance(&unrelated_owner).is_err(),
+        "an unrelated Issue #430 comment must not govern RUSTSEC-2026-0235"
+    );
+
+    let continuation_mutants = [
+        (
+            "removed",
+            source.replacen("  # advisory-free version without this exception.\n", "", 1),
+        ),
+        (
+            "tampered",
+            source.replacen(
+                "  # advisory-free version without this exception.",
+                "  # advisory-bearing version may retain this exception.",
+                1,
+            ),
+        ),
+    ];
+    for (name, mutant) in &continuation_mutants {
+        assert_ne!(
+            mutant, &source,
+            "{name} remove_when continuation mutant must alter the fixture"
+        );
+    }
+    let accepted_continuation_mutants = continuation_mutants
+        .iter()
+        .filter_map(|(name, mutant)| {
+            validate_rkyv_audit_governance(mutant)
+                .is_ok()
+                .then_some(*name)
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        accepted_continuation_mutants.is_empty(),
+        "audit governance accepted invalid remove_when continuation mutants: \
+         {accepted_continuation_mutants:?}"
+    );
 
     let removed_advisory = source.replacen("  \"RUSTSEC-2026-0235\",\n", "", 1);
     assert!(

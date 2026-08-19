@@ -4,10 +4,10 @@ title: Kiwi 架构设计与 SDD 开发计划
 status: accepted-design
 authority: sole-project-entry
 version: 4
-updated_at: 2026-08-11
+updated_at: 2026-08-19
 baseline_repository: arana-db/kiwi
 baseline_branch: main
-baseline_ref: 733888fc90ad8ef039947e87b08d7500a405954a
+baseline_ref: 9a8a64aca12a825912f299450e10fc6043eca610
 wp0_pr_number: 414
 wp0_pr_base_ref: 0c4795ec716299598686fc7c5e0fac03a30e044d
 wp0_pr_head_ref: e2bfc7deb481590a757f0034874b7f21a4a31aa2
@@ -16,18 +16,26 @@ wp0_merge_ref: 9820162ebdf2d26aa6349e704efe8737b2e73e4a
 wp0_exact_main_verification_ref: 688d905fec31b54aec76f36676f55efd8b5cfa17
 wp0_exact_main_verification_run: 30801285622
 wp0_exact_main_verification_status: passed
-github_snapshot_at: 2026-08-06T04:36:21Z
+wp8_pr_number: 422
+wp8_pr_base_ref: 733888fc90ad8ef039947e87b08d7500a405954a
+wp8_pr_head_ref: 2b03219cdd5e452e08c1b2144c3c90516190d41f
+wp8_merge_parent_ref: 733888fc90ad8ef039947e87b08d7500a405954a
+wp8_merge_ref: 9a8a64aca12a825912f299450e10fc6043eca610
+wp8_exact_main_verification_ref: 9a8a64aca12a825912f299450e10fc6043eca610
+wp8_exact_main_verification_run: 32129266046
+wp8_exact_main_verification_status: passed
+github_snapshot_at: 2026-08-19T07:28:08Z
 redis_oracle_tag: 8.8.1
 redis_oracle_ref: 77b6c308396c9700672390a210143a8496fb4b10
 required_runtime_mode: cache-off
 executable_scope: M0-M6
 long_term_scope: M0-M10
 current_work_package: WP8
-current_work_package_status: in-progress
-current_plan: docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md
+current_work_package_status: accepted
+current_plan: docs/superpowers/plans/2026-08-19-wp8-issue-closeout.md
 current_issue: 421
 current_pr: 422
-next_safe_action: execute-wp8-runtime-raw-resp-client-red-tests
+next_safe_action: await-next-authorized-work-package
 ---
 
 # Kiwi 架构设计与 SDD 开发计划
@@ -162,27 +170,22 @@ M7 到 M10 进入长期架构，但不进入当前实现：
 | D | Discussion、RFC、Proposal | 设计输入，必须显式采纳 |
 | E | 历史计划、旧周报、过期 Issue、草稿 | 背景，不形成当前任务 |
 
-### 3.2 2026-08-06T04:36:21Z 实时快照
+### 3.2 2026-08-19T07:28:08Z 实时快照
 
 - Repository：arana-db/kiwi。
 - Default branch：main。
-- main：733888fc90ad8ef039947e87b08d7500a405954a。
-- Open Issues：64；#415 是 WP1 Oracle provenance 实施 Issue，#418 跟踪 Vector differential，#421 是 WP8 primary Issue。
-- Discussions：18，其中 1 个关闭，没有 accepted answer。
-- PR #409：MERGED，对应 merge commit 0c4795ec716299598686fc7c5e0fac03a30e044d。
-- Issue #407：CLOSED，关闭时间 2026-08-02T04:44:40Z。
-- PR #412：MERGED，Head 9d1f83360eb52ed23b48b2e5cb1159c93e26e7af，merge commit cbcbadc27068634d851ab0ed63989d2214ab2408；Issue #143 已关闭。
+- main：9a8a64aca12a825912f299450e10fc6043eca610。
 - PR #414：MERGED，base 0c4795ec716299598686fc7c5e0fac03a30e044d，Head e2bfc7deb481590a757f0034874b7f21a4a31aa2，merge commit 9820162ebdf2d26aa6349e704efe8737b2e73e4a；Issue #413 已关闭。
 - PR #417：MERGED，merge commit 688d905fec31b54aec76f36676f55efd8b5cfa17；其 main push CI run 30801285622 成功，完成 WP0 exact-main verification。
 - PR #356：MERGED，最终 Head 4e404b61cec1ece8f8750e0a0631839cce7f4ddc，merge commit 733888fc90ad8ef039947e87b08d7500a405954a；VectorSet Phase 1 已进入当前主线。
-- main commit 733888fc90ad8ef039947e87b08d7500a405954a 的 push CI run 31070395799、CodeQL run 31070395803 和 Benchmark run 31070395773 已成功；这些 job 没有执行 Trusted Vector differential 或 required 三节点 Vector cluster gate。
-- PR #261：OPEN，Head fb092812234a54ad3757d35a62ad033136e422c7，GitHub 当前返回 mergeable/mergeStateStatus UNKNOWN，属于长期滞留 PR。
+- PR #422：MERGED，Base 733888fc90ad8ef039947e87b08d7500a405954a，最终 Head 2b03219cdd5e452e08c1b2144c3c90516190d41f，merge commit 9a8a64aca12a825912f299450e10fc6043eca610；其 main push `ci` run 32129266046 成功。
+- Issue #415 已关闭；Issue #418、#421 和 #430 保持 OPEN。#418 持有 Vector compatibility residual differences，#430 持有 `RUSTSEC-2026-0235` advisory 生命周期。
 
 该快照只用于编制本版本。开始任一工作包、创建 PR、复审或验收前必须重新查询实时状态。
 
 ### 3.3 开放 Issue 分类
 
-当前 64 个开放 Issue 继续按 SDD 用途分类；数量会随实时状态变化，不作为工作包授权：
+开放 Issue 继续按 SDD 用途分类；数量会随实时状态变化，不作为工作包授权：
 
 | 分类 | 处理 |
 |---|---|
@@ -218,9 +221,10 @@ Issue 数量和分类会变化，工作包只依赖明确列出的 Issue，不�
 | Graceful shutdown | [#408](https://github.com/arana-db/kiwi/issues/408) | WP3 child |
 | Real INFO state | [#410](https://github.com/arana-db/kiwi/issues/410) | WP7 related |
 | SDD control plane | [#413](https://github.com/arana-db/kiwi/issues/413) | WP0 primary |
-| Trusted Redis Oracle | [#415](https://github.com/arana-db/kiwi/issues/415) | WP1 implementation dependency；WP8 full-scope PR 内闭环 |
-| Vector differential | [#418](https://github.com/arana-db/kiwi/issues/418) | WP8 related |
+| Trusted Redis Oracle | [#415](https://github.com/arana-db/kiwi/issues/415) | WP8 内闭环并关闭，作为历史实现证据 |
+| Vector differential | [#418](https://github.com/arana-db/kiwi/issues/418) | OPEN；持有 Vector compatibility residual differences |
 | VectorSet lifecycle | [#421](https://github.com/arana-db/kiwi/issues/421) | WP8 primary |
+| rkyv advisory exception | [#430](https://github.com/arana-db/kiwi/issues/430) | OPEN；持有 `RUSTSEC-2026-0235` 和 feature-graph sentinel 生命周期 |
 
 [Issue #407](https://github.com/arana-db/kiwi/issues/407) 已关闭，
 [PR #409](https://github.com/arana-db/kiwi/pull/409) 已合并。后续只对账剩余
@@ -325,8 +329,8 @@ flowchart LR
 
 - RocksDB 是业务数据、类型、编码和 TTL etime 的唯一持久化权威。
 - 主数据库使用七个 CF：default/meta/string、hash、set、list、zset-data、zset-score、vector-data。
-- CF 名称、index、comparator、compaction filter、batch 路由和 Raft checkpoint 列表分散硬编码。
-- 当前每个 instance 有只保存 version、storage incarnation 和 next generation 的 StorageManifest v1；它尚不能表达全局 topology、CF/comparator/codec、snapshot compatibility 和可恢复 migration。
+- PR #422 已将当前七 CF 的名称/index、comparator、compaction filter、batch 路由、Raft checkpoint、snapshot、TTL、compaction 和枚举消费者纳入单一 manifest closure checker；WP8 的 Vector CF consumer gap 已闭合，WP2 后续新增格式、CF 或消费者时仍必须重新证明闭包。
+- PR #422 已实现 Root/Instance StorageManifest v2，并完成真实 Base 六 CF→七 CF、Vector-v1 七 CF manifest v1→v2 staged migration、phase interruption/retry/reopen 和受控 rollback pairing；WP2/WP5 后续 StorageManifest、topology 或恢复格式演进仍需新增兼容与迁移证据。
 - ExpirationManager 是进程内索引，启动时不从 RocksDB 重建。
 - CompactSpecificKey 当前只记录日志并返回成功，未执行真实物理清理。
 
@@ -337,15 +341,15 @@ flowchart LR
 - Raft log、vote 和 committed state 使用普通 RocksDB write/put 后即确认完成，尚缺显式 stable-storage 语义证明。
 - Snapshot install 已有 staged restore、pause、install marker、RocksDB reopen 和切换骨架。
 - Snapshot archive 当前完整驻留内存。
-- Snapshot writer 当前使用 v2，reader 拒绝真实 Base v1 和未来版本；Base v1 compatibility、install phase recovery 和完整 manifest pairing 尚未闭合。
+- PR #422 已验证 Base v1 snapshot/legacy profile 到 Head v2 的正向兼容、SnapshotInstallMarker phase recovery、manifest/source-profile pairing，以及未知未来 manifest、snapshot 和 source profile 拒绝；WP8 scoped 版本矩阵已闭合，WP2/WP5 后续 snapshot 或恢复格式演进仍需保持已知历史版本正向与未知未来版本负向证明。
 
 ### 4.5 当前生命周期和验证事实
 
 - RuntimeManager 当前先停止 storage runtime，再停止 network runtime。
 - network、StorageServer、cluster gRPC 和 Raft bridge 的长期任务没有统一 supervisor。
 - Storage 到 Raft bridge 使用无界 channel。
-- Redis 8.8.1 compatibility manifest 已登记 Vector 命令和 known differences，但正常 CI 排除 Vector differential，尚无可信 Oracle 执行证据。
-- CI 尚未形成完整 Oracle、raw RESP differential、TCL、deterministic Raft simulator、process crash matrix 和真实磁盘 upgrade/rollback 矩阵。
+- PR #422 已在 required Linux CI 中使用可信 Redis 8.8.1 独立重建 Oracle 非零执行 Vector raw RESP2/RESP3 differential、final-state validation 和三节点 fail-closed gate；manifest 继续显式登记尚未解除的 compatibility differences。
+- 更广泛的全命令 TCL、deterministic Raft simulator、process crash matrix 和 M6 级故障证据仍由 WP1、WP6、WP7 管理，不能由 WP8 的 Vector scoped 证据替代。
 - Embedded Redis Hot Tier 当前没有生产依赖、loader、FFI 或 Cache ON 数据路径。
 
 ## 5. 目标系统架构
@@ -500,12 +504,12 @@ Standalone 和 Cluster 不能形成两套 Redis 可观察语义、磁盘格式�
 | `INV-09` | 所有长期任务必须有 owner、cancellation token、JoinHandle 和确定性 join。 | 多个长期任务仍由裸 `tokio::spawn` 启动。 | owner、取消和 join 责任未统一。 | WP3 | lifecycle registry 和退出测试证明无 detached task。 |
 | `INV-10` | shutdown 必须先停止 admission，再 drain 依赖，最后关闭 RocksDB。 | 当前 manager 先停止 storage，再停止 network。 | 关闭顺序与依赖方向相反。 | WP3 | 并发 shutdown 测试证明 admission→drain→RocksDB 顺序。 |
 | `INV-11` | persisted etime 是 TTL 权威；内存索引只能是可丢失优化。 | etime 已持久化，expiration manager 是辅助索引。 | restart、compaction、generation 和 stale-index 证据不足。 | WP5 | 删除内存索引后重建、重启和 TTL differential 通过。 |
-| `INV-12` | 所有 CF 消费者由同一可验证 manifest 闭合。 | VectorDataCF 已加入，当前 per-instance manifest v1 只保存 incarnation/generation，CF 列表仍分散在创建、扫描、TTL、compaction 和 snapshot 路径。 | 缺少 Root/Instance manifest v2 和消费者闭包检查。 | WP2、WP8 | manifest consumer-closure checker 和新增 CF 变异测试通过。 |
-| `INV-13` | 未知 disk、snapshot、comparator 或 manifest 版本默认 fail closed。 | snapshot v2 和 marker 对未知版本 fail closed，但真实 Base v1 snapshot 尚未进入显式兼容范围。 | 已知历史版本兼容与未知未来版本拒绝需要同时证明。 | WP2、WP5、WP8 | Base v1 正向恢复和未知/未来版本负向测试通过。 |
+| `INV-12` | 所有 CF 消费者由同一可验证 manifest 闭合。 | PR #422 已把当前七 CF、Root/Instance StorageManifest v2、checkpoint/snapshot、TTL、compaction 和枚举消费者纳入单一 manifest closure checker。 | WP8 的当前 Vector CF gap 已闭合；未来 WP2 新增格式、CF 或消费者时仍必须重新证明闭包。 | WP2、WP8 | manifest consumer-closure checker 和新增 CF 变异测试通过。 |
+| `INV-13` | 未知 disk、snapshot、comparator 或 manifest 版本默认 fail closed。 | PR #422 已验证真实 Base v1 snapshot/legacy profile 正向迁移，以及未知未来 manifest、snapshot 和 source profile 拒绝。 | WP8 scoped 版本矩阵已闭合；WP2/WP5 后续格式演进仍需保持已知历史版本正向与未知未来版本负向证明。 | WP2、WP5、WP8 | Base v1 正向恢复和未知/未来版本负向测试通过。 |
 | `INV-14` | Snapshot build、install、普通 apply、reopen 和 shutdown 必须由同一 gate 建立顺序。 | 各路径有局部锁和 staged install。 | 缺少覆盖全部状态转换的统一 gate。 | WP3、WP5 | 并发 build/install/apply/reopen/shutdown 矩阵无竞态和旧状态可见。 |
 | `INV-15` | 旧 Storage、Redis、DB、CF、iterator 或 snapshot handle 不得跨 reopen/swap 继续使用。 | reopen 和 install 会替换部分顶层对象。 | 跨层缓存 handle 的失效证明不足。 | WP2、WP5 | generation/handle 负向测试证明旧对象全部拒绝使用。 |
 | `INV-16` | 每个 Binlog 必须有明确 db、instance、slot/group 和 generation 语义。 | db_id 固定为 0，slot 从 key 推导，instance 由本机 topology 推导，缺少 group/generation。 | replay、迁移和 stale generation 语义未定义。 | WP2、WP4、WP5 | 编码 round-trip、cluster replay 和 generation rejection 通过。 |
-| `INV-17` | Redis 兼容结论必须来自固定 Oracle、raw response 和最终状态的可复现实验。 | 已固定 Redis 8.8.1 tag/commit 和 provenance 合同。 | Vector differential 被正常 CI 排除，独立重建和 runtime identity 尚未完成。 | WP1、WP6、WP7、WP8 | exact Oracle 重建 hash equality、raw RESP2/RESP3 differential 与兼容矩阵通过。 |
+| `INV-17` | Redis 兼容结论必须来自固定 Oracle、raw response 和最终状态的可复现实验。 | PR #422 exact-main run 32129266046 已绑定 Redis 8.8.1 exact source、独立重建 hash equality、runtime identity、raw RESP2/RESP3 frame、final state 和固定 Vector required registry。 | Vector scoped gap 已闭合；更广泛的 Redis Core/TCL/fault coverage 仍属于 WP1、WP6、WP7。 | WP1、WP6、WP7、WP8 | exact Oracle 重建 hash equality、raw RESP2/RESP3 differential 与兼容矩阵通过。 |
 | `INV-18` | 非幂等写结果未知时标记 SUBMIT_UNKNOWN，不盲目重试。 | 当前没有端到端 typed SUBMIT_UNKNOWN，相关失败压成通用错误。 | 断线、超时和提交后响应丢失仍可能混同普通失败。 | WP4、WP7 | fault history 区分 safe failure、success 和 SUBMIT_UNKNOWN。 |
 | `INV-19` | INFO 和 metrics 只消费真实 provider，不维护硬编码影子状态。 | INFO 仍包含硬编码版本、平台、PID、端口和 uptime。 | runtime、storage 和 Raft provider 未闭合。 | WP7 | provider contract 测试和真实进程 INFO/metrics 对账通过。 |
 | `INV-20` | M6 前 Embedded Redis Hot Tier 保持 frozen。 | D009 和当前 scope 已冻结 M7/M8 热层实施，生产路径中不存在 Hot Tier。 | 无实现 Gap；必须持续防止实现 PR 隐式解除冻结。 | WP7 | M6 gate、用户批准和新 Decision 同时存在后才可解除。 |
@@ -1416,21 +1420,28 @@ Requirement：
 
 ### WP8：VectorSet 合并后生命周期、兼容性与门禁闭环
 
-状态：in-progress。
+状态：accepted。
 
 Primary Issue handling：
 
 - Primary Issue：[#421](https://github.com/arana-db/kiwi/issues/421)。
 - [PR #356](https://github.com/arana-db/kiwi/pull/356) 是已合并事实和缺口来源，不作为当前开放 Issue。
-- 只有 #415、#418、#421 的 required acceptance 与本工作包退出门禁全部闭合时，聚合 PR 才能使用 `Fixes`。
+- PR #422 已完成 WP8 required acceptance；#415 已关闭，仍有效的 compatibility differences 由 OPEN #418 持有，`RUSTSEC-2026-0235` advisory 生命周期由 OPEN #430 持有。治理 PR 在新的 exact-main 成功前继续使用 `Refs #421`，不得提前自动关闭 primary Issue。
 
 Implementation PR：[#422](https://github.com/arana-db/kiwi/pull/422)。
+
+合并证据：
+
+- PR 固定区间：733888fc90ad8ef039947e87b08d7500a405954a..2b03219cdd5e452e08c1b2144c3c90516190d41f；
+- merge 固定区间：733888fc90ad8ef039947e87b08d7500a405954a..9a8a64aca12a825912f299450e10fc6043eca610；
+- WP8 exact-main verification：status=passed，ref=9a8a64aca12a825912f299450e10fc6043eca610，run=32129266046。
 
 Parent / Related：
 
 - [PR #356](https://github.com/arana-db/kiwi/pull/356)；
 - [Issue #415](https://github.com/arana-db/kiwi/issues/415)；
 - [Issue #418](https://github.com/arana-db/kiwi/issues/418)；
+- [Issue #430](https://github.com/arana-db/kiwi/issues/430)；
 - [Issue #325](https://github.com/arana-db/kiwi/issues/325)；
 - [Issue #340](https://github.com/arana-db/kiwi/issues/340)；
 - [Issue #342](https://github.com/arana-db/kiwi/issues/342)；
@@ -1455,7 +1466,7 @@ Requirement：
 依赖：
 
 - WP0 accepted；
-- exact main 包含 PR #356，即 733888fc90ad8ef039947e87b08d7500a405954a 或其后继；
+- exact main 包含 PR #422，即 9a8a64aca12a825912f299450e10fc6043eca610 或其后继；
 - D019 明确授权在一个 Draft PR 中聚合 #415 Trusted Oracle 和 WP8 产品闭环；
 - 复用 WP1-WP7 已定义的 Oracle、manifest/topology、runtime、Raft、snapshot、Redis semantics 和 fault-gate 合同，并按本文限定范围逐项实施和验收；D019 不要求这些工作包的无关范围先行 accepted；
 - 用户已确认 [VectorSet 合并后全量闭环设计](../docs/superpowers/specs/2026-08-06-vector-set-post-merge-remediation-design.md)；[VectorSet 合并后全量闭环实施总计划](../docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md) 和三个逐文件工作流计划已建立。
@@ -1488,7 +1499,7 @@ Requirement：
 - Trusted Oracle primary/rebuild 完整 artifact manifest 和 binary SHA-256 相等，正式 runtime 只来自 rebuild artifact，cleanup 成功后才发布 provenance；
 - Vector RESP2/RESP3 differential 和三节点 cluster gate 非零执行且零 skip/xfail；
 - rkyv reachability 变化会使 CI 失败；所有 required checks 绑定 exact Head；
-- 无未处理 P0/P1，#415、#418、#421 和所有 known difference/skip 残留完成对账。
+- 无未处理 P0/P1；#415 required acceptance 已完成，#418 继续持有未到 `remove_when` 的 compatibility differences，#430 继续持有 advisory exception，#421 的 required acceptance、known difference 和 skip 残留均已完成对账。
 
 验证门禁：
 
@@ -1696,19 +1707,20 @@ docs/sdd/WP-N/
 
 | 字段 | 当前值 |
 |---|---|
-| Baseline | main@733888fc90ad8ef039947e87b08d7500a405954a |
+| Baseline | main@9a8a64aca12a825912f299450e10fc6043eca610 |
 | Current milestone | M0-M6 / WP8 |
 | Current work package | WP8 |
-| Status | in-progress |
-| Current plan | [WP8 VectorSet 合并后全量闭环实施总计划](../docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md) |
+| Status | accepted |
+| Current plan | [WP8 与 Issue #421 合并后收口实施计划](../docs/superpowers/plans/2026-08-19-wp8-issue-closeout.md) |
 | Current Issue | [#421](https://github.com/arana-db/kiwi/issues/421) |
 | Current PR | [#422](https://github.com/arana-db/kiwi/pull/422) |
 | WP0 exact-main verification | passed |
+| WP8 exact-main verification | passed |
 | Required mode | Cache OFF |
 | M7/M8 | frozen |
-| Next safe action | 提交并顺序集成 WP8 Runtime/Protocol Task 1-5，然后在独立 worktree 启动 Trusted Oracle/CI/Security 实施计划 |
+| Next safe action | 等待下一个经明确批准的工作包；M7/M8 继续 frozen |
 
-PR #417 已修复 WP0 固定提交区间验证；main@688d905fec31b54aec76f36676f55efd8b5cfa17 的 ci run 30801285622 成功，当前 baseline commit 733888fc90ad8ef039947e87b08d7500a405954a 是其后继。WP0 已进入 accepted。PR #356 随后把 Vector Set Phase 1 合入主线，用户通过 D019 授权用 Draft PR #422 聚合 #415、#418、#421 的全量闭环。Storage/Recovery Task 1→7 已完成、集成并通过 exact-ref migration/rollback/snapshot 矩阵；独立 `codex/wp8-runtime-protocol` worktree 已从聚合 Head 建立。Runtime/Protocol Task 1 的无分配 `Bytes` admission 纯函数、Task 2 的 Cmd hook/双层 `GatedCmd` 顺序、Task 3 的 ParsedCommand Bytes 保留/Config 必填传播/真实 TCP storage spy/admission-before-copy 合同、Task 4 的 VADD typed parse outcome、Redis `arity=-5` dispatcher 边界、unknown trailing option 精确错误和 argv-shape heuristic 删除，以及 Task 5 的 function-scoped raw RESP2/RESP3 client、完整 frame reader、collection 零联网和五命令 Issue #421 operational-limit governance，均已完成 tests-first、变异验证和 changed-path 回归；正式双端 raw differential 仍由后续 verifier-supervised Trusted Oracle/CI runner 执行。下一安全动作是提交并顺序集成 Runtime/Protocol Task 1-5，然后启动 Trusted Oracle/CI/Security 实施计划。
+PR #422 以 Base 733888fc90ad8ef039947e87b08d7500a405954a、最终 Head 2b03219cdd5e452e08c1b2144c3c90516190d41f 合并为 main@9a8a64aca12a825912f299450e10fc6043eca610；该 merge 与 PR Head tree 一致，`ci` run 32129266046 在 exact main 上完成 Trusted Oracle 独立重建、Vector raw RESP2/RESP3 与 final-state differential、storage/snapshot migration、runtime admission、三节点 fail-closed 和供应链门禁。Issue #415 已关闭；五条 operational-limit differences 的 active owner 迁移到保持 OPEN 的 #418，`RUSTSEC-2026-0235` advisory owner 迁移到保持 OPEN 的 #430。WP8 的 Requirement、实现证据和残留风险已对账并进入 accepted；Issue #421 只在本治理 PR 合并且新的 exact-main `ci` 成功后按 closeout 评论关闭。M7/M8 和 Vector Set Phase 2 继续 frozen，不因 WP8 accepted 自动解冻。
 
 ## 18. 决策门禁
 

@@ -441,66 +441,121 @@ fn rejects_known_difference_governance_fields_when_missing() {
 
 #[test]
 fn repository_vector_operational_limits_are_explicitly_governed() {
-    let manifest = parse_valid(include_str!(
-        "../../../tests/compat/redis-8.8.1/manifest.yaml"
-    ));
-    let expected = [
-        (
-            "VADD",
-            &[
-                "max_dimension",
-                "max_vector_bytes",
-                "max_element_bytes",
-                "raw",
-            ][..],
-        ),
-        (
-            "VSIM",
-            &["max_dimension", "max_vector_bytes", "max_element_bytes"][..],
-        ),
-        ("VEMB", &["max_element_bytes"][..]),
-        ("VREM", &["max_element_bytes"][..]),
-        ("VISMEMBER", &["max_element_bytes"][..]),
-    ];
+    const ISSUE_418: &str = "https://github.com/arana-db/kiwi/issues/418";
+    const ISSUE_421: &str = "https://github.com/arana-db/kiwi/issues/421";
+    const OPERATIONAL_LIMIT_PREFIX: &str = "Operational-limit difference:";
 
-    for (name, reason_terms) in expected {
-        let command = manifest
-            .commands()
+    fn validate_operational_limits(yaml: &str) -> Result<(), String> {
+        let manifest = parse_valid(yaml);
+        let expected = [
+            (
+                "VADD",
+                &[
+                    "max_dimension",
+                    "max_vector_bytes",
+                    "max_element_bytes",
+                    "raw",
+                ][..],
+            ),
+            (
+                "VSIM",
+                &["max_dimension", "max_vector_bytes", "max_element_bytes"][..],
+            ),
+            ("VEMB", &["max_element_bytes"][..]),
+            ("VREM", &["max_element_bytes"][..]),
+            ("VISMEMBER", &["max_element_bytes"][..]),
+        ];
+        let expected_commands = expected
             .iter()
-            .find(|command| command.command() == name)
-            .unwrap_or_else(|| panic!("{name} must be registered"));
-        assert_eq!(command.classification(), Classification::KnownDifference);
-        assert_eq!(
-            command.modes().get(&Mode::StandaloneCacheOff),
-            Some(&Classification::KnownDifference)
-        );
+            .map(|(name, _)| *name)
+            .collect::<BTreeSet<_>>();
+        let mut observed_commands = BTreeSet::new();
 
-        let difference = command
-            .known_differences()
-            .iter()
-            .find(|difference| difference.issue() == "https://github.com/arana-db/kiwi/issues/421")
-            .unwrap_or_else(|| panic!("{name} must register the Issue #421 limit difference"));
-        assert_eq!(difference.owner(), "cmd-vector");
-        assert_eq!(difference.affected(), "standalone_cache_off; resp2/resp3");
-        assert_eq!(
-            difference.last_verified_ref(),
-            format!("redis-source:{REDIS_COMMIT}")
-        );
-        let reason = difference.reason().to_ascii_lowercase();
-        for term in reason_terms {
-            assert!(
-                reason.contains(term),
-                "{name} Issue #421 reason must mention {term}"
-            );
+        for command in manifest.commands() {
+            let differences = command
+                .known_differences()
+                .iter()
+                .filter(|difference| difference.reason().starts_with(OPERATIONAL_LIMIT_PREFIX))
+                .collect::<Vec<_>>();
+            if differences.len() > 1 {
+                return Err(format!(
+                    "{} must register exactly one operational-limit difference",
+                    command.command()
+                ));
+            }
+            let Some(difference) = differences.first() else {
+                continue;
+            };
+
+            let name = command.command();
+            observed_commands.insert(name);
+            let Some((_, reason_terms)) = expected.iter().find(|(expected, _)| *expected == name)
+            else {
+                return Err(format!("unexpected operational-limit command {name}"));
+            };
+            if command.classification() != Classification::KnownDifference
+                || command.modes().get(&Mode::StandaloneCacheOff)
+                    != Some(&Classification::KnownDifference)
+            {
+                return Err(format!("{name} must remain a known difference"));
+            }
+            if difference.issue() != ISSUE_418 {
+                return Err(format!(
+                    "{name} operational-limit difference must be owned by Issue #418"
+                ));
+            }
+            if difference.owner() != "cmd-vector"
+                || difference.affected() != "standalone_cache_off; resp2/resp3"
+                || difference.last_verified_ref() != format!("redis-source:{REDIS_COMMIT}")
+            {
+                return Err(format!(
+                    "{name} operational-limit governance metadata must remain intact"
+                ));
+            }
+            let reason = difference.reason().to_ascii_lowercase();
+            for term in *reason_terms {
+                if !reason.contains(term) {
+                    return Err(format!(
+                        "{name} operational-limit reason must mention {term}"
+                    ));
+                }
+            }
+            let removal = difference.remove_when().to_ascii_lowercase();
+            for term in ["raw", "resp2", "resp3", "boundary"] {
+                if !removal.contains(term) {
+                    return Err(format!(
+                        "{name} operational-limit removal condition must mention {term}"
+                    ));
+                }
+            }
         }
-        let removal = difference.remove_when().to_ascii_lowercase();
-        for term in ["raw", "resp2", "resp3", "boundary"] {
-            assert!(
-                removal.contains(term),
-                "{name} Issue #421 removal condition must mention {term}"
-            );
+
+        if observed_commands != expected_commands {
+            return Err(format!(
+                "operational-limit commands must be exactly {expected_commands:?}, found {observed_commands:?}"
+            ));
         }
+        if yaml.contains(ISSUE_421) {
+            return Err("the compatibility manifest must not retain Issue #421 ownership".into());
+        }
+        Ok(())
     }
+
+    let yaml = include_str!("../../../tests/compat/redis-8.8.1/manifest.yaml");
+    validate_operational_limits(yaml).unwrap();
+
+    let reason_index = yaml
+        .find("reason: \"Operational-limit difference:")
+        .expect("the repository manifest must contain an operational-limit difference");
+    let issue_index = yaml[..reason_index]
+        .rfind(ISSUE_418)
+        .expect("the first operational-limit difference must be owned by Issue #418");
+    let mut reverted = yaml.to_owned();
+    reverted.replace_range(issue_index..issue_index + ISSUE_418.len(), ISSUE_421);
+    assert!(
+        validate_operational_limits(&reverted).is_err(),
+        "restoring one operational-limit owner to Issue #421 must fail"
+    );
 }
 
 #[test]
