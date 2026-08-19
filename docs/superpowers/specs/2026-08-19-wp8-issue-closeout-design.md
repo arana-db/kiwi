@@ -70,6 +70,7 @@ closed。
 wp8_pr_number: 422
 wp8_pr_base_ref: 733888fc90ad8ef039947e87b08d7500a405954a
 wp8_pr_head_ref: 2b03219cdd5e452e08c1b2144c3c90516190d41f
+wp8_merge_parent_ref: 733888fc90ad8ef039947e87b08d7500a405954a
 wp8_merge_ref: 9a8a64aca12a825912f299450e10fc6043eca610
 wp8_exact_main_verification_ref: 9a8a64aca12a825912f299450e10fc6043eca610
 wp8_exact_main_verification_run: 32129266046
@@ -95,14 +96,19 @@ wp8_exact_main_verification_status: passed
 
 - 所有 WP8 SHA 字段是完整 lowercase Git SHA；PR/run 是正十进制；
 - PR number、Base、Head 和 merge SHA 与本次已合并事实精确相等；
-- exact-main status 是 `passed`，ref 等于或晚于 merge，且当前仓库可解析这些提交；
+- Base 是 Head 的祖先；merge 的唯一 parent 等于 Base；PR Head tree 等于 merge
+  tree；merge subject 包含 `(#422)`；
+- exact-main status 是 `passed`，merge 是 verification ref 的祖先（允许二者相等），
+  verification ref 是 baseline ref 的祖先，且当前仓库可解析这些提交；
 - recorded run 是 `ci` workflow 的 `main` push，`head_sha` 等于 recorded exact-main
   ref，状态 completed 且 conclusion success；
 - WP8 block 与当前状态表中的 evidence projection 与 front matter 一致。
 
-self-test 必须从有效快照分别变异 status、SHA、run identity、投影文本和 owner，证明
-这些失败路径真实由 validator 拒绝。测试不能联网依赖真实 GitHub；run loader 使用
-注入的固定 payload。normal validation 可以沿用现有 GitHub run 在线复核路径。
+self-test 必须从有效快照分别变异 status、SHA、Git ancestry/tree/subject、run identity
+和投影文本，证明这些失败路径真实由 validator 拒绝。测试不能联网依赖真实 GitHub；
+run loader 使用注入的固定 payload。normal validation 可以沿用现有 GitHub run 在线
+复核路径。manifest 与 audit owner mutants 分别属于 Rust contract tests，Python SDD
+validator 不读取或复制这两个合同。
 
 ## 4. Active 追踪迁移
 
@@ -125,9 +131,16 @@ operational-limit difference 全部改为 #418。只允许改 issue URL；以下
 
 ### 4.2 Advisory exemption
 
-`.cargo/audit.toml` 的 owner 改为 `Issue #430`。potential path、unreachable 状态和
-`remove_when` 不变。`ci_contract` 必须要求 #430 owner 且拒绝恢复成 WP8 / #421。
+`.cargo/audit.toml` 的 owner 精确改为 `security-deps / Issue #430`。potential path、
+unreachable 状态和 `remove_when` 不变。`ci_contract` 必须在 advisory 的紧邻治理
+comment block 内要求该唯一 owner，且拒绝恢复成 WP8 / #421 或在无关位置追加伪 owner。
 #430 保持 OPEN，直到豁免按其验收条件真正移除。
+
+### 4.3 STATE / KANBAN
+
+`.planning/STATE.md` 与 `.planning/KANBAN.md` 已经是指向 SDD 的历史兼容跳转页。本次
+只读验证两者继续满足 pointer 合同，不复制 accepted、SHA、run 或 Issue 状态；真实
+writeback 只发生在唯一权威 `.planning/SDD.md`。
 
 ## 5. Issue 关闭顺序
 
@@ -139,6 +152,10 @@ operational-limit difference 全部改为 #418。只允许改 issue URL；以下
 6. 在 #421 评论 PR #422、治理 PR、两个 exact-main run、#418/#430 迁移去向和
    验收映射，然后以 completed 关闭。
 
+`wp8_exact_main_verification_*` 永久记录 PR #422 实现验收的 merge/run；治理 PR
+合并后的新 SHA/run 在合并前不可预知，因此记录在 #421 最终 closeout 评论，不覆盖
+SDD 中的 PR #422 immutable evidence，也不引入第二个 writeback PR。
+
 任何一步失败都保持 #421 OPEN；不得用旧的 run `32129266046` 代替治理 PR 合并后的
 新 exact-main 验证。
 
@@ -146,7 +163,8 @@ operational-limit difference 全部改为 #418。只允许改 issue URL；以下
 
 - SDD normal/self-test、manifest、CI contract 和 diff checks 全部通过。
 - WP8 accepted 状态缺任一 immutable/exact-main 字段都会失败。
-- 五条 operational-limit difference 全部且仅迁到 #418；没有 active #421 引用。
+- 五条 operational-limit difference 全部且仅迁到 #418；manifest/audit 等 active
+  owner 不再引用 #421。历史设计、WP8 Primary Issue 身份和负向 mutant 可以保留 #421。
 - rkyv 豁免 owner 是开放的 #430，reachability sentinel 与 remove condition 未放宽。
 - 独立规格复审与质量/Test Guard 复审均为 P0=0/P1=0/P2=0。
 - 治理 PR exact Head 和合并后的 exact main 均为绿色。

@@ -49,7 +49,8 @@ compat manifest 只迁移 issue owner，audit config 只迁移 advisory owner，
   branch、`push` event、completed/success、Head 等于 recorded exact-main ref。
 - [ ] 添加以下失败变异：
   - accepted 但 exact-main status 不是 passed；
-  - PR Base/Head/merge 任一 SHA 漂移；
+  - PR Base/Head/merge parent/merge 任一 SHA 漂移；
+  - Base→Head ancestry、merge 唯一 parent、Head tree=merge tree 或 merge subject 漂移；
   - exact-main ref/run 缺失或格式错误；
   - run 的 workflow/path/event/branch/head/conclusion 任一漂移；
   - WP8 block 或当前状态表 evidence projection 与 front matter 漂移；
@@ -64,13 +65,14 @@ Markdown 链接错误不是有效 RED。
 **文件：** `scripts/validate_sdd.py`
 
 - [ ] 增加 WP8 identity/evidence field constants 和精确 immutable values：PR 422、
-  Base `733888fc...`、Head `2b03219...`、merge `9a8a64a...`。
+  Base/merge parent `733888fc...`、Head `2b03219...`、merge `9a8a64a...`。
 - [ ] 校验 SHA/decimal/status 格式；当 WP8 是 verified/accepted/released 时要求
   exact-main `passed`。
 - [ ] 复用现有 GitHub run loader 模式增加 WP8 run 校验；normal validation 在线
   读取 recorded run，self-test 注入 payload，不访问网络。
-- [ ] 校验 merge/exact-main 提交在本地可解析，baseline_ref 不早于 recorded
-  exact-main ref；不改变 WP0 immutable evidence。
+- [ ] 校验 Base→Head ancestry、merge 唯一 parent=Base、Head tree=merge tree、merge
+  subject 含 `(#422)`；merge→verification 允许 equality，verification→baseline 必须是
+  ancestry；不改变 WP0 immutable evidence。
 - [ ] 校验 WP8 block 和当前状态表的 evidence projection 恰好一次且与 front matter
   相同。
 - [ ] 重跑 self-test，预期新增和既有失败变异全部 GREEN。
@@ -89,6 +91,11 @@ Markdown 链接错误不是有效 RED。
 - [ ] 调整退出门禁的 Issue 对账文本：#415/#421 required acceptance 已完成；#418
   保持开放并拥有 residual differences；不得声称 #418 已关闭。
 - [ ] 更新第 17 节当前表与叙述，删除“下一步提交 Task 1-5/启动 Oracle”的过期事实。
+- [ ] scoped 更新实时快照、Issue registry、INV-12/INV-13/INV-17 和“normal CI 排除
+  differential”等陈旧描述，只写 PR #422 已证明的事实，不把 WP2/WP6 未来范围伪装
+  为完成；新增 open #430 owner。
+- [ ] `next_safe_action` 精确使用 `await-next-authorized-work-package`，表中对应“等待下
+  一个经明确批准的工作包；M7/M8 继续 frozen”。
 - [ ] 不修改 `.planning/STATE.md` / `KANBAN.md`，除非 validator 证明跳转页本身漂移。
 - [ ] 运行 normal validator，预期 `current.status=accepted`、`baseline_ref=9a8a64a...`、
   `errors=0`。
@@ -118,8 +125,9 @@ Markdown 链接错误不是有效 RED。
 - `tools/compat/tests/ci_contract.rs`
 - `.cargo/audit.toml`
 
-- [ ] 先让 `validate_rkyv_audit_governance` 要求 `owner: Issue #430`，并增加把 #430
-  退回 WP8/#421 的 mutant。
+- [ ] 先让 `validate_rkyv_audit_governance` 只检查 advisory 紧邻 comment block，要求
+  唯一 `owner: security-deps / Issue #430`，并增加把 #430 退回 WP8/#421、删除/重复
+  owner，以及在无关位置追加伪 #430 owner 的 mutants。
 - [ ] 运行精确 test，预期 RED：旧 owner 仍是 WP8 / #421。
 - [ ] 只改 owner comment；advisory ignore、potential path、unreachable status 和
   remove_when 保持不变。
@@ -134,8 +142,9 @@ Markdown 链接错误不是有效 RED。
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo clippy -p kiwi-compat --all-targets -- -D warnings`
 - [ ] `git diff --check origin/main...HEAD`
-- [ ] `rg -n "issues/421|owner: WP8 / Issue #421"`，人工区分允许的历史文档引用和禁止
-  的 active manifest/audit owner。
+- [ ] `git grep -n -E 'issues/421|Issue #421' -- tests/compat/redis-8.8.1/manifest.yaml
+  .cargo/audit.toml` 预期无输出（退出码 1）；历史文档、WP8 Primary Issue 身份和负向
+  mutants 不要求全仓零匹配。
 - [ ] 使用 Test Guard 检查新增 self-test/mutant 是否真实执行权威入口、能杀死旧实现、
   没有仅 substring 的伪绑定。
 
@@ -151,7 +160,8 @@ Markdown 链接错误不是有效 RED。
 
 ## Task 8：exact-main 与 #421 关闭
 
-- [ ] 获取治理 PR merge SHA，等待该 SHA 或其 exact main 后继的 `ci` push run 成功。
+- [ ] 获取治理 PR merge SHA，等待该 SHA 或其 exact main 后继的 `ci` push run 成功；
+  该新 SHA/run 只写入 #421 closeout 评论，不覆盖 SDD 中 PR #422 的 immutable run。
 - [ ] 复核 main 上 active manifest/audit owner 已分别为 #418/#430，且两 Issue OPEN。
 - [ ] 在 #421 留一条证据评论：PR #422、治理 PR、两次 exact-main run、WP8 accepted
   SDD、五条差异到 #418、advisory 到 #430、验收逐项映射。
