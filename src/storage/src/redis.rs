@@ -47,7 +47,7 @@ use crate::custom_comparator::{
 use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
-use crate::error::{IoSnafu, OptionNoneSnafu, Result, RocksSnafu};
+use crate::error::{IoSnafu, OptionNoneSnafu, Result, RocksSnafu, map_existing_strict_rocks_open};
 use crate::format_base_value::{DATA_TYPE_TAG, DataType};
 use crate::logindex::{
     FlushTrigger, LogIndexAndSequenceCollector, LogIndexAndSequenceCollectorPurger,
@@ -564,9 +564,12 @@ impl Redis {
             })
             .collect();
 
-        let db = RocksDbOwner::new(
-            DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?,
-        );
+        let opened = DB::open_cf_descriptors(&db_opts, db_path, column_families);
+        let db = RocksDbOwner::new(if allow_manifest_creation {
+            opened.context(RocksSnafu)?
+        } else {
+            map_existing_strict_rocks_open(opened)?
+        });
         maybe_fail_redis_open(db_directory)?;
         let _ = db_once_cell.set(db.downgrade());
 

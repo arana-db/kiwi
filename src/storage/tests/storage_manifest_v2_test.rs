@@ -18,7 +18,11 @@
 #![allow(clippy::unwrap_used)]
 
 use std::fs;
+use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use rocksdb::{ColumnFamilyDescriptor, DB, Options};
 
 use storage::checkpoint::expected_column_families;
 use storage::logindex::cf_metadata;
@@ -27,7 +31,7 @@ use storage::{
     CANONICAL_COLUMN_FAMILIES, ColumnFamilyIndex, ColumnFamilyRole, ComparatorId,
     InstanceStorageManifestV2, ManifestDigest, MigrationPhase, MigrationSourceProfile,
     MigrationTransaction, ROOT_STORAGE_MANIFEST_FILE, RootStorageManifestV2, STORAGE_MANIFEST_FILE,
-    StorageOptions, canonical_column_family_names,
+    StorageOptions, canonical_column_family_names, slot_mapping_digest,
 };
 use tempfile::tempdir;
 
@@ -70,6 +74,121 @@ fn replace_once(bytes: &[u8], from: &str, to: &str) -> Vec<u8> {
         "fixture replacement must be unique"
     );
     text.replacen(from, to, 1).into_bytes()
+}
+
+fn refresh_manifest_digest(bytes: &[u8]) -> Vec<u8> {
+    let digest = ManifestDigest::compute_payload(bytes).unwrap();
+    let mut text = std::str::from_utf8(bytes).unwrap().to_string();
+    let marker = "\"digest\":\"";
+    let digest_start = text.rfind(marker).unwrap() + marker.len();
+    let digest_end = text[digest_start..].find('"').unwrap() + digest_start;
+    assert_eq!(
+        digest_end - digest_start,
+        64,
+        "fixture digest must be SHA-256"
+    );
+    text.replace_range(digest_start..digest_end, digest.as_str());
+    text.into_bytes()
+}
+
+fn replace_once_with_fresh_digest(bytes: &[u8], from: &str, to: &str) -> Vec<u8> {
+    refresh_manifest_digest(&replace_once(bytes, from, to))
+}
+
+fn runtime_root_manifest(db_instance_num: u32) -> RootStorageManifestV2 {
+    RootStorageManifestV2::new(
+        ROOT_MANIFEST_ID.parse().unwrap(),
+        db_instance_num,
+        1,
+        slot_mapping_digest(db_instance_num as usize),
+        None,
+    )
+    .unwrap()
+}
+
+async fn create_current_storage(root: &Path, db_instance_num: usize) {
+    let mut storage = Storage::new(db_instance_num, 0);
+    let receiver = storage
+        .open(Arc::new(StorageOptions::default()), root)
+        .unwrap();
+    drop(receiver);
+    storage.shutdown().await;
+    storage.close();
+}
+
+fn assert_storage_compatibility_refusal(
+    error: &storage::error::Error,
+    storage: &Storage,
+    expected_on_disk: &str,
+    expected_action: &str,
+    expected_cause_parts: &[&str],
+) {
+    let display = error.to_string();
+    assert_eq!(
+        display.matches("storage compatibility refusal:").count(),
+        1,
+        "compatibility envelope must appear exactly once: {display}"
+    );
+    for marker in ["current=", "on_disk=", "action=", "cause="] {
+        assert_eq!(
+            display.matches(marker).count(),
+            1,
+            "field {marker} must appear exactly once: {display}"
+        );
+        let start = display.find(marker).unwrap() + marker.len();
+        let end = display[start..]
+            .find("; ")
+            .map_or(display.len(), |offset| start + offset);
+        assert!(end > start, "field {marker} must not be empty: {display}");
+    }
+    let current = display.find("current=").unwrap();
+    let on_disk = display.find("on_disk=").unwrap();
+    let action = display.find("action=").unwrap();
+    let cause = display.find("cause=").unwrap();
+    assert!(
+        current < on_disk && on_disk < action && action < cause,
+        "diagnostic field order must be stable: {display}"
+    );
+    assert!(
+        !display.contains('\r') && !display.contains('\n'),
+        "diagnostic must remain a single line: {display:?}"
+    );
+    assert!(
+        display.contains(expected_on_disk),
+        "missing on-disk evidence {expected_on_disk:?}: {display}"
+    );
+    assert!(
+        display.contains(expected_action),
+        "missing action evidence {expected_action:?}: {display}"
+    );
+    for expected in expected_cause_parts {
+        assert!(
+            display.contains(expected),
+            "missing cause evidence {expected:?}: {display}"
+        );
+    }
+    assert!(storage.insts.is_empty(), "failed open published instances");
+    assert!(storage.db_path().is_none(), "failed open published db_path");
+    assert!(!storage.is_opened.load(Ordering::SeqCst));
+}
+
+fn create_v2_with_wrong_persisted_list_comparator(root_path: &Path) {
+    let instance_path = root_path.join("0");
+    fs::create_dir_all(&instance_path).unwrap();
+    let mut options = Options::default();
+    options.create_if_missing(true);
+    options.create_missing_column_families(true);
+    let descriptors = canonical_column_family_names()
+        .into_iter()
+        .map(|name| ColumnFamilyDescriptor::new(name, Options::default()));
+    let db = DB::open_cf_descriptors(&options, &instance_path, descriptors).unwrap();
+    drop(db);
+
+    let root = runtime_root_manifest(1);
+    root.write_to_dir_atomically(root_path).unwrap();
+    instance_manifest(0, &root)
+        .write_to_dir_atomically(&instance_path)
+        .unwrap();
 }
 
 #[test]
@@ -186,6 +305,303 @@ fn root_manifest_rejects_unknown_version_corrupt_digest_and_noncanonical_encodin
     );
 }
 
+#[tokio::test]
+async fn storage_open_reports_future_root_manifest_diagnostic_with_fresh_digest() {
+    let temp = tempdir().unwrap();
+    create_current_storage(temp.path(), 1).await;
+    let manifest_path = temp.path().join(ROOT_STORAGE_MANIFEST_FILE);
+    let original = fs::read(&manifest_path).unwrap();
+    let future = replace_once_with_fresh_digest(
+        &original,
+        "\"manifest_version\":2",
+        "\"manifest_version\":99",
+    );
+    fs::write(&manifest_path, &future).unwrap();
+
+    let mut storage = Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .unwrap_err();
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "root-manifest-v99",
+        "compatible",
+        &["unsupported root storage manifest version 99"],
+    );
+    assert_eq!(fs::read(&manifest_path).unwrap(), future);
+}
+
+#[tokio::test]
+async fn storage_open_reports_future_instance_manifest_diagnostic_with_fresh_digest() {
+    let temp = tempdir().unwrap();
+    create_current_storage(temp.path(), 1).await;
+    let manifest_path = temp.path().join("0").join(STORAGE_MANIFEST_FILE);
+    let original = fs::read(&manifest_path).unwrap();
+    let future = replace_once_with_fresh_digest(
+        &original,
+        "\"manifest_version\":2",
+        "\"manifest_version\":99",
+    );
+    fs::write(&manifest_path, &future).unwrap();
+
+    let mut storage = Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .unwrap_err();
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "root-manifest-v2",
+        "preserve",
+        &["unsupported instance storage manifest version 99"],
+    );
+    assert_eq!(fs::read(&manifest_path).unwrap(), future);
+}
+
+#[tokio::test]
+async fn storage_open_reports_each_root_cf_contract_mismatch() {
+    let cases = [
+        (
+            "\"name\":\"list_data_cf\"",
+            "\"name\":\"wrong_list_data_cf\"",
+            ["name", "list_data_cf", "wrong_list_data_cf"],
+        ),
+        (
+            "\"name\":\"list_data_cf\",\"role\":\"list_data\"",
+            "\"name\":\"list_data_cf\",\"role\":\"hash_data\"",
+            ["role", "list_data", "hash_data"],
+        ),
+        (
+            "\"role\":\"list_data\",\"comparator_id\":\"lists_data_key\"",
+            "\"role\":\"list_data\",\"comparator_id\":\"bytewise\"",
+            ["comparator_id", "lists_data_key", "bytewise"],
+        ),
+        (
+            "\"comparator_id\":\"lists_data_key\",\"key_codec_version\":1",
+            "\"comparator_id\":\"lists_data_key\",\"key_codec_version\":99",
+            ["key_codec_version", "current 1", "on-disk 99"],
+        ),
+        (
+            "\"name\":\"list_data_cf\",\"role\":\"list_data\",\"comparator_id\":\"lists_data_key\",\"key_codec_version\":1,\"value_codec_version\":1",
+            "\"name\":\"list_data_cf\",\"role\":\"list_data\",\"comparator_id\":\"lists_data_key\",\"key_codec_version\":1,\"value_codec_version\":99",
+            ["value_codec_version", "current 1", "on-disk 99"],
+        ),
+    ];
+
+    for (from, to, cause_parts) in cases {
+        let temp = tempdir().unwrap();
+        create_current_storage(temp.path(), 1).await;
+        let manifest_path = temp.path().join(ROOT_STORAGE_MANIFEST_FILE);
+        let original = fs::read(&manifest_path).unwrap();
+        let incompatible = replace_once_with_fresh_digest(&original, from, to);
+        fs::write(&manifest_path, &incompatible).unwrap();
+
+        let mut storage = Storage::new(1, 0);
+        let error = storage
+            .open(Arc::new(StorageOptions::default()), temp.path())
+            .unwrap_err();
+        assert_storage_compatibility_refusal(
+            &error,
+            &storage,
+            "root-manifest-v2",
+            "preserve",
+            &cause_parts,
+        );
+        assert_eq!(fs::read(&manifest_path).unwrap(), incompatible);
+    }
+}
+
+#[tokio::test]
+async fn storage_open_reports_current_v2_persisted_comparator_mismatch() {
+    let temp = tempdir().unwrap();
+    create_v2_with_wrong_persisted_list_comparator(temp.path());
+    let root_before = fs::read(temp.path().join(ROOT_STORAGE_MANIFEST_FILE)).unwrap();
+    let instance_before = fs::read(temp.path().join("0").join(STORAGE_MANIFEST_FILE)).unwrap();
+
+    let mut storage = Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .unwrap_err();
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "rocksdb-strict-open%3Dinvalid-argument",
+        "compatible",
+        &["comparator", "floyd.ListsDataKeyComparator"],
+    );
+    assert!(!error.to_string().ends_with("cause=RocksDB error"));
+    assert_eq!(
+        fs::read(temp.path().join(ROOT_STORAGE_MANIFEST_FILE)).unwrap(),
+        root_before
+    );
+    assert_eq!(
+        fs::read(temp.path().join("0").join(STORAGE_MANIFEST_FILE)).unwrap(),
+        instance_before
+    );
+}
+
+#[tokio::test]
+async fn storage_open_does_not_relabel_rocksdb_lock_error() {
+    let temp = tempdir().unwrap();
+    let options = Arc::new(StorageOptions::default());
+    let mut owner = Storage::new(1, 0);
+    let owner_receiver = owner.open(Arc::clone(&options), temp.path()).unwrap();
+
+    let mut contender = Storage::new(1, 0);
+    let error = contender.open(options, temp.path()).unwrap_err();
+    assert!(matches!(&error, storage::error::Error::Rocks { .. }));
+    assert!(
+        !error.to_string().contains("storage compatibility refusal:"),
+        "LOCK/Busy must retain its Rocks category: {error}"
+    );
+    assert!(contender.insts.is_empty());
+    assert!(contender.db_path().is_none());
+    assert!(!contender.is_opened.load(Ordering::SeqCst));
+
+    drop(owner_receiver);
+    owner.close();
+}
+
+#[tokio::test]
+async fn storage_open_reports_oversized_root_manifest_as_bounded_unreadable() {
+    let temp = tempdir().unwrap();
+    let manifest_path = temp.path().join(ROOT_STORAGE_MANIFEST_FILE);
+    let mut oversized = br#"{"manifest_version":99,"storage_schema_version":2}"#.to_vec();
+    oversized.resize(1024 * 1024, b' ');
+    fs::write(&manifest_path, &oversized).unwrap();
+
+    let mut storage = Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .unwrap_err();
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "root-manifest-present-unreadable",
+        "offline",
+        &["root storage manifest"],
+    );
+    assert_eq!(fs::metadata(&manifest_path).unwrap().len(), 1024 * 1024);
+}
+
+#[tokio::test]
+async fn storage_open_reports_regular_corrupt_root_manifest_as_unreadable() {
+    let temp = tempdir().unwrap();
+    let manifest_path = temp.path().join(ROOT_STORAGE_MANIFEST_FILE);
+    let corrupt = br#"{"manifest_version":"#.to_vec();
+    fs::write(&manifest_path, &corrupt).unwrap();
+
+    let mut storage = Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .unwrap_err();
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "root-manifest-present-unreadable",
+        "offline",
+        &["invalid root storage manifest JSON", "EOF"],
+    );
+    assert_eq!(fs::read(&manifest_path).unwrap(), corrupt);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn storage_open_observer_does_not_follow_root_manifest_symlink() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().unwrap();
+    let external = tempdir().unwrap();
+    let target = external.path().join("future-root.json");
+    let current = runtime_root_manifest(1).to_json_bytes().unwrap();
+    let future = replace_once_with_fresh_digest(
+        &current,
+        "\"manifest_version\":2",
+        "\"manifest_version\":99",
+    );
+    fs::write(&target, &future).unwrap();
+    symlink(&target, temp.path().join(ROOT_STORAGE_MANIFEST_FILE)).unwrap();
+
+    let mut storage = Storage::new(1, 0);
+    let error = storage
+        .open(Arc::new(StorageOptions::default()), temp.path())
+        .unwrap_err();
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "root-manifest-present-unreadable",
+        "offline",
+        &["unsupported root storage manifest version 99"],
+    );
+    assert_eq!(fs::read(&target).unwrap(), future);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn storage_open_observer_does_not_block_reopening_root_manifest_fifo() {
+    use std::os::unix::fs::FileTypeExt;
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
+
+    let temp = tempdir().unwrap();
+    let manifest_path = temp.path().join(ROOT_STORAGE_MANIFEST_FILE);
+    assert!(
+        Command::new("mkfifo")
+            .arg(&manifest_path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let writer_path = manifest_path.clone();
+    let writer = thread::spawn(move || fs::write(writer_path, b"not-json").unwrap());
+    let root = temp.path().to_path_buf();
+    let (sender, receiver) = mpsc::channel();
+    let opener = thread::spawn(move || {
+        let mut storage = Storage::new(1, 0);
+        let error = storage
+            .open(Arc::new(StorageOptions::default()), &root)
+            .unwrap_err();
+        assert_storage_compatibility_refusal(
+            &error,
+            &storage,
+            "root-manifest-present-unreadable",
+            "offline",
+            &["invalid root storage manifest JSON"],
+        );
+        sender.send(()).unwrap();
+    });
+
+    match receiver.recv_timeout(Duration::from_secs(2)) {
+        Ok(()) => {}
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let unblocker = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&manifest_path)
+                .expect("unblock a mutant that omitted O_NONBLOCK");
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .expect("Storage::open must finish after FIFO is unblocked");
+            drop(unblocker);
+            opener.join().expect("join blocked Storage::open");
+            writer.join().expect("join initial FIFO writer");
+            panic!("Storage::open observer blocked while reopening the FIFO");
+        }
+        Err(error) => panic!("Storage::open observer channel failed: {error}"),
+    }
+    opener.join().expect("join Storage::open");
+    writer.join().expect("join initial FIFO writer");
+    assert!(
+        fs::symlink_metadata(&manifest_path)
+            .unwrap()
+            .file_type()
+            .is_fifo()
+    );
+}
+
 #[test]
 fn instance_manifest_rejects_wrong_instance_id_or_root_digest() {
     let root = root_manifest(2);
@@ -271,9 +687,12 @@ async fn existing_root_missing_instance_directory_fails_closed_without_recreatio
 
     let mut reopened = Storage::new(2, 0);
     let error = reopened.open(options, temp.path()).unwrap_err();
-    assert!(
-        error.to_string().contains("instance") && error.to_string().contains("missing"),
-        "unexpected error: {error}"
+    assert_storage_compatibility_refusal(
+        &error,
+        &reopened,
+        "root-manifest-v2",
+        "preserve",
+        &["instance", "missing"],
     );
     assert!(
         !missing.exists(),
@@ -300,9 +719,12 @@ async fn existing_root_without_any_instance_directories_fails_closed() {
     let error = storage
         .open(Arc::new(StorageOptions::default()), temp.path())
         .unwrap_err();
-    assert!(
-        error.to_string().contains("instance") && error.to_string().contains("missing"),
-        "unexpected error: {error}"
+    assert_storage_compatibility_refusal(
+        &error,
+        &storage,
+        "root-manifest-v2",
+        "preserve",
+        &["instance", "missing"],
     );
     assert!(!temp.path().join("0").exists());
     assert!(!temp.path().join("1").exists());
@@ -441,9 +863,12 @@ fn storage_open_rejects_instance_count_or_slot_mapping_mismatch() {
     let count_error = wrong_count
         .open(Arc::clone(&options), count_temp.path())
         .unwrap_err();
-    assert!(
-        count_error.to_string().contains("db_instance_num"),
-        "unexpected error: {count_error}"
+    assert_storage_compatibility_refusal(
+        &count_error,
+        &wrong_count,
+        "root-manifest-v2",
+        "db_instance_num",
+        &["db_instance_num"],
     );
     assert!(wrong_count.insts.is_empty());
     assert!(
@@ -466,9 +891,12 @@ fn storage_open_rejects_instance_count_or_slot_mapping_mismatch() {
         .unwrap();
     let mut storage = Storage::new(2, 0);
     let mapping_error = storage.open(options, mapping_temp.path()).unwrap_err();
-    assert!(
-        mapping_error.to_string().contains("slot mapping"),
-        "unexpected error: {mapping_error}"
+    assert_storage_compatibility_refusal(
+        &mapping_error,
+        &storage,
+        "root-manifest-v2",
+        "db_instance_num",
+        &["slot mapping"],
     );
     assert!(storage.insts.is_empty());
     assert!(!storage.is_opened.load(std::sync::atomic::Ordering::SeqCst));

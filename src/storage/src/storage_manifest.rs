@@ -18,9 +18,14 @@
 //! Durable root and per-instance storage manifests.
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt as _;
+#[cfg(windows)]
+use std::os::windows::fs::{MetadataExt as _, OpenOptionsExt as _};
 
 #[cfg(any(test, feature = "test-fault-injection"))]
 use std::collections::HashSet;
@@ -52,6 +57,299 @@ const ROLLBACK_FLOOR_MAX: u32 = 1;
 const PRODUCER_IDENTITY_PREFIX: &str = "kiwi-storage/v";
 const CURRENT_PRODUCER_IDENTITY: &str = "kiwi-storage/v2";
 const KNOWN_FEATURES: &[&str] = &["vector_set"];
+const DIAGNOSTIC_MANIFEST_MAX_BYTES: u64 = 64 * 1024;
+
+#[cfg(test)]
+thread_local! {
+    static DIAGNOSTIC_ROOT_ENTRY_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DIAGNOSTIC_MANIFEST_OPEN_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_diagnostic_root_entry_visit() {
+    DIAGNOSTIC_ROOT_ENTRY_VISITS.set(DIAGNOSTIC_ROOT_ENTRY_VISITS.get() + 1);
+}
+
+#[cfg(not(test))]
+fn record_diagnostic_root_entry_visit() {}
+
+struct DiagnosticRootEntries {
+    inner: fs::ReadDir,
+}
+
+impl DiagnosticRootEntries {
+    fn new(inner: fs::ReadDir) -> Self {
+        Self { inner }
+    }
+}
+
+impl Iterator for DiagnosticRootEntries {
+    type Item = std::io::Result<fs::DirEntry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        record_diagnostic_root_entry_visit();
+        self.inner.next()
+    }
+}
+
+#[cfg(test)]
+fn record_diagnostic_manifest_open_attempt() {
+    DIAGNOSTIC_MANIFEST_OPEN_ATTEMPTS.set(DIAGNOSTIC_MANIFEST_OPEN_ATTEMPTS.get() + 1);
+}
+
+#[cfg(not(test))]
+fn record_diagnostic_manifest_open_attempt() {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OnDiskDescriptor {
+    Empty,
+    RootManifest {
+        manifest_version: u64,
+        storage_schema_version: u64,
+        db_instance_num: Option<u64>,
+        slot_mapping_version: Option<u64>,
+        slot_mapping_digest: Option<String>,
+        migration: Option<MigrationObservation>,
+    },
+    RootManifestPresentUnreadable,
+    LegacyWithoutRootManifest,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct MigrationObservation {
+    source_profile: String,
+    phase: String,
+    current_instance: u64,
+}
+
+#[derive(Deserialize)]
+struct RootManifestObservation {
+    manifest_version: u64,
+    storage_schema_version: u64,
+    #[serde(default)]
+    db_instance_num: Option<u64>,
+    #[serde(default)]
+    slot_mapping_version: Option<u64>,
+    #[serde(default)]
+    slot_mapping_digest: Option<String>,
+    #[serde(default)]
+    migration: Option<MigrationObservation>,
+}
+
+pub(crate) fn current_storage_descriptor() -> String {
+    format!(
+        "root-manifest-v{ROOT_STORAGE_MANIFEST_VERSION}/storage-schema-v{STORAGE_SCHEMA_VERSION_V2}/instance-manifest-v{INSTANCE_STORAGE_MANIFEST_VERSION}/slot-mapping-v{SLOT_MAPPING_VERSION}/cf-contract=storage-schema-v{STORAGE_SCHEMA_VERSION_V2}"
+    )
+}
+
+impl OnDiskDescriptor {
+    pub(crate) fn render(&self, strict_rocks_open: bool) -> String {
+        let mut descriptor = match self {
+            Self::Empty => "empty".to_string(),
+            Self::RootManifest {
+                manifest_version,
+                storage_schema_version,
+                migration,
+                ..
+            } => {
+                let mut value = format!(
+                    "root-manifest-v{manifest_version}/storage-schema-v{storage_schema_version}"
+                );
+                if let Some(migration) = migration {
+                    value.push_str(&format!(
+                        "/migration-source-{}/phase-{}/instance-{}",
+                        migration.source_profile, migration.phase, migration.current_instance
+                    ));
+                }
+                value
+            }
+            Self::RootManifestPresentUnreadable => "root-manifest-present-unreadable".to_string(),
+            Self::LegacyWithoutRootManifest => "legacy-without-root-manifest".to_string(),
+            Self::Unavailable => "unavailable".to_string(),
+        };
+        if strict_rocks_open {
+            descriptor.push_str("/rocksdb-strict-open=invalid-argument");
+        }
+        descriptor
+    }
+
+    pub(crate) fn is_future_version(&self) -> bool {
+        matches!(
+            self,
+            Self::RootManifest {
+                manifest_version,
+                storage_schema_version,
+                ..
+            } if *manifest_version > u64::from(ROOT_STORAGE_MANIFEST_VERSION)
+                || *storage_schema_version > u64::from(STORAGE_SCHEMA_VERSION_V2)
+        )
+    }
+
+    pub(crate) fn has_runtime_topology_mismatch(&self, db_instance_num: usize) -> bool {
+        let Self::RootManifest {
+            db_instance_num: Some(on_disk_count),
+            slot_mapping_version,
+            slot_mapping_digest: on_disk_digest,
+            ..
+        } = self
+        else {
+            return false;
+        };
+        *on_disk_count != db_instance_num as u64
+            || slot_mapping_version
+                .is_some_and(|version| version != u64::from(SLOT_MAPPING_VERSION))
+            || on_disk_digest
+                .as_deref()
+                .is_some_and(|digest| digest != slot_mapping_digest(db_instance_num).as_str())
+    }
+}
+
+pub(crate) fn observe_on_disk_descriptor(root: &Path) -> OnDiskDescriptor {
+    let root_metadata = match fs::symlink_metadata(root) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return OnDiskDescriptor::Empty;
+        }
+        Err(_) => return OnDiskDescriptor::Unavailable,
+    };
+    if !root_metadata.file_type().is_dir() {
+        return OnDiskDescriptor::Unavailable;
+    }
+
+    let manifest_path = root.join(ROOT_STORAGE_MANIFEST_FILE);
+    match fs::symlink_metadata(&manifest_path) {
+        Ok(_) => observe_root_manifest(&manifest_path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut entries = match fs::read_dir(root) {
+                Ok(entries) => DiagnosticRootEntries::new(entries),
+                Err(_) => return OnDiskDescriptor::Unavailable,
+            };
+            match entries.next() {
+                None => OnDiskDescriptor::Empty,
+                Some(Ok(_)) => OnDiskDescriptor::LegacyWithoutRootManifest,
+                Some(Err(_)) => OnDiskDescriptor::Unavailable,
+            }
+        }
+        Err(_) => OnDiskDescriptor::Unavailable,
+    }
+}
+
+fn observe_root_manifest(path: &Path) -> OnDiskDescriptor {
+    let file = match open_manifest_for_observation(path) {
+        Ok(file) => file,
+        Err(_) => return OnDiskDescriptor::RootManifestPresentUnreadable,
+    };
+    let held_metadata = match file.metadata() {
+        Ok(metadata) => metadata,
+        Err(_) => return OnDiskDescriptor::RootManifestPresentUnreadable,
+    };
+    if !held_metadata.file_type().is_file()
+        || held_metadata.len() > DIAGNOSTIC_MANIFEST_MAX_BYTES
+        || metadata_is_reparse_point(&held_metadata)
+    {
+        return OnDiskDescriptor::RootManifestPresentUnreadable;
+    }
+
+    let mut bytes = Vec::with_capacity(held_metadata.len() as usize + 1);
+    if file
+        .take(DIAGNOSTIC_MANIFEST_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .is_err()
+        || bytes.len() as u64 > DIAGNOSTIC_MANIFEST_MAX_BYTES
+    {
+        return OnDiskDescriptor::RootManifestPresentUnreadable;
+    }
+    let observation: RootManifestObservation = match serde_json::from_slice(&bytes) {
+        Ok(observation) => observation,
+        Err(_) => return OnDiskDescriptor::RootManifestPresentUnreadable,
+    };
+    OnDiskDescriptor::RootManifest {
+        manifest_version: observation.manifest_version,
+        storage_schema_version: observation.storage_schema_version,
+        db_instance_num: observation.db_instance_num,
+        slot_mapping_version: observation.slot_mapping_version,
+        slot_mapping_digest: observation.slot_mapping_digest,
+        migration: observation.migration,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn open_manifest_for_observation(path: &Path) -> std::io::Result<fs::File> {
+    const O_NONBLOCK: i32 = 0x800;
+    const O_NOFOLLOW: i32 = 0x20000;
+    record_diagnostic_manifest_open_attempt();
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK | O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "linux", target_os = "android")),
+    any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    )
+))]
+fn open_manifest_for_observation(path: &Path) -> std::io::Result<fs::File> {
+    const O_NONBLOCK: i32 = 0x4;
+    const O_NOFOLLOW: i32 = 0x100;
+    record_diagnostic_manifest_open_attempt();
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NONBLOCK | O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))
+))]
+fn open_manifest_for_observation(_path: &Path) -> std::io::Result<fs::File> {
+    record_diagnostic_manifest_open_attempt();
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "safe nofollow manifest observation is unavailable on this platform",
+    ))
+}
+
+#[cfg(windows)]
+fn open_manifest_for_observation(path: &Path) -> std::io::Result<fs::File> {
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+
+    record_diagnostic_manifest_open_attempt();
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+}
+
+#[cfg(unix)]
+fn metadata_is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(windows)]
+fn metadata_is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
 
 #[cfg(any(test, feature = "test-fault-injection"))]
 static STORAGE_MANIFEST_PERSIST_FAILURES: LazyLock<ParkingMutex<HashSet<PathBuf>>> =
@@ -346,6 +644,60 @@ struct RootPayload<'a> {
     last_migrated_by: &'a str,
 }
 
+const CF_WIRE_FIELDS: &[&str] = &[
+    "stable_id",
+    "name",
+    "role",
+    "comparator_id",
+    "key_codec_version",
+    "value_codec_version",
+    "snapshot_read_min_version",
+    "snapshot_write_version",
+];
+
+fn first_raw_cf_contract_mismatch(bytes: &[u8]) -> Option<String> {
+    let root: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let actual = root.get("column_families")?.as_array()?;
+    first_cf_contract_mismatch_in_values(actual)
+}
+
+fn first_typed_cf_contract_mismatch(actual: &[ColumnFamilySpec]) -> Option<String> {
+    let actual = actual
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .ok()?;
+    first_cf_contract_mismatch_in_values(&actual)
+}
+
+fn first_cf_contract_mismatch_in_values(actual: &[serde_json::Value]) -> Option<String> {
+    for (index, expected) in CANONICAL_COLUMN_FAMILIES.iter().enumerate() {
+        let expected_value = serde_json::to_value(expected).ok()?;
+        let actual_value = actual.get(index)?;
+        for field in CF_WIRE_FIELDS {
+            let expected_field = expected_value.get(field);
+            let actual_field = actual_value.get(field);
+            if expected_field != actual_field {
+                return Some(format!(
+                    "root manifest CF index {index} name {} field {field} mismatch: current {} (expected), on-disk {} (actual)",
+                    expected.name,
+                    render_json_field(expected_field),
+                    render_json_field(actual_field)
+                ));
+            }
+        }
+    }
+    None
+}
+
+fn render_json_field(value: Option<&serde_json::Value>) -> String {
+    match value {
+        Some(serde_json::Value::String(value)) => value.clone(),
+        Some(value) => value.to_string(),
+        None => "<missing>".to_string(),
+    }
+}
+
 /// Root authority for storage topology, schema, snapshot compatibility, and migration intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -432,7 +784,11 @@ impl RootStorageManifestV2 {
         ensure!(
             self.column_families.len() == CANONICAL_COLUMN_FAMILIES.len(),
             InvalidFormatSnafu {
-                message: "root manifest column-family count mismatch".to_string()
+                message: format!(
+                    "root manifest column-family count mismatch: current/expected {}, on-disk/actual {}",
+                    CANONICAL_COLUMN_FAMILIES.len(),
+                    self.column_families.len()
+                )
             }
         );
         for (actual, expected) in self
@@ -488,12 +844,9 @@ impl RootStorageManifestV2 {
             }
         );
         self.slot_mapping_digest.validate()?;
-        ensure!(
-            self.column_families.as_slice() == CANONICAL_COLUMN_FAMILIES,
-            InvalidFormatSnafu {
-                message: "root manifest canonical column-family contract mismatch".to_string()
-            }
-        );
+        if let Some(message) = first_typed_cf_contract_mismatch(&self.column_families) {
+            return Err(InvalidFormatSnafu { message }.build());
+        }
         ensure!(
             self.snapshot_read_min_version == 1
                 && self.snapshot_read_max_version == 2
@@ -580,7 +933,8 @@ impl RootStorageManifestV2 {
     pub fn from_json_bytes(bytes: &[u8]) -> Result<Self> {
         let mut manifest: Self = serde_json::from_slice(bytes).map_err(|error| {
             InvalidFormatSnafu {
-                message: format!("invalid root storage manifest JSON: {error}"),
+                message: first_raw_cf_contract_mismatch(bytes)
+                    .unwrap_or_else(|| format!("invalid root storage manifest JSON: {error}")),
             }
             .build()
         })?;
@@ -1379,6 +1733,89 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_observer_rejects_nonregular_root_manifest() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        fs::create_dir(dir.path().join(ROOT_STORAGE_MANIFEST_FILE))
+            .expect("create manifest-shaped directory");
+
+        assert_eq!(
+            observe_on_disk_descriptor(dir.path()),
+            OnDiskDescriptor::RootManifestPresentUnreadable
+        );
+    }
+
+    #[test]
+    fn diagnostic_observer_reads_at_most_one_entry_when_manifest_is_missing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for name in ["first", "second", "third", "fourth"] {
+            fs::write(dir.path().join(name), b"legacy").expect("write legacy entry");
+        }
+        DIAGNOSTIC_ROOT_ENTRY_VISITS.set(0);
+
+        assert_eq!(
+            observe_on_disk_descriptor(dir.path()),
+            OnDiskDescriptor::LegacyWithoutRootManifest
+        );
+        assert_eq!(
+            DIAGNOSTIC_ROOT_ENTRY_VISITS.get(),
+            1,
+            "diagnostic observer must not enumerate a large legacy root"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn diagnostic_observer_opens_fifo_with_nonblocking_flag() {
+        use std::process::Command;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let manifest_path = dir.path().join(ROOT_STORAGE_MANIFEST_FILE);
+        assert!(
+            Command::new("mkfifo")
+                .arg(&manifest_path)
+                .status()
+                .expect("run mkfifo")
+                .success()
+        );
+
+        let root = dir.path().to_path_buf();
+        let (sender, receiver) = mpsc::channel();
+        let observer = std::thread::spawn(move || {
+            DIAGNOSTIC_MANIFEST_OPEN_ATTEMPTS.set(0);
+            let descriptor = observe_on_disk_descriptor(&root);
+            sender
+                .send((descriptor, DIAGNOSTIC_MANIFEST_OPEN_ATTEMPTS.get()))
+                .expect("send observer result");
+        });
+
+        let result = match receiver.recv_timeout(Duration::from_secs(2)) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let writer = OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&manifest_path)
+                    .expect("unblock a mutant that omitted O_NONBLOCK");
+                let result = receiver
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("observer must finish after FIFO is unblocked");
+                drop(writer);
+                observer.join().expect("join blocked observer");
+                panic!("diagnostic observer blocked while opening FIFO: {result:?}");
+            }
+            Err(error) => panic!("observer channel failed: {error}"),
+        };
+        observer.join().expect("join observer");
+        assert_eq!(result.0, OnDiskDescriptor::RootManifestPresentUnreadable);
+        assert_eq!(
+            result.1, 1,
+            "FIFO must reach the O_NOFOLLOW/O_NONBLOCK open path"
+        );
+    }
+
+    #[test]
     fn root_preflight_rejects_orphan_or_unknown_entries() {
         let orphan_root = tempfile::tempdir().expect("temp dir");
         let orphan_manifest = root(orphan_root.path());
@@ -1465,11 +1902,11 @@ mod tests {
 
         let mut reordered = base.clone();
         reordered.column_families.swap(0, 1);
-        assert_root_contract_rejected(reordered, "canonical column-family");
+        assert_root_contract_rejected(reordered, "CF index");
 
         let mut duplicated = base;
         duplicated.column_families[1] = duplicated.column_families[0];
-        assert_root_contract_rejected(duplicated, "canonical column-family");
+        assert_root_contract_rejected(duplicated, "CF index");
     }
 
     #[test]

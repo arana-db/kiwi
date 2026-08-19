@@ -25,14 +25,17 @@ use kstd::lock_mgr::LockMgr;
 use snafu::ResultExt;
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, mpsc};
 
-use crate::error::{Error, MpscSnafu, Result};
+use crate::error::{
+    Error, InvalidFormatSnafu, MpscSnafu, Result, format_storage_compatibility_refusal,
+    split_strict_rocks_open_cause,
+};
 use crate::expiration_manager::ExpirationManager;
 use crate::format_base_value::DataType;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
 use crate::storage_manifest::{
-    MigrationPhase, RootStorageManifestV2, load_or_create_root_manifest,
-    validate_existing_instance_manifests,
+    MigrationPhase, OnDiskDescriptor, RootStorageManifestV2, current_storage_descriptor,
+    load_or_create_root_manifest, observe_on_disk_descriptor, validate_existing_instance_manifests,
 };
 use crate::storage_migration::{
     finalize_migration_after_storage_open, prepare_or_resume_migration,
@@ -45,6 +48,78 @@ pub enum TaskType {
     None = 0,
     CleanAll = 1,
     CompactRange = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdmissionStep {
+    MigrationPrepare,
+    RootManifestLoad,
+    InstanceValidation,
+    StrictInstanceOpen,
+    MigrationFinalize,
+}
+
+fn wrap_storage_compatibility_refusal<T>(
+    result: Result<T>,
+    root: &Path,
+    db_instance_num: usize,
+    step: AdmissionStep,
+) -> Result<T> {
+    match result {
+        Err(Error::InvalidFormat { message, .. }) => {
+            let (cause, strict_rocks_open) = split_strict_rocks_open_cause(message);
+            let on_disk = observe_on_disk_descriptor(root);
+            let action = compatibility_action(step, &on_disk, db_instance_num, strict_rocks_open);
+            Err(InvalidFormatSnafu {
+                message: format_storage_compatibility_refusal(
+                    &current_storage_descriptor(),
+                    &on_disk.render(strict_rocks_open),
+                    action,
+                    &cause,
+                ),
+            }
+            .build())
+        }
+        other => other,
+    }
+}
+
+fn compatibility_action(
+    step: AdmissionStep,
+    on_disk: &OnDiskDescriptor,
+    db_instance_num: usize,
+    strict_rocks_open: bool,
+) -> &'static str {
+    match on_disk {
+        OnDiskDescriptor::RootManifestPresentUnreadable | OnDiskDescriptor::Unavailable => {
+            "keep the directory offline; inspect it and restore from a verified backup"
+        }
+        OnDiskDescriptor::LegacyWithoutRootManifest
+            if step == AdmissionStep::MigrationPrepare && strict_rocks_open =>
+        {
+            "preserve the directory; current Kiwi already attempted staged migration, so fix the registered-profile cause before retrying"
+        }
+        OnDiskDescriptor::LegacyWithoutRootManifest => {
+            "preserve the directory; use a source-compatible binary for logical export, then import into empty current-v2 storage"
+        }
+        OnDiskDescriptor::RootManifest { .. } if on_disk.is_future_version() => {
+            "preserve the directory and use a compatible Kiwi version or restore a compatible backup"
+        }
+        OnDiskDescriptor::RootManifest { .. }
+            if on_disk.has_runtime_topology_mismatch(db_instance_num) =>
+        {
+            "preserve the directory; use the matching db_instance_num or a supported offline migration"
+        }
+        OnDiskDescriptor::RootManifest { .. } if strict_rocks_open => {
+            "preserve the directory and use a compatible Kiwi version or restore a compatible backup"
+        }
+        OnDiskDescriptor::Empty if step == AdmissionStep::MigrationPrepare => {
+            "preserve the directory and retry with the current Kiwi after checking the cause"
+        }
+        _ => {
+            "preserve the directory and follow the cause with a compatible version, staged migration, or verified backup"
+        }
+    }
 }
 
 impl From<u8> for TaskType {
@@ -232,23 +307,43 @@ impl Storage {
         db_path: impl AsRef<Path>,
     ) -> Result<mpsc::Receiver<BgTask>> {
         let db_path = db_path.as_ref();
-        prepare_or_resume_migration(db_path, self.db_instance_num, &options)?;
-        let mut root_load = load_or_create_root_manifest(db_path, self.db_instance_num)?;
-        validate_existing_instance_manifests(
+        wrap_storage_compatibility_refusal(
+            prepare_or_resume_migration(db_path, self.db_instance_num, &options),
             db_path,
-            &root_load.manifest,
-            root_load.created_this_call,
+            self.db_instance_num,
+            AdmissionStep::MigrationPrepare,
+        )?;
+        let mut root_load = wrap_storage_compatibility_refusal(
+            load_or_create_root_manifest(db_path, self.db_instance_num),
+            db_path,
+            self.db_instance_num,
+            AdmissionStep::RootManifestLoad,
+        )?;
+        wrap_storage_compatibility_refusal(
+            validate_existing_instance_manifests(
+                db_path,
+                &root_load.manifest,
+                root_load.created_this_call,
+            ),
+            db_path,
+            self.db_instance_num,
+            AdmissionStep::InstanceValidation,
         )?;
         let mut root_manifest = root_load.manifest;
 
         let (handler, receiver) = BgTaskHandler::new();
         let handler_arc = Arc::new(handler);
-        let mut opened_instances = self.open_instances(
-            Arc::clone(&options),
+        let mut opened_instances = wrap_storage_compatibility_refusal(
+            self.open_instances(
+                Arc::clone(&options),
+                db_path,
+                &root_manifest,
+                root_load.created_this_call,
+                &handler_arc,
+            ),
             db_path,
-            &root_manifest,
-            root_load.created_this_call,
-            &handler_arc,
+            self.db_instance_num,
+            AdmissionStep::StrictInstanceOpen,
         )?;
 
         let requires_runtime_finalize = root_manifest.migration().is_some_and(|transaction| {
@@ -259,20 +354,40 @@ impl Storage {
         });
         if requires_runtime_finalize {
             drop(opened_instances);
-            finalize_migration_after_storage_open(db_path, self.db_instance_num, &options)?;
-            root_load = load_or_create_root_manifest(db_path, self.db_instance_num)?;
-            validate_existing_instance_manifests(
+            wrap_storage_compatibility_refusal(
+                finalize_migration_after_storage_open(db_path, self.db_instance_num, &options),
                 db_path,
-                &root_load.manifest,
-                root_load.created_this_call,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
+            )?;
+            root_load = wrap_storage_compatibility_refusal(
+                load_or_create_root_manifest(db_path, self.db_instance_num),
+                db_path,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
+            )?;
+            wrap_storage_compatibility_refusal(
+                validate_existing_instance_manifests(
+                    db_path,
+                    &root_load.manifest,
+                    root_load.created_this_call,
+                ),
+                db_path,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
             )?;
             root_manifest = root_load.manifest;
-            opened_instances = self.open_instances(
-                Arc::clone(&options),
+            opened_instances = wrap_storage_compatibility_refusal(
+                self.open_instances(
+                    Arc::clone(&options),
+                    db_path,
+                    &root_manifest,
+                    false,
+                    &handler_arc,
+                ),
                 db_path,
-                &root_manifest,
-                false,
-                &handler_arc,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
             )?;
         }
 
