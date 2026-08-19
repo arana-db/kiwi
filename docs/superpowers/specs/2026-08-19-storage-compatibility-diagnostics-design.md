@@ -67,7 +67,11 @@ server 实际调用的 `Storage::open` 在 RocksDB 对外服务前返回完整�
 storage compatibility refusal: current=<descriptor>; on_disk=<descriptor>; action=<instruction>; cause=<original error>
 ```
 
-字段值不得包含换行。`cause` 保持当前错误的 Display 内容。
+字段值必须经过稳定的单行编码：至少编码 `%`、`;`、`=`、CR、LF 和控制字符；每个
+字段有固定最大长度和显式截断标记，防止路径或 RocksDB 文本伪造第二个字段、破坏
+日志行或无限放大。`InvalidFormat` cause 保留原始 message；strict RocksDB open 的
+cause 必须使用内层 `rocksdb::Error::into_string()`，不得使用只显示 `RocksDB error`
+的外层 Kiwi `Error::Rocks`。
 
 ### 3.1 current descriptor
 
@@ -78,13 +82,15 @@ storage compatibility refusal: current=<descriptor>; on_disk=<descriptor>; actio
 - Instance manifest version；
 - canonical CF schema 身份或版本。
 
-它由现有常量组合，例如：
+它由现有常量组合，固定为类似：
 
 ```text
-root-manifest-v2/storage-schema-v2/instance-manifest-v2/cf-schema-current
+root-manifest-v2/storage-schema-v2/instance-manifest-v2/slot-mapping-v1/cf-contract=storage-schema-v2
 ```
 
-不得复制魔法数字；常量变化时诊断和 validator/test fixture 必须同时变化。
+不得复制魔法数字，也不得发明没有持久化常量的 `cf-schema-current`；CF contract 复用
+`CANONICAL_COLUMN_FAMILIES` 和 storage schema v2。常量变化时诊断和 test fixture
+必须同时变化。
 
 ### 3.2 on_disk descriptor
 
@@ -92,22 +98,33 @@ root-manifest-v2/storage-schema-v2/instance-manifest-v2/cf-schema-current
 
 1. 根目录不存在或为空：`empty`；这种情况通常不属于 compatibility refusal。
 2. Root manifest 存在且可安全提取版本字段：记录
-   `root-manifest-vX/storage-schema-vY`；不要求 manifest 整体验证成功。
+   `root-manifest-vX/storage-schema-vY`；如有 migration journal，再附 source profile、
+   phase 和 current instance；不要求 manifest 整体验证成功。
 3. Root manifest 存在但不是受支持、可解析的 bounded JSON：
    `root-manifest-present-unreadable`。
 4. Root manifest 缺失但存在实例/legacy 内容：`legacy-without-root-manifest`。
 5. 目录本身无法安全观察：`unavailable`，并保留原 cause。
 
-观察器必须是 fail-safe：只读、限制读取大小、不跟随用于诊断的 manifest symlink、
-不打开 RocksDB、不写 manifest、不创建目录。观察失败只能降级 descriptor，不能覆盖
-导致 `Storage::open` 失败的原错误。
+对于 strict RocksDB comparator/CF mismatch，descriptor 还附
+`rocksdb-strict-open=invalid-argument`；具体 comparator 名称保存在 bounded cause。
+Root manifest 的 canonical CF contract mismatch 必须在 cause 中给出第一个 mismatch
+的 CF index/name、field、current/expected 和 on-disk/actual，不能继续只报泛化的
+`canonical column-family contract mismatch`。
+
+观察器必须是 fail-safe：只读、held handle、最多读取 `MAX+1` 字节；Root manifest
+必须是 regular file。Unix 使用 nofollow/nonblock 语义，Windows 拒绝 reparse point；
+打开后复核 handle metadata，FIFO/socket/device/directory 均直接降级为 unreadable/
+unavailable。观察器不打开 RocksDB、不写 manifest、不创建目录。观察失败只能降级
+descriptor，不能覆盖导致 `Storage::open` 失败的原错误。
 
 ### 3.3 action
 
 最小稳定 action 按 descriptor/cause 分类：
 
-- 已知 legacy 且 staged migration 可用：明确先用兼容 Kiwi 执行 staged migration，
-  在完成前不要对外服务。
+- registered legacy：保持目录不变并用当前 Kiwi 重试；当前启动本身会在 admission 前
+  执行 staged migration，若仍失败则按 cause 修复精确 registered-profile 问题。
+- unregistered/corrupt legacy：用真正能够打开源格式的二进制做逻辑导出，在空的
+  current-v2 storage 中导入；不得手写 manifest 或静默 adopt。
 - future/unsupported version：使用能够读取该版本的 Kiwi，或从兼容备份恢复；不要用
   当前二进制修改目录。
 - corrupt/unreadable/unknown layout：离线检查并从已验证备份恢复；不要静默初始化。
@@ -128,9 +145,19 @@ root-manifest-v2/storage-schema-v2/instance-manifest-v2/cf-schema-current
 4. instances 尚未发布前的严格 RocksDB/manifest binding open；
 5. runtime finalize migration 后的第二次 root/instance 验证与 reopen。
 
-helper 只包装能够表示格式/兼容性的 `InvalidFormat` 和严格 RocksDB open 拒绝；普通
-I/O 等非兼容错误保持原 error category。`self.insts`、`self.db_path`、background task
-和 expiration manager 的发布顺序不变。
+五个 admission step 返回的所有 `InvalidFormat` 进入统一 envelope，避免靠 cause
+substring 猜测类型。strict RocksDB open 必须先在两个真实调用点分类：
+
+- `redis.rs` 的 existing-v2 instance open：仅当 `allow_manifest_creation=false` 且
+  `ErrorKind::InvalidArgument` 时转换成保留内层 source 的 `InvalidFormat`；
+- `storage_migration.rs::open_instance_strict`：existing legacy 的
+  `ErrorKind::InvalidArgument` 同样转换；
+- `IOError`、`Busy`、`TimedOut`、`Corruption` 等保持原 `Error::Rocks`；`DB::list_cf`、
+  iterator、copy 等非 strict-open Rocks 错误也不转换。
+
+随后 `Storage::open` admission wrapper 只包装 `InvalidFormat`。普通 I/O 等非兼容错误
+保持原 error category。`self.insts`、`self.db_path`、background task 和 expiration
+manager 的发布顺序不变。
 
 内部 parser/migration helper 保持现有详细错误，避免把 envelope 重复嵌套。只有公开
 生产 admission 边界负责一次包装。
@@ -139,17 +166,28 @@ I/O 等非兼容错误保持原 error category。`self.insts`、`self.db_path`�
 
 至少增加以下真实入口测试，均调用 `Storage::open`：
 
-1. future Root manifest version：旧实现只返回 unsupported cause，新增测试要求四字段；
+1. future Root 和 Instance manifest version：修改版本后刷新 canonical digest，再通过
+   `Storage::open` 要求四字段；
 2. configured topology 与 on-disk Root 不匹配：要求 current/on_disk/action/cause；
-3. unregistered legacy CF layout 或缺失/非法 legacy manifest：要求 safe action 且打开
+3. Root canonical CF name/role/comparator/key-codec/value-codec mismatch：逐项刷新 digest，
+   要求 cause 给出首个 actual/expected mismatch；
+4. unregistered legacy CF layout 或缺失/非法 legacy manifest：要求 safe action 且打开
    后 Storage 未发布实例；
-4. 损坏 Root manifest：要求 `on_disk=root-manifest-present-unreadable` 并保留 digest/
+5. 损坏 Root manifest：要求 `on_disk=root-manifest-present-unreadable` 并保留 digest/
    JSON cause；
-5. 正向 empty/current/known migration fixture 继续成功，证明没有扩大拒绝范围。
+6. current-v2 persisted comparator mismatch：合法 v2 manifests + canonical CF names，
+   但 `list_data_cf` 使用错误持久化 comparator，必须覆盖 `redis.rs` strict open；
+7. Base-v1 persisted comparator mismatch：六 CF legacy 且同样错误 comparator，必须在
+   migration journal 写入前覆盖 `open_instance_strict`；
+8. 合法 v2 DB 保持 LOCK/Busy：仍返回原 Rocks error，不能出现 compatibility envelope；
+9. nonregular/symlink/FIFO/超大 manifest descriptor 有界失败；
+10. 正向 empty/current/known migration fixture 继续成功，证明没有扩大拒绝范围。
 
 RED 必须在基线实现上因缺少字段失败，而不是 fixture、RocksDB lock 或路径清理失败。
-mutant 至少分别删除 `current`、`on_disk`、`action`，以及绕过 production
-`Storage::open` wrapper；每个 mutant 都必须被权威测试拒绝。
+mutant 至少分别删除字段、双重包装、绕过任一 admission step、只修 v2 strict open、
+只修 legacy strict open、退回外层 `RocksDB error`、包装所有 Rocks kinds、future fixture
+不刷新 digest、observer 跟随 symlink/阻塞 FIFO/无读取上限、action 解析 cause
+substring，以及字段注入 `; current=`/换行；每个 mutant 都必须被权威测试拒绝。
 
 ## 6. Issue 关闭顺序
 

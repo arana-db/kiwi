@@ -21,16 +21,20 @@
 
 ## 文件所有权
 
-- `src/storage/src/storage_manifest.rs`：current/on-disk descriptor 的常量与只读 helper。
-- `src/storage/src/storage.rs`：生产 admission 边界的一次性兼容诊断包装。
+- `src/storage/src/error.rs`：共享 strict Rocks mapper 与 bounded/escaped envelope formatter。
+- `src/storage/src/storage_manifest.rs`：typed current/on-disk descriptor、只读 observer，
+  以及 canonical CF mismatch 的首个 actual/expected detail。
+- `src/storage/src/storage.rs`：生产 admission step 的一次性兼容诊断包装。
+- `src/storage/src/redis.rs`：existing-v2 strict open 的 InvalidArgument 分类。
 - `src/storage/tests/storage_manifest_v2_test.rs`：future/corrupt/topology/缺失实例的真实
   `Storage::open` RED/GREEN。
 - `src/storage/tests/storage_migration_test.rs`：unknown legacy/comparator 严格 open 与已知
   migration 正向回归；仅确有需要时修改。
 - `src/storage/tests/redis_vector_test.rs`：只读确认旧单实例入口语义；不以它代替生产
   证据。
-- `src/storage/src/storage_migration.rs`：默认不修改；只有 descriptor/action 必须消费
-  已有公开分类且无法在 manifest/storage 层完成时才做外科式改动。
+- `src/storage/src/storage_migration.rs`：legacy `open_instance_strict` InvalidArgument 分类。
+- `src/storage/tests/support/legacy_storage.rs`：仅为真实错误 comparator fixture 增加最小
+  构造 helper（如测试内无法清晰完成）。
 - 本计划和对应设计文档：批准范围与执行证据。
 
 ## 环境基线
@@ -59,59 +63,84 @@
 - `src/storage/tests/storage_migration_test.rs`（unknown legacy/comparator fixture 如需）
 
 - [ ] future Root manifest：把合法 root JSON 的 `manifest_version` 改为 99，写到真实
-  root 路径，调用 `Storage::open`，要求 `on_disk` 体现 v99 且 cause 保留 unsupported
-  version。
+  root 路径，刷新 canonical payload digest，调用 `Storage::open`，要求 `on_disk` 体现
+  v99 且 cause 保留 unsupported version；增加 future Instance manifest 的同类 fixture。
 - [ ] corrupt Root manifest：写损坏 digest 或非 JSON，要求
   `on_disk=root-manifest-present-unreadable` 且 cause 保留 digest/JSON 详情。
 - [ ] topology mismatch：合法 Root 的 `db_instance_num=2`，用 `Storage::new(3, ...)`
   打开，要求 descriptor 和可执行 action。
 - [ ] missing/invalid instance：合法 Root 下缺少实例或 instance manifest，要求 envelope
   且不重建目录/不发布 Storage。
-- [ ] unregistered legacy CF 或 comparator mismatch：通过现有 legacy fixture/真实
-  RocksDB 创建，要求原始 RocksDB comparator/CF 详情出现在 `cause`，而不是当前只有
-  `RocksDB error` 的丢失文本。
+- [ ] Root manifest CF contract table：分别改 CF name/role/comparator/key codec/value
+  codec 并刷新 digest，要求首个 mismatch 的 field/current/on-disk 详情。
+- [ ] current-v2 comparator mismatch：合法 Root/Instance v2 manifests 和 canonical CF
+  names，但 `list_data_cf` 持久化默认 comparator；调用真实 `Storage::open`，必须走
+  `redis.rs` strict open。
+- [ ] Base-v1 comparator mismatch：六个 Base CF、无 manifests，同样错误 comparator；
+  调用真实 `Storage::open`，必须走 `open_instance_strict`，且失败前不产生 Root journal、
+  shadow 或 backup。
+- [ ] 合法 v2 DB 的另一个 handle 保持 LOCK/Busy，再调用 `Storage::open`；要求原
+  `Error::Rocks` 且没有 envelope，杀死“包装所有 Rocks kinds” mutant。
 - [ ] 运行每个精确测试。预期 RED：旧实现只含局部 cause，缺统一字段；comparator
   fixture 还应证明当前 Display 丢失 RocksDB source 详情。
 
 fixture/setup、文件锁、`STATUS_ENTRYPOINT_NOT_FOUND` 或 cleanup 失败都不是有效 RED。
 
-## Task 3：实现有界只读 on-disk descriptor
+## Task 3：实现 bounded formatter、descriptor 与 observer
 
-**文件：** `src/storage/src/storage_manifest.rs`
+**文件：**
 
-- [ ] 从现有 Root/Instance/schema 常量组合唯一 `current` descriptor，不复制版本魔法数。
+- `src/storage/src/error.rs`
+- `src/storage/src/storage_manifest.rs`
+
+- [ ] 从现有 Root/Instance/schema/slot 常量组合唯一 `current` descriptor；CF contract
+  复用 storage schema v2，不发明 `cf-schema-current`。
+- [ ] formatter 编码 `%`、`;`、`=`、CR/LF/控制字符，对每个字段固定上限和截断标记；
+  测试含 `; current=` 和换行的值仍只出现一次字段 key。
 - [ ] 增加 crate-private descriptor helper：
   - 不存在/空目录返回 `empty`；
   - Root manifest 存在时只读固定上限字节，超过上限或解析失败返回
     `root-manifest-present-unreadable`；
-  - 在不要求 digest/完整 schema 合法的前提下提取 numeric `manifest_version` 和
-    `storage_schema_version`；
+  - 在不要求 digest/完整 schema 合法的前提下提取 numeric `manifest_version`、
+    `storage_schema_version` 和 bounded migration profile/phase/current instance；
   - Root manifest 缺失但目录非空返回 `legacy-without-root-manifest`；
   - metadata/read 失败返回 `unavailable`，不覆盖原 open error。
-- [ ] 用 `symlink_metadata` 拒绝明显 manifest symlink；descriptor 只用于诊断，不能
-  创建目录、打开 RocksDB 或调用 migration。
+- [ ] Root manifest 必须是 regular file；held handle 最多读取 `MAX+1`。Unix nofollow/
+  nonblock，Windows reparse 拒绝，打开后复核 handle metadata；FIFO/socket/device/
+  directory 不得阻塞。
 - [ ] 单元/集成断言读取上限、unreadable fallback 和版本提取；不要为诊断实现第二套
   manifest validator。
 
-## Task 4：实现 production admission envelope
+## Task 4：实现 strict-open 分类与 production admission envelope
 
-**文件：** `src/storage/src/storage.rs`
+**文件：**
 
-- [ ] 增加单一 wrapper，把 `InvalidFormat` 与严格 RocksDB open 的兼容拒绝格式化为：
+- `src/storage/src/error.rs`
+- `src/storage/src/redis.rs`
+- `src/storage/src/storage_migration.rs`
+- `src/storage/src/storage.rs`
+
+- [ ] shared mapper 仅把 existing-storage strict open 的
+  `rocksdb::ErrorKind::InvalidArgument` 转成带内层 `into_string()` 的 InvalidFormat；
+  其他 ErrorKind 保持原 Rocks error。
+- [ ] `redis.rs` 只在 `allow_manifest_creation=false` 的 existing-v2 open 使用 mapper；
+  新建空实例不重标。
+- [ ] `storage_migration.rs::open_instance_strict` 使用同一 mapper；`DB::list_cf`、iterator、
+  copy 等路径不使用。
+- [ ] 增加单一 wrapper，把五个 admission step 返回的 `InvalidFormat` 格式化为：
 
   ```text
   storage compatibility refusal: current=...; on_disk=...; action=...; cause=...
   ```
 
-- [ ] 对 RocksDB variant 显式使用内部 source 的 Display，保留 comparator/CF 具体错误；
-  不得只嵌入外层 `RocksDB error`。
-- [ ] action 根据 descriptor/cause 做最小分类；只引用已有 staged migration、匹配版本、
-  离线检查或备份恢复，不发明 CLI。
+- [ ] action 根据 typed `AdmissionStep + OnDiskDescriptor` 做最小分类，不解析 cause
+  substring；registered legacy 文案说明当前启动本身执行 staged migration，
+  unregistered/corrupt legacy 要求兼容二进制逻辑导出/空 v2 导入。
 - [ ] wrapper 应用于以下每个 `Storage::open` admission step：migration prepare/resume、
   Root load、instance validation、strict instance open、migration finalize 后的第二次验证/
   reopen。
 - [ ] 内部 helper 不包装，避免 `current=` 等字段嵌套两次。
-- [ ] 普通 I/O variant 原样返回；背景任务启动后的非兼容错误不进入本 wrapper。
+- [ ] 普通 I/O 和未映射 Rocks variant 原样返回；背景任务启动后的非兼容错误不进入。
 - [ ] `self.insts`、`db_path`、background/expiration publication 行保持原顺序。
 
 ## Task 5：GREEN 与正向不回归
@@ -121,7 +150,10 @@ fixture/setup、文件锁、`STATUS_ENTRYPOINT_NOT_FOUND` 或 cleanup 失败都�
   Vector-v1 已知 staged migration 成功；rollback/finalize 关键状态用例成功。
 - [ ] mutant：分别删除 current、on_disk、action、cause，或只包装第一次 Root load；
   权威测试必须失败。
-- [ ] comparator mutant 把 Rocks source 退回外层 `RocksDB error`，测试必须失败。
+- [ ] comparator mutants：退回外层 `RocksDB error`、只修 v2、只修 legacy、包装所有
+  Rocks kinds，分别被两条 comparator test 和 LOCK/Busy test 杀死。
+- [ ] observer/formatter mutants：跟随 symlink、阻塞 FIFO、无读取上限、字段不编码、
+  action 解析 cause substring，权威测试必须失败。
 
 ## Task 6：风险匹配验证与 Test Guard
 
@@ -136,7 +168,8 @@ fixture/setup、文件锁、`STATUS_ENTRYPOINT_NOT_FOUND` 或 cleanup 失败都�
 - [ ] `cargo clippy -p storage --all-targets --features test-fault-injection -- -D warnings`
 - [ ] `git diff --check origin/main...HEAD`
 - [ ] Test Guard 检查 fixtures 真实调用 `Storage::open`、旧实现确实 RED、没有仅测试
-  helper 自己、cleanup 失败不会被吞掉。
+  helper 自己、current-v2/legacy strict open 均真实覆盖、fresh digest 与目录不变性成立、
+  cleanup 失败不会被吞掉。
 
 ## Task 7：独立复审、提交和 PR
 
