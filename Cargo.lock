@@ -2718,6 +2718,7 @@ dependencies = [
  "crc16",
  "foyer",
  "kstd",
+ "libc",
  "log",
  "moka",
  "murmur3",

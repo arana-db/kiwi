@@ -276,12 +276,10 @@ fn observe_root_manifest(path: &Path) -> OnDiskDescriptor {
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn open_manifest_for_observation(path: &Path) -> std::io::Result<fs::File> {
-    const O_NONBLOCK: i32 = 0x800;
-    const O_NOFOLLOW: i32 = 0x20000;
     record_diagnostic_manifest_open_attempt();
     OpenOptions::new()
         .read(true)
-        .custom_flags(O_NONBLOCK | O_NOFOLLOW)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
         .open(path)
 }
 
@@ -298,12 +296,10 @@ fn open_manifest_for_observation(path: &Path) -> std::io::Result<fs::File> {
     )
 ))]
 fn open_manifest_for_observation(path: &Path) -> std::io::Result<fs::File> {
-    const O_NONBLOCK: i32 = 0x4;
-    const O_NOFOLLOW: i32 = 0x100;
     record_diagnostic_manifest_open_attempt();
     OpenOptions::new()
         .read(true)
-        .custom_flags(O_NONBLOCK | O_NOFOLLOW)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
         .open(path)
 }
 

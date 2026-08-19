@@ -360,7 +360,16 @@ fn storage_open_reports_base_v1_persisted_comparator_mismatch_before_journal() {
 #[test]
 fn storage_open_escapes_field_injection_from_legacy_path() {
     let temp = tempfile::tempdir().expect("field injection root");
-    let injected_name = "bad; current=fake\ncause=fake";
+    #[cfg(unix)]
+    let (injected_name, escaped_name) = (
+        "bad; current=fake\ncause=fake",
+        "%3B current%3Dfake%0Acause%3Dfake",
+    );
+    #[cfg(not(unix))]
+    let (injected_name, escaped_name) = (
+        "bad; current=fake%cause=fake",
+        "%3B current%3Dfake%25cause%3Dfake",
+    );
     std::fs::write(temp.path().join(injected_name), b"unexpected").expect("write unexpected entry");
 
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
@@ -374,7 +383,7 @@ fn storage_open_escapes_field_injection_from_legacy_path() {
         &storage,
         "legacy-without-root-manifest",
         "logical export",
-        &["%3B current%3Dfake%0Acause%3Dfake"],
+        &[escaped_name],
     );
     assert!(temp.path().join(injected_name).is_file());
 }
