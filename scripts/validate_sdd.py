@@ -79,6 +79,7 @@ CURRENT_FIELDS = (
     "current_plan",
     "current_issue",
     "current_pr",
+    "next_safe_action",
 )
 
 WP0_EVIDENCE_FIELDS = (
@@ -110,7 +111,42 @@ EXPECTED_WP0_VERIFICATION_WORKFLOW = {
     "name": "ci",
     "path": ".github/workflows/ci.yml",
 }
+EXPECTED_WP8_VERIFICATION_WORKFLOW = {
+    "name": "ci",
+    "path": ".github/workflows/ci.yml",
+}
+
+WP8_EVIDENCE_FIELDS = (
+    "wp8_pr_base_ref",
+    "wp8_pr_head_ref",
+    "wp8_merge_parent_ref",
+    "wp8_merge_ref",
+)
+
+WP8_IDENTITY_FIELDS = ("wp8_pr_number",)
+
+WP8_VERIFICATION_FIELDS = (
+    "wp8_exact_main_verification_ref",
+    "wp8_exact_main_verification_run",
+    "wp8_exact_main_verification_status",
+)
+
+EXPECTED_WP8_IMMUTABLE_EVIDENCE = {
+    "wp8_pr_number": "422",
+    "wp8_pr_base_ref": "733888fc90ad8ef039947e87b08d7500a405954a",
+    "wp8_pr_head_ref": "2b03219cdd5e452e08c1b2144c3c90516190d41f",
+    "wp8_merge_parent_ref": "733888fc90ad8ef039947e87b08d7500a405954a",
+    "wp8_merge_ref": "9a8a64aca12a825912f299450e10fc6043eca610",
+}
 GithubRunLoader = Callable[[str], dict[str, object]]
+
+WP8_CLOSEOUT_PLAN = "docs/superpowers/plans/2026-08-19-wp8-issue-closeout.md"
+WP8_ACCEPTED_EVIDENCE_FIXTURE = {
+    **EXPECTED_WP8_IMMUTABLE_EVIDENCE,
+    "wp8_exact_main_verification_ref": "9a8a64aca12a825912f299450e10fc6043eca610",
+    "wp8_exact_main_verification_run": "32129266046",
+    "wp8_exact_main_verification_status": "passed",
+}
 
 ALLOWED_WP_STATUSES = {
     "proposed",
@@ -334,6 +370,15 @@ def validate_wp0_immutable_evidence(
             errors.append(f"{field} must remain {expected}, found {actual}")
 
 
+def validate_wp8_immutable_evidence(
+    fields: dict[str, str], errors: list[str]
+) -> None:
+    for field, expected in EXPECTED_WP8_IMMUTABLE_EVIDENCE.items():
+        actual = fields.get(field, "")
+        if actual != expected:
+            errors.append(f"{field} must remain {expected}, found {actual}")
+
+
 def fetch_github_actions_run(run_id: str) -> dict[str, object]:
     headers = {
         "Accept": "application/vnd.github+json",
@@ -401,6 +446,50 @@ def validate_wp0_exact_main_run(
         )
         return
     validate_wp0_github_run_evidence(fields, run, errors)
+
+
+def validate_wp8_github_run_evidence(
+    fields: dict[str, str], run: dict[str, object], errors: list[str]
+) -> None:
+    run_id = fields.get("wp8_exact_main_verification_run", "")
+    expected: dict[str, object] = {
+        "id": int(run_id),
+        "status": "completed",
+        "conclusion": "success",
+        "event": "push",
+        "head_branch": EXPECTED_BASELINE_BRANCH,
+        "head_sha": fields.get("wp8_exact_main_verification_ref", ""),
+        **EXPECTED_WP8_VERIFICATION_WORKFLOW,
+    }
+    for field, expected_value in expected.items():
+        actual = run.get(field)
+        if actual != expected_value:
+            errors.append(
+                "WP8 exact-main GitHub Actions run "
+                f"{field} must be {expected_value!r}, found {actual!r}"
+            )
+
+
+def validate_wp8_exact_main_run(
+    fields: dict[str, str],
+    errors: list[str],
+    loader: GithubRunLoader | None = None,
+) -> None:
+    if fields.get("wp8_exact_main_verification_status") != "passed":
+        return
+    run_id = fields.get("wp8_exact_main_verification_run", "")
+    if not re.fullmatch(r"[1-9][0-9]*", run_id):
+        return
+    load_run = loader or fetch_github_actions_run
+    try:
+        run = load_run(run_id)
+    except Exception as error:
+        errors.append(
+            f"unable to validate WP8 exact-main GitHub Actions run {run_id}: "
+            f"{type(error).__name__}: {error}"
+        )
+        return
+    validate_wp8_github_run_evidence(fields, run, errors)
 
 
 def validate_current_plan(
@@ -587,11 +676,100 @@ def validate_current_state(
                 "verification evidence"
             )
 
+    wp8_status = statuses.get("WP8", "")
+    wp8_requires_evidence = wp8_status in {"verified", "accepted", "released"}
+    wp8_verification_ref = fields.get("wp8_exact_main_verification_ref", "")
+    wp8_verification_run = fields.get("wp8_exact_main_verification_run", "")
+    wp8_verification_status = fields.get("wp8_exact_main_verification_status", "")
+    if wp8_requires_evidence:
+        for field in (
+            WP8_IDENTITY_FIELDS + WP8_EVIDENCE_FIELDS + WP8_VERIFICATION_FIELDS
+        ):
+            if field not in fields:
+                errors.append(f"front matter field {field} must occur exactly once")
+
+        wp8_pr_number = fields.get("wp8_pr_number", "")
+        if not re.fullmatch(r"[1-9][0-9]*", wp8_pr_number):
+            errors.append("wp8_pr_number must be a positive decimal GitHub PR number")
+        validate_wp8_immutable_evidence(fields, errors)
+        for field in WP8_EVIDENCE_FIELDS:
+            if not re.fullmatch(r"[0-9a-f]{40}", fields.get(field, "")):
+                errors.append(
+                    f"{field} must be a full 40-character lowercase Git SHA"
+                )
+
+        if wp8_verification_status not in {"pending", "passed"}:
+            errors.append(
+                "wp8_exact_main_verification_status must be pending or passed"
+            )
+        if wp8_verification_status == "pending":
+            if wp8_verification_ref != "none" or wp8_verification_run != "none":
+                errors.append(
+                    "pending WP8 exact-main verification must not claim a ref or run"
+                )
+        elif wp8_verification_status == "passed":
+            if not re.fullmatch(r"[0-9a-f]{40}", wp8_verification_ref):
+                errors.append(
+                    "passed WP8 exact-main verification requires a full Git SHA"
+                )
+            if not re.fullmatch(r"[1-9][0-9]*", wp8_verification_run):
+                errors.append(
+                    "passed WP8 exact-main verification requires a GitHub Actions run"
+                )
+
+        if wp8_verification_status != "passed":
+            errors.append(
+                f"WP8 status {wp8_status} requires passed exact-main verification "
+                "evidence"
+            )
+
+        wp8_block = blocks.get("WP8", "")
+        wp8_projection = (
+            (
+                "- PR 固定区间：",
+                f"- PR 固定区间：{fields.get('wp8_pr_base_ref', '')}.."
+                f"{fields.get('wp8_pr_head_ref', '')}；",
+            ),
+            (
+                "- merge 固定区间：",
+                f"- merge 固定区间：{fields.get('wp8_merge_parent_ref', '')}.."
+                f"{fields.get('wp8_merge_ref', '')}；",
+            ),
+            (
+                "- WP8 exact-main verification：",
+                "- WP8 exact-main verification："
+                f"status={wp8_verification_status}，ref={wp8_verification_ref}，"
+                f"run={wp8_verification_run}。",
+            ),
+        )
+        wp8_lines = wp8_block.splitlines()
+        for prefix, expected_line in wp8_projection:
+            matching_lines = [line for line in wp8_lines if line.startswith(prefix)]
+            if matching_lines != [expected_line]:
+                errors.append(
+                    "WP8 evidence projection must contain exactly one line matching "
+                    f"immutable front matter: expected={expected_line!r}, "
+                    f"found={matching_lines}"
+                )
+
+        if (
+            current_work_package == "WP8"
+            and current_status == "accepted"
+            and fields.get("next_safe_action")
+            != "await-next-authorized-work-package"
+        ):
+            errors.append(
+                "WP8 accepted next_safe_action must be "
+                "await-next-authorized-work-package"
+            )
+
     table_expectations = {
         "Current work package": current_work_package,
         "Status": current_status,
         "WP0 exact-main verification": verification_status,
     }
+    if wp8_requires_evidence:
+        table_expectations["WP8 exact-main verification"] = wp8_verification_status
     for label, expected in table_expectations.items():
         matches = re.findall(rf"(?m)^\| {re.escape(label)} \| (.*?) \|$", sdd)
         if len(matches) != 1:
@@ -947,6 +1125,167 @@ def validate_wp0_git_evidence(
         )
 
 
+def validate_wp8_git_evidence(
+    root: Path, fields: dict[str, str], errors: list[str]
+) -> None:
+    refs = {
+        "PR base": fields.get("wp8_pr_base_ref", ""),
+        "PR head": fields.get("wp8_pr_head_ref", ""),
+        "merge parent": fields.get("wp8_merge_parent_ref", ""),
+        "merge": fields.get("wp8_merge_ref", ""),
+    }
+    available: dict[str, bool] = {}
+    for label, ref in refs.items():
+        check = subprocess.run(
+            ["git", "-C", str(root), "cat-file", "-e", f"{ref}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        available[label] = check.returncode == 0
+        if check.returncode != 0:
+            errors.append(f"WP8 {label} ref is not available as a Git commit: {ref}")
+
+    pr_base_ref = refs["PR base"]
+    pr_head_ref = refs["PR head"]
+    if available["PR base"] and available["PR head"]:
+        ancestry = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "merge-base",
+                "--is-ancestor",
+                pr_base_ref,
+                pr_head_ref,
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if ancestry.returncode != 0:
+            errors.append("WP8 PR base ref must be an ancestor of the PR head ref")
+
+    merge_parent_ref = refs["merge parent"]
+    merge_ref = refs["merge"]
+    parents = subprocess.run(
+        ["git", "-C", str(root), "rev-list", "--parents", "-n", "1", merge_ref],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    expected_lineage = [merge_ref, merge_parent_ref]
+    actual_lineage = parents.stdout.strip().split()
+    if parents.returncode != 0 or actual_lineage != expected_lineage:
+        errors.append(
+            "WP8 squash-merge evidence must bind the merge commit and its parent "
+            f"exactly: expected={expected_lineage}, found={actual_lineage}"
+        )
+
+    if available["PR head"] and available["merge"]:
+        head_tree = subprocess.run(
+            ["git", "-C", str(root), "show", "-s", "--format=%T", pr_head_ref],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        merge_tree = subprocess.run(
+            ["git", "-C", str(root), "show", "-s", "--format=%T", merge_ref],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        if (
+            head_tree.returncode != 0
+            or merge_tree.returncode != 0
+            or head_tree.stdout.strip() != merge_tree.stdout.strip()
+        ):
+            errors.append(
+                "WP8 PR head tree must match the squash-merge tree: "
+                f"head={head_tree.stdout.strip()!r}, "
+                f"merge={merge_tree.stdout.strip()!r}"
+            )
+
+    subject = subprocess.run(
+        ["git", "-C", str(root), "show", "-s", "--format=%s", merge_ref],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    expected_pr_marker = f"(#{fields.get('wp8_pr_number', '')})"
+    if subject.returncode != 0 or expected_pr_marker not in subject.stdout.strip():
+        errors.append(
+            "WP8 merge commit subject must identify the implementation PR: "
+            f"expected marker={expected_pr_marker}, found={subject.stdout.strip()!r}"
+        )
+
+    if fields.get("wp8_exact_main_verification_status") != "passed":
+        return
+    verification_ref = fields.get("wp8_exact_main_verification_ref", "")
+    verification_check = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", f"{verification_ref}^{{commit}}"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if verification_check.returncode != 0:
+        errors.append(
+            "passed WP8 exact-main verification ref is not available as a Git "
+            f"commit: {verification_ref}"
+        )
+        return
+
+    verification_ancestry = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "merge-base",
+            "--is-ancestor",
+            merge_ref,
+            verification_ref,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if verification_ancestry.returncode != 0:
+        errors.append(
+            "WP8 exact-main verification ref must descend from the recorded WP8 "
+            "merge commit"
+        )
+
+    baseline_ref = fields.get("baseline_ref", "")
+    baseline_ancestry = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "merge-base",
+            "--is-ancestor",
+            verification_ref,
+            baseline_ref,
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if baseline_ancestry.returncode != 0:
+        errors.append(
+            "passed WP8 exact-main verification requires baseline_ref to advance "
+            "to the verification ref or a later main commit"
+        )
+
+
 def validate_artifacts(
     root: Path,
     sdd: str,
@@ -1144,9 +1483,12 @@ def validate(
     validate_current_state(sdd, fields, errors, current_plan_path)
     if check_github_run:
         validate_wp0_exact_main_run(fields, errors, github_run_loader)
+        validate_wp8_exact_main_run(fields, errors, github_run_loader)
     validate_wp0_gate_contract(sdd, errors)
     invariant_count = validate_invariants(sdd, errors)
     validate_artifacts(root, sdd, fields, errors, check_git_diff)
+    if check_git_diff and fields.get("wp8_exact_main_verification_status") == "passed":
+        validate_wp8_git_evidence(root, fields, errors)
     if check_markdown:
         effective_markdown_paths = markdown_paths
         if effective_markdown_paths is None:
@@ -1358,6 +1700,164 @@ def set_current_wp8_external_plan_text(sdd: str, plan_path: str) -> str:
     return updated
 
 
+def set_wp8_accepted_evidence_text(sdd: str) -> str:
+    updated = sdd
+    if re.search(r"(?m)^wp8_pr_number: ", updated):
+        for field, value in WP8_ACCEPTED_EVIDENCE_FIXTURE.items():
+            updated = replace_once(
+                updated,
+                rf"(?m)^{re.escape(field)}: .+$",
+                f"{field}: {value}",
+                f"WP8 accepted {field}",
+            )
+    else:
+        updated = replace_once(
+            updated,
+            r"(?m)^(wp0_exact_main_verification_status: .+)$",
+            lambda match: "\n".join(
+                [match.group(1)]
+                + [
+                    f"{field}: {value}"
+                    for field, value in WP8_ACCEPTED_EVIDENCE_FIXTURE.items()
+                ]
+            ),
+            "WP8 accepted evidence fields",
+        )
+    for field, value in (
+        ("baseline_ref", WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_merge_ref"]),
+        ("current_work_package", "WP8"),
+        ("current_work_package_status", "accepted"),
+        ("current_plan", WP8_CLOSEOUT_PLAN),
+        ("current_issue", "421"),
+        ("current_pr", "422"),
+        ("next_safe_action", "await-next-authorized-work-package"),
+    ):
+        updated = replace_once(
+            updated,
+            rf"(?m)^{re.escape(field)}: .+$",
+            f"{field}: {value}",
+            f"WP8 accepted {field}",
+        )
+
+    wp8_start = updated.find("### WP8：")
+    support_tracks = updated.find("### 支持轨道", wp8_start)
+    if wp8_start < 0 or support_tracks < 0:
+        raise AssertionError("WP8 accepted mutation requires WP8 and support-track headings")
+    prefix = updated[:wp8_start]
+    wp8 = updated[wp8_start:support_tracks]
+    suffix = updated[support_tracks:]
+    wp8 = replace_once(
+        wp8,
+        r"(?m)^状态：[a-z-]+。$",
+        "状态：accepted。",
+        "WP8 accepted block status",
+    )
+    implementation_pr = (
+        "Implementation PR：[#422](https://github.com/arana-db/kiwi/pull/422)。"
+    )
+    evidence = "\n".join(
+        (
+            "合并证据：",
+            "",
+            "- PR 固定区间："
+            f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_pr_base_ref']}.."
+            f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_pr_head_ref']}；",
+            "- merge 固定区间："
+            f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_merge_parent_ref']}.."
+            f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_merge_ref']}；",
+            "- WP8 exact-main verification："
+            "status=passed，ref="
+            f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_exact_main_verification_ref']}，"
+            f"run={WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_exact_main_verification_run']}。",
+        )
+    )
+    if re.search(r"(?m)^- WP8 exact-main verification：", wp8):
+        for projection_prefix, line in (
+            (
+                "PR 固定区间",
+                "- PR 固定区间："
+                f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_pr_base_ref']}.."
+                f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_pr_head_ref']}；",
+            ),
+            (
+                "merge 固定区间",
+                "- merge 固定区间："
+                f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_merge_parent_ref']}.."
+                f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_merge_ref']}；",
+            ),
+            (
+                "WP8 exact-main verification",
+                "- WP8 exact-main verification：status=passed，ref="
+                f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_exact_main_verification_ref']}，"
+                f"run={WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_exact_main_verification_run']}。",
+            ),
+        ):
+            wp8 = replace_once(
+                wp8,
+                rf"(?m)^- {re.escape(projection_prefix)}：.+$",
+                line,
+                f"WP8 accepted {projection_prefix} projection",
+            )
+    else:
+        wp8 = replace_once(
+            wp8,
+            rf"(?m)^{re.escape(implementation_pr)}$",
+            f"{implementation_pr}\n\n{evidence}",
+            "WP8 accepted evidence projection",
+        )
+    updated = prefix + wp8 + suffix
+
+    for label, value in (
+        (
+            "Baseline",
+            f"main@{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_merge_ref']}",
+        ),
+        ("Status", "accepted"),
+        (
+            "Current plan",
+            "[WP8 与 Issue #421 合并后收口实施计划]"
+            "(../docs/superpowers/plans/2026-08-19-wp8-issue-closeout.md)",
+        ),
+        (
+            "Next safe action",
+            "等待下一个经明确批准的工作包；M7/M8 继续 frozen",
+        ),
+    ):
+        updated = replace_once(
+            updated,
+            rf"(?m)^\| {re.escape(label)} \| .* \|$",
+            f"| {label} | {value} |",
+            f"WP8 accepted current-state table {label}",
+        )
+    if re.search(r"(?m)^\| WP8 exact-main verification \|", updated):
+        updated = replace_once(
+            updated,
+            r"(?m)^\| WP8 exact-main verification \| .* \|$",
+            "| WP8 exact-main verification | passed |",
+            "WP8 accepted verification table row",
+        )
+    else:
+        updated = replace_once(
+            updated,
+            r"(?m)^(\| WP0 exact-main verification \| passed \|)$",
+            lambda match: (
+                f"{match.group(1)}\n| WP8 exact-main verification | passed |"
+            ),
+            "WP8 accepted verification table row",
+        )
+    return updated
+
+
+def prepare_wp8_accepted_candidate(root: Path, candidate: Path) -> None:
+    plan = candidate / WP8_CLOSEOUT_PLAN
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(root / WP8_CLOSEOUT_PLAN, plan)
+    sdd_path = candidate / ".planning/SDD.md"
+    sdd_path.write_text(
+        set_wp8_accepted_evidence_text(read_text(sdd_path)), encoding="utf-8"
+    )
+
+
 def expect_failure(
     root: Path,
     mutation,
@@ -1392,6 +1892,198 @@ def run_self_tests(root: Path) -> None:
     fields = parse_front_matter(read_text(root / ".planning/SDD.md"), field_errors)
     if field_errors:
         raise AssertionError(f"baseline front matter must parse: {field_errors}")
+
+    with tempfile.TemporaryDirectory(prefix="kiwi-sdd-wp8-accepted-") as temporary:
+        candidate = Path(temporary)
+        copy_contract(root, candidate)
+        prepare_wp8_accepted_candidate(root, candidate)
+        accepted_errors, _ = validate(
+            candidate,
+            check_git_diff=False,
+            check_markdown=False,
+            check_github_run=False,
+        )
+        if accepted_errors:
+            raise AssertionError(
+                "the complete WP8 accepted fixture must pass before mutations: "
+                f"{accepted_errors}"
+            )
+
+        wp0_run: dict[str, object] = {
+            "id": int(fields["wp0_exact_main_verification_run"]),
+            "status": "completed",
+            "conclusion": "success",
+            "event": "push",
+            "head_branch": "main",
+            "head_sha": fields["wp0_exact_main_verification_ref"],
+            "name": "ci",
+            "path": ".github/workflows/ci.yml",
+        }
+        wp8_run: dict[str, object] = {
+            "id": int(
+                WP8_ACCEPTED_EVIDENCE_FIXTURE[
+                    "wp8_exact_main_verification_run"
+                ]
+            ),
+            "status": "completed",
+            "conclusion": "success",
+            "event": "push",
+            "head_branch": "main",
+            "head_sha": WP8_ACCEPTED_EVIDENCE_FIXTURE[
+                "wp8_exact_main_verification_ref"
+            ],
+            "name": "ci",
+            "path": ".github/workflows/ci.yml",
+        }
+        loaded_runs: list[str] = []
+
+        def load_wp0_and_wp8_runs(run_id: str) -> dict[str, object]:
+            loaded_runs.append(run_id)
+            if run_id == fields["wp0_exact_main_verification_run"]:
+                return dict(wp0_run)
+            if run_id == WP8_ACCEPTED_EVIDENCE_FIXTURE[
+                "wp8_exact_main_verification_run"
+            ]:
+                return dict(wp8_run)
+            raise AssertionError(f"unexpected GitHub Actions run requested: {run_id}")
+
+        run_errors, _ = validate(
+            candidate,
+            check_git_diff=False,
+            check_markdown=False,
+            github_run_loader=load_wp0_and_wp8_runs,
+        )
+        expected_loaded_runs = [
+            fields["wp0_exact_main_verification_run"],
+            WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_exact_main_verification_run"],
+        ]
+        if loaded_runs != expected_loaded_runs or run_errors:
+            raise AssertionError(
+                "the validate entry point must load matching WP0 and WP8 exact-main "
+                f"evidence once each: loaded={loaded_runs}, errors={run_errors}"
+            )
+
+        for field, invalid_value in {
+            "id": int(
+                WP8_ACCEPTED_EVIDENCE_FIXTURE[
+                    "wp8_exact_main_verification_run"
+                ]
+            )
+            + 1,
+            "status": "in_progress",
+            "conclusion": "failure",
+            "event": "pull_request",
+            "head_branch": "codex/wp8-issue-closeout",
+            "head_sha": WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_pr_head_ref"],
+            "name": "Benchmark",
+            "path": ".github/workflows/benchmark.yml",
+        }.items():
+            invalid_wp8_run = dict(wp8_run)
+            invalid_wp8_run[field] = invalid_value
+
+            def load_invalid_wp8_run(run_id: str) -> dict[str, object]:
+                if run_id == fields["wp0_exact_main_verification_run"]:
+                    return dict(wp0_run)
+                return dict(invalid_wp8_run)
+
+            invalid_run_errors, _ = validate(
+                candidate,
+                check_git_diff=False,
+                check_markdown=False,
+                github_run_loader=load_invalid_wp8_run,
+            )
+            if not any(
+                f"WP8 exact-main GitHub Actions run {field} must" in error
+                for error in invalid_run_errors
+            ):
+                raise AssertionError(
+                    "the validate entry point must reject WP8 GitHub Actions run "
+                    f"{field} mismatch: {invalid_run_errors}"
+                )
+
+    def wp8_accepted_without_passed_evidence(candidate: Path) -> None:
+        prepare_wp8_accepted_candidate(root, candidate)
+        path = candidate / ".planning/SDD.md"
+        text = replace_once(
+            read_text(path),
+            r"(?m)^wp8_exact_main_verification_status: passed$",
+            "wp8_exact_main_verification_status: pending",
+            "WP8 accepted pending verification status",
+        )
+        text = replace_once(
+            text,
+            r"(?m)^- WP8 exact-main verification：status=passed，",
+            "- WP8 exact-main verification：status=pending，",
+            "WP8 accepted pending verification projection",
+        )
+        text = replace_once(
+            text,
+            r"(?m)^\| WP8 exact-main verification \| passed \|$",
+            "| WP8 exact-main verification | pending |",
+            "WP8 accepted pending verification table",
+        )
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        wp8_accepted_without_passed_evidence,
+        "WP8 status accepted requires passed exact-main verification evidence",
+    )
+
+    def remove_wp8_evidence_field(candidate: Path) -> None:
+        prepare_wp8_accepted_candidate(root, candidate)
+        path = candidate / ".planning/SDD.md"
+        path.write_text(
+            read_text(path).replace(
+                "wp8_pr_head_ref: "
+                f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_pr_head_ref']}\n",
+                "",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+    expect_failure(
+        root,
+        remove_wp8_evidence_field,
+        "front matter field wp8_pr_head_ref must occur exactly once",
+    )
+
+    def drift_wp8_evidence_projection(candidate: Path) -> None:
+        prepare_wp8_accepted_candidate(root, candidate)
+        path = candidate / ".planning/SDD.md"
+        text = replace_once(
+            read_text(path),
+            r"(?m)^- WP8 exact-main verification：.+。$",
+            "- WP8 exact-main verification：status=passed，ref="
+            f"{WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_merge_parent_ref']}，"
+            f"run={WP8_ACCEPTED_EVIDENCE_FIXTURE['wp8_exact_main_verification_run']}。",
+            "WP8 accepted evidence projection drift",
+        )
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        drift_wp8_evidence_projection,
+        "WP8 evidence projection must contain exactly one line",
+    )
+
+    def restore_stale_wp8_next_action(candidate: Path) -> None:
+        prepare_wp8_accepted_candidate(root, candidate)
+        path = candidate / ".planning/SDD.md"
+        text = replace_once(
+            read_text(path),
+            r"(?m)^next_safe_action: await-next-authorized-work-package$",
+            "next_safe_action: execute-wp8-runtime-raw-resp-client-red-tests",
+            "stale WP8 next safe action",
+        )
+        path.write_text(text, encoding="utf-8")
+
+    expect_failure(
+        root,
+        restore_stale_wp8_next_action,
+        "WP8 accepted next_safe_action must be await-next-authorized-work-package",
+    )
 
     external_plan = "docs/superpowers/plans/2026-08-07-vector-set-post-merge-remediation.md"
     with tempfile.TemporaryDirectory(prefix="kiwi-sdd-wp8-plan-test-") as temporary:
@@ -1726,6 +2418,56 @@ def run_self_tests(root: Path) -> None:
             f"{advanced_baseline_errors}"
         )
 
+    wp8_git_fields = {
+        **WP8_ACCEPTED_EVIDENCE_FIXTURE,
+        "baseline_ref": WP8_ACCEPTED_EVIDENCE_FIXTURE[
+            "wp8_exact_main_verification_ref"
+        ],
+    }
+    wp8_git_errors: list[str] = []
+    validate_wp8_git_evidence(root, wp8_git_fields, wp8_git_errors)
+    if wp8_git_errors:
+        raise AssertionError(
+            "the exact PR #422 merge ref must satisfy WP8 Git evidence, including "
+            f"verification-ref equality: {wp8_git_errors}"
+        )
+
+    for field, value, expected_fragment in (
+        (
+            "wp8_merge_parent_ref",
+            WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_pr_head_ref"],
+            "WP8 squash-merge evidence must bind the merge commit and its parent exactly",
+        ),
+        (
+            "wp8_pr_head_ref",
+            WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_pr_base_ref"],
+            "WP8 PR head tree must match the squash-merge tree",
+        ),
+        (
+            "wp8_exact_main_verification_ref",
+            WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_pr_base_ref"],
+            "WP8 exact-main verification ref must descend from the recorded WP8 merge commit",
+        ),
+        (
+            "baseline_ref",
+            WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_pr_base_ref"],
+            "passed WP8 exact-main verification requires baseline_ref to advance",
+        ),
+        (
+            "wp8_merge_ref",
+            WP8_ACCEPTED_EVIDENCE_FIXTURE["wp8_pr_head_ref"],
+            "WP8 merge commit subject must identify the implementation PR",
+        ),
+    ):
+        mutant_fields = dict(wp8_git_fields)
+        mutant_fields[field] = value
+        mutant_errors: list[str] = []
+        validate_wp8_git_evidence(root, mutant_fields, mutant_errors)
+        if not any(expected_fragment in error for error in mutant_errors):
+            raise AssertionError(
+                f"WP8 Git evidence accepted {field} mutant: {mutant_errors}"
+            )
+
     valid_run: dict[str, object] = {
         "id": 30750372362,
         "status": "completed",
@@ -1793,7 +2535,9 @@ def run_self_tests(root: Path) -> None:
 
         def load_valid_run(run_id: str) -> dict[str, object]:
             loaded_runs.append(run_id)
-            return dict(valid_run)
+            if run_id == "30750372362":
+                return dict(valid_run)
+            return dict(wp8_run)
 
         valid_run_errors, _ = validate(
             candidate,
@@ -1801,23 +2545,31 @@ def run_self_tests(root: Path) -> None:
             check_markdown=False,
             github_run_loader=load_valid_run,
         )
-        if loaded_runs != ["30750372362"] or valid_run_errors:
+        if loaded_runs != ["30750372362", "32129266046"] or valid_run_errors:
             raise AssertionError(
-                "the validate entry point must load and accept matching exact-main "
-                f"evidence once: loaded={loaded_runs}, errors={valid_run_errors}"
+                "the validate entry point must load and accept matching WP0 and WP8 "
+                "exact-main evidence once each: "
+                f"loaded={loaded_runs}, errors={valid_run_errors}"
             )
 
         for field, invalid_value in invalid_run_values.items():
             invalid_run = dict(valid_run)
             invalid_run[field] = invalid_value
+
+            def load_invalid_wp0_run(run_id: str) -> dict[str, object]:
+                if run_id == "30750372362":
+                    return dict(invalid_run)
+                return dict(wp8_run)
+
             invalid_run_errors, _ = validate(
                 candidate,
                 check_git_diff=False,
                 check_markdown=False,
-                github_run_loader=lambda _run_id, run=invalid_run: run,
+                github_run_loader=load_invalid_wp0_run,
             )
             if not any(
-                f"run {field} must" in error for error in invalid_run_errors
+                f"WP0 exact-main GitHub Actions run {field} must" in error
+                for error in invalid_run_errors
             ):
                 raise AssertionError(
                     "the validate entry point must reject GitHub Actions run "
@@ -2287,7 +3039,7 @@ def run_self_tests(root: Path) -> None:
 
     print(
         "SDD validator self-tests passed "
-        "(39 failure-path mutations, 1 prose guard, "
+        "(WP0/WP8 failure-path mutations, 1 prose guard, "
         "immutable Git/live-run/state regressions, 1 reachable promotion path)"
     )
 
