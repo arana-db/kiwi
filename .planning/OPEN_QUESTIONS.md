@@ -17,11 +17,6 @@
 - **待确认**：首次公开发布包含 Redis-derived native library 的官方组合发行物前，专项许可证复核由谁负责、何时触发，并以何种证据清单和批准记录完成门禁？
 - **关联**：`D002`、`REQ-LICENSE-003..008`、`REQ-HOT-010/011/012`。
 
-## OQ-3 [OPEN] Redis 8.8.1 兼容门禁矩阵落地
-- **背景**：`DECISIONS.md` 的 D001 与 `REQ-COMPAT-001` 已将 Redis 8.8.1 exact commit 固定为当前唯一兼容、接口和 Oracle 基线；目标版本不再作为开放问题。
-- **待确认**：如何把 Redis 8.8.1 exact Oracle 对比拆分为 PR fast gate 与完整定期门禁，并为兼容矩阵、skip list、owner 和升级条件建立可执行合同？
-- **关联**：`D001`、#325（统一测试策略）、`REQ-COMPAT-003/004/006/007`。
-
 ## OQ-4 [OPEN] TOML 配置文件支持
 - **背景**：#247 要求提供 proper TOML 配置文件支持。
 - **待确认**：当前配置以何种机制加载（env / CLI / 现有 config crate）？TOML 配置与现有配置层如何衔接，是否需迁移说明（注意 #352 结论：删除任何用户配置字段须附迁移说明）？
@@ -51,15 +46,6 @@
 - **背景**：#368 [RFC] 讨论是否进一步拆分网络/存储双 runtime。
 - **待确认**：当前双 Tokio runtime（经 `mpsc + oneshot` 解耦）是否需进一步拆分或合并？拆分带来的确定性收益 vs 复杂度成本？
 - **关联**：架构审计报告（网络/存储 runtime 解耦设计 🟢）。
-
-## OQ-10 [OPEN] 统一测试策略的落地取舍
-- **背景**：#325 提案 `kiwi-test-harness` + Oracle 对比 + property-based + 确定性网络模拟（turmoil）。
-- **待确认**：
-  - Redis 8.8.1 Oracle 的 gate 分层与兼容矩阵以 OQ-3 为唯一决策入口，本项只消费该结论；
-  - 是否值得 port Redis 官方 TCL suite，还是以 `resp-compatibility` 为 fast gate；
-  - Python 测试保留为多语言 client 验证，还是逐步迁到 Rust harness；
-  - 集群/哨兵功能当前可用程度。
-- **关联**：#325、`REQ-COMPAT-006`（回归测试覆盖）、#340（crash window 测试）。
 
 ## 维护规则
 - 新增待确认项：标题使用 `OQ-N [OPEN] 标题`；若缺少前置证据或外部决定，改为 `OQ-N [BLOCKED] 标题` 并写明阻塞条件。

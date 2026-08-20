@@ -165,7 +165,7 @@ ALLOWED_WP_STATUSES = {
 }
 
 EXPECTED_REQUIREMENT_COUNT = 68
-EXPECTED_DECISION_COUNT = 19
+EXPECTED_DECISION_COUNT = 20
 
 EXPECTED_WP0_EXIT_LINES = (
     "- front matter 是唯一机器可解析的当前状态；工作包块和状态表必须与其一致。",
@@ -2949,13 +2949,27 @@ def run_self_tests(root: Path) -> None:
         path = candidate / ".planning/SDD.md"
         text = read_text(path)
         text = text.replace(
-            "- 68 个 REQ 和 19 个 Decision 的唯一注册、范围展开和引用全集闭包；",
-            "- 69 个 REQ 和 20 个 Decision 的唯一注册、范围展开和引用全集闭包；",
+            "- 68 个 REQ 和 20 个 Decision 的唯一注册、范围展开和引用全集闭包；",
+            "- 69 个 REQ 和 21 个 Decision 的唯一注册、范围展开和引用全集闭包；",
             1,
         )
         path.write_text(text, encoding="utf-8")
 
     expect_failure(root, drift_gate_counts, "WP0 verification gate contract drifted")
+
+    def remove_d020(candidate: Path) -> None:
+        path = candidate / ".planning/DECISIONS.md"
+        text = read_text(path)
+        marker = "\n## D020："
+        if marker not in text:
+            raise AssertionError("D020 mutation marker must exist")
+        path.write_text(text.split(marker, 1)[0].rstrip() + "\n", encoding="utf-8")
+
+    expect_failure(
+        root,
+        remove_d020,
+        "decision registry must contain 20 unique definitions, found 19",
+    )
 
     def drift_artifact_count(candidate: Path) -> None:
         path = candidate / ".planning/SDD.md"

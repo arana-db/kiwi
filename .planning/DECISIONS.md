@@ -155,3 +155,15 @@
 - 范围例外：PR #356 已合并的 VectorSet Phase 1 允许实施正确性、恢复、兼容性和门禁修复；HNSW、量化扩展、新 Vector 命令、全文索引和其他 AI 主线继续 frozen。
 - 验收：单 PR 不降低 #415、#418、#421 或现有 COMPAT/STORAGE/RAFT/STABILITY Requirement；任何 hash equality、upgrade/rollback、raw differential、cluster execution、cleanup 或 exact-Head 证据缺失都会使 PR 保持 Draft。
 - 权限：本决定授权设计、实现、测试、commit、push 和创建 Draft PR，不授权 merge、修改 branch protection、关闭 Issue 或 Resolve 历史评论。
+
+## D020：冻结 Redis 8.8.1 兼容门禁与测试来源职责
+
+- 日期：2026-08-20
+- 状态：accepted
+- 决定：Redis 8.8.1 exact commit `77b6c308396c9700672390a210143a8496fb4b10` 继续作为唯一普通 Redis Oracle；兼容门禁按 D018 分为 PR fast、nightly/full 和 M6/release 三层。PR fast 只运行受改动影响的确定性 raw RESP、manifest、单元、集成和静态合同；nightly/full 扩大到固定上游 commit 的官方 TCL external-server suite、完整 differential、property/fuzz 和故障矩阵；M6/release 在此基础上要求 fresh independent rebuild、真实 upgrade/rollback、close/reopen、3/5 节点历史与完整 exact-ref evidence bundle。低层绿灯不得替代高层验收。
+- 测试来源：Redis 官方 TCL suite 是上游兼容场景来源，必须固定 exact commit、以 external-server 模式运行并使用带 owner、Issue 和可测解除条件的 skip registry；它不替代 raw wire 或 Kiwi 权威最终状态证据。Python 保留为 raw RESP differential、跨语言集成与故障编排层。redis-rs 仅在 raw/TCL 合同建立后作为 test-only 客户端生态层，不得进入生产 server crate 依赖图，也不得作为普通 Redis 服务端语义 Oracle。
+- Harness 边界：不先建设新的通用 `kiwi-test-harness`。首个 Core slice 复用现有 Trusted Oracle controller 的 held-FD 执行、deadline、输出上限、进程组清理、cleanup-before-publish、原子证据发布和 provenance binding 内核，只把 Vector-only evidence descriptor、allowlist、collector 和 binding 收窄泛化为固定的版本化 evidence profile；现有 Vector `kiwi-vector-differential-evidence/v1` 行为必须保持不变。`OracleProvenance::verify_external_bindings` 必须在 size/SHA binding 后严格解析对应 evidence document，并在进程和临时目录删除后重放 registry、collection、raw frame、final-state、cleanup 和 schema/helper pairing；只校验外层 hash 不构成验收。
+- 首个实施切片：Issue #433 只覆盖 standalone Cache OFF 下 `PING`、`SET`、`GET`、single-key `DEL`、`TYPE`、`PTTL` 的 RESP2/RESP3 raw smoke differential，共 15 个固定 case、30 个 server-backed node。Compatibility manifest 升为 `kiwi-redis-compat/v2`：现有 12 条 classification 原样迁移；新增六条命令在 command level 保持 `known_difference`，并通过机器可读 `required_cases` 精确绑定 Core registry/schema/case IDs，直到完整 Redis 8.8.1 命令 surface 有证据后才允许提升为 command-level `required`。命令 registry、manifest subset closure、exact request/response、TTL/type final-state、独立 Redis 8.8.1 Oracle identity、Kiwi identity、清理与 evidence/provenance binding 必须 fail closed；该切片不得声明全命令兼容。
+- 判别性证据：GREEN 之外必须有保持 endpoint、collection、summary 和 runtime setup 合法的受控 behavior mutants，至少杀死 Kiwi-only raw response byte 漂移、`SET` 回 `OK` 但未持久化、`PTTL -1/-2` 互换；published evidence mutants 必须在重算外层 size/SHA 后仍因内部 semantic replay 失败。
+- 集群与哨兵：当前可执行首切片不新增 Cluster、Sentinel、Multi-Key、Raft 或生产存储行为。真正 Multi-Key 继续受 D017 拒绝；Cluster/Leader、Raft single-group 和 Sentinel/客户端生态场景由 WP4、WP6、WP7 在各自 exact-file plan 和前置门禁就绪后实施。
+- 后果：OQ-3 与 OQ-10 已收敛，WP1 可在保持 WP8 为当前 accepted 工作包的同时进入 `ready`。规划 task 仍受 D012 约束，不实施源码、测试 runner、构建脚本或 CI；实施必须另开 task、隔离 worktree 和 recovery checkpoint，并以 Issue #433、WP1、适用 Requirement、设计和逐步计划为唯一首切片授权边界。
