@@ -468,6 +468,33 @@ impl KiwiStateMachine {
     /// Persist the current applied frontier and membership to the Raft log
     /// store so that the state machine can recover its position after restart
     /// without relying on snapshot metadata alone.
+    /// Check whether a recovered `last_applied` sits within the log-store
+    /// boundaries.  Returns `true` if the meta is safe to trust, `false` if it
+    /// is out of range and must be discarded.
+    fn meta_within_log_bounds(
+        last_applied: Option<LogId<u64>>,
+        log_last: Option<LogId<u64>>,
+        log_purged: Option<LogId<u64>>,
+    ) -> bool {
+        let Some(applied) = last_applied else {
+            // No frontier — valid (fresh node).
+            return true;
+        };
+        // last_applied must not exceed the last log entry.
+        if let Some(last) = log_last {
+            if applied.index > last.index {
+                return false;
+            }
+        }
+        // last_applied must not be before the purged boundary.
+        if let Some(purged) = log_purged {
+            if applied.index < purged.index {
+                return false;
+            }
+        }
+        true
+    }
+
     fn persist_durable_meta(&self) -> Result<(), io::Error> {
         let meta = DurableStateMachineMeta::new(self.last_applied, self.last_membership.clone());
         self.log_store
@@ -494,10 +521,13 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
     where
         I: IntoIterator<Item = openraft::Entry<KiwiTypeConfig>> + Send,
     {
+        let apply_start = std::time::Instant::now();
         let _snapshot_state = Arc::clone(&self.snapshot_state_gate).lock_owned().await;
         let mut responses = Vec::new();
+        let mut entry_count: u64 = 0;
 
         for entry in entries {
+            entry_count += 1;
             let log_id = entry.log_id;
 
             let response = match entry.payload {
@@ -536,9 +566,26 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
             responses.push(response);
         }
 
+        // Record apply metrics.
+        let apply_elapsed = apply_start.elapsed();
+        crate::metrics::RAFT_APPLY_DURATION.observe(apply_elapsed.as_secs_f64());
+        crate::metrics::RAFT_APPLY_ENTRIES_PER_BATCH.observe(entry_count as f64);
+
         // Persist the applied frontier so restart can recover without
-        // relying on snapshot metadata alone.
+        // relying on snapshot metadata alone.  Sync the business RocksDB
+        // WAL first so that frontier and business data share the same
+        // durability contract — otherwise a power failure could preserve
+        // the frontier while losing the business batch, causing the node
+        // to permanently skip entries it never actually applied.
         if !responses.is_empty() {
+            let storage = self.storage_swap.load();
+            if let Err(e) = storage.sync_wal() {
+                log::error!("Failed to sync storage WAL before persisting frontier: {e}");
+                return Err(io_err_to_raft(std::io::Error::other(format!(
+                    "sync_wal failed: {e}"
+                ))));
+            }
+            drop(storage);
             self.persist_durable_meta().map_err(io_err_to_raft)?;
         }
 
@@ -742,7 +789,14 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
 
         // Persist the applied frontier derived from the installed snapshot
         // before removing the install marker, so crash recovery sees a
-        // consistent position.
+        // consistent position.  Sync the business WAL first to ensure the
+        // frontier and the restored data share the same durability contract.
+        {
+            let storage = self.storage_swap.load();
+            storage.sync_wal().map_err(|error| {
+                post_marker_error("syncing storage WAL after snapshot install", &error)
+            })?;
+        }
         self.persist_durable_meta().map_err(|error| {
             post_marker_error("persisting durable meta after snapshot install", &error)
         })?;
@@ -785,6 +839,17 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
         if self.last_applied.is_none() {
             let durable = self.log_store.load_durable_meta()?;
             let snapshot = load_current_snapshot(&self.snapshot_work_dir)?;
+            let (log_last, log_purged) = self.log_store.read_log_boundaries()?;
+
+            // Validate durable meta against log-store boundaries.
+            // `last_applied` must sit within [last_purged, last_log_id];
+            // a frontier beyond the log end means the business batch was
+            // lost (e.g. power failure) while the frontier was persisted.
+            let had_durable = durable.is_some();
+            let durable_valid = durable.as_ref().map_or(true, |meta| {
+                Self::meta_within_log_bounds(meta.last_applied, log_last, log_purged)
+            });
+            let durable = if durable_valid { durable } else { None };
 
             match (durable, snapshot) {
                 (Some(meta), Some(snap)) => {
@@ -820,15 +885,44 @@ impl RaftStateMachine<KiwiTypeConfig> for KiwiStateMachine {
                     );
                 }
                 (None, Some(snap)) => {
+                    // Either no durable meta, or it was out-of-bounds and
+                    // discarded.  Fall back to the snapshot frontier.
+                    if had_durable && !durable_valid {
+                        log::warn!(
+                            "Durable meta failed log-boundary validation \
+                             (last_log_id={:?}, last_purged={:?}); falling back to snapshot",
+                            log_last,
+                            log_purged
+                        );
+                    }
                     self.last_applied = snap.meta.last_log_id;
                     self.last_membership = snap.meta.last_membership.clone();
                     log::info!(
-                        "Recovered last_applied={:?} from persisted snapshot (no durable meta)",
-                        self.last_applied
+                        "Recovered last_applied={:?} from persisted snapshot{}",
+                        self.last_applied,
+                        if had_durable && !durable_valid {
+                            " (durable meta rejected)"
+                        } else {
+                            " (no durable meta)"
+                        }
                     );
                 }
                 (None, None) => {
-                    log::info!("No durable meta or snapshot found; starting from scratch");
+                    if had_durable {
+                        // Durable meta existed but was out-of-bounds and no
+                        // snapshot is available.  Start from scratch — the
+                        // Raft leader will send a snapshot to bring this node
+                        // up to date.
+                        log::warn!(
+                            "Durable meta failed log-boundary validation \
+                             (last_log_id={:?}, last_purged={:?}) and no snapshot available; \
+                             starting from scratch",
+                            log_last,
+                            log_purged
+                        );
+                    } else {
+                        log::info!("No durable meta or snapshot found; starting from scratch");
+                    }
                 }
             }
         }

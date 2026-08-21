@@ -385,6 +385,48 @@ impl RocksdbLogStore {
         Ok(Some(meta))
     }
 
+    /// Read the log-store boundaries (last log id and last purged log id)
+    /// synchronously.  Used during startup to cross-validate the durable
+    /// state-machine meta against the actual log extent.
+    pub fn read_log_boundaries(
+        &self,
+    ) -> Result<
+        (
+            Option<openraft::LogId<u64>>,
+            Option<openraft::LogId<u64>>,
+        ),
+        StorageError<u64>,
+    > {
+        let logs_cf = self.cf_read(LOGS_CF)?;
+        let iter = self.db.iterator_cf(&logs_cf, IteratorMode::End);
+        let last_log_id = iter
+            .take(1)
+            .next()
+            .transpose()
+            .map_err(io_read_err)?
+            .map(|res| {
+                let (_, value) = res;
+                deserialize::<openraft::Entry<KiwiTypeConfig>>(&value).map(|entry| entry.log_id)
+            })
+            .transpose()?;
+
+        let meta_cf = self.cf_read(META_CF)?;
+        let last_purged_log_id = self
+            .db
+            .get_cf(&meta_cf, LAST_PURGED_KEY)
+            .map_err(io_read_err)?
+            .map(|bytes| deserialize::<Option<openraft::LogId<u64>>>(&bytes))
+            .transpose()?
+            .flatten();
+
+        let last_log_id = match last_log_id {
+            None => last_purged_log_id,
+            x => x,
+        };
+
+        Ok((last_log_id, last_purged_log_id))
+    }
+
     /// 从已有的 RocksDB 数据库创建日志存储实例
     pub fn new(db: Arc<DB>) -> Result<Self, StorageError<u64>> {
         for cf_name in [LOGS_CF, META_CF, STATE_CF] {

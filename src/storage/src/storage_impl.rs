@@ -881,6 +881,21 @@ impl Storage {
         Ok(())
     }
 
+    /// Sync the WAL of every underlying RocksDB instance to disk.
+    ///
+    /// Called by the Raft state machine after a successful business apply and
+    /// *before* publishing the advanced `last_applied` frontier, so that the
+    /// frontier and the business data share the same durability contract.
+    pub fn sync_wal(&self) -> Result<()> {
+        use snafu::ResultExt;
+        for inst in &self.insts {
+            if let Some(db) = inst.db() {
+                db.flush_wal(true).context(crate::error::RocksSnafu)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Return a random key from the database
     pub fn randomkey(&self) -> Result<Option<String>> {
         // Try each instance until we find a key
