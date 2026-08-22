@@ -15,14 +15,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use kstd::lock_mgr::ScopeRecordLock;
 use rocksdb::{IteratorMode, ReadOptions};
-use snafu::{OptionExt, ResultExt, ensure};
+use snafu::{OptionExt, ResultExt};
 
 use crate::{
-    CanonicalVector, ColumnFamilyIndex, DataType, PreparedVectorQuery, Redis, Result,
+    CanonicalVector, ColumnFamilyIndex, DataType, PreparedVsimSession, Redis, Result,
     TypeCheckState, VectorHit, VectorQuery, VectorSearchEngine, VectorSearchMode,
     VectorSearchOptions,
     error::{
@@ -38,14 +38,15 @@ use crate::{
     },
 };
 
-/// Clamp for the configured FLAT query timeout so the `Instant` deadline
-/// computation cannot overflow even for pathological config values.
-const MAX_FLAT_QUERY_TIMEOUT: Duration = Duration::from_secs(3600);
-
 impl Redis {
     /// Build the V1 member key for `element` under the set's current
     /// generation (stored in `meta.version`).
-    fn vector_member_key(&self, key: &[u8], generation: u64, element: &[u8]) -> Result<Vec<u8>> {
+    pub(crate) fn vector_member_key(
+        &self,
+        key: &[u8],
+        generation: u64,
+        element: &[u8],
+    ) -> Result<Vec<u8>> {
         VectorMemberDataKey {
             key,
             storage_incarnation: self.storage_incarnation()?,
@@ -79,6 +80,35 @@ impl Redis {
         Ok(self
             .decode_vector_meta(value)?
             .filter(|meta| !meta.is_stale() && meta.count() != 0))
+    }
+
+    fn decode_vector_meta_at(
+        &self,
+        value: &[u8],
+        logical_now_micros: u64,
+    ) -> Result<Option<VectorMeta>> {
+        if value.is_empty() {
+            return Ok(None);
+        }
+
+        if value[0] == DataType::VectorSet as u8 {
+            return VectorMeta::decode(value).map(Some);
+        }
+
+        match self.check_type_state_at(value, DataType::VectorSet, logical_now_micros)? {
+            TypeCheckState::Missing | TypeCheckState::Stale => Ok(None),
+            TypeCheckState::Match => VectorMeta::decode(value).map(Some),
+        }
+    }
+
+    fn parse_vector_meta_at(
+        &self,
+        value: &[u8],
+        logical_now_micros: u64,
+    ) -> Result<Option<VectorMeta>> {
+        Ok(self
+            .decode_vector_meta_at(value, logical_now_micros)?
+            .filter(|meta| !meta.is_stale_at(logical_now_micros) && meta.count() != 0))
     }
 
     pub fn vadd(&self, key: &[u8], element: &[u8], vector: &CanonicalVector) -> Result<bool> {
@@ -377,52 +407,12 @@ impl Redis {
         }))
     }
 
-    pub fn prepare_vsim(
+    pub fn prepare_vsim_session(
         &self,
         key: &[u8],
         element: Option<&[u8]>,
-    ) -> Result<Option<PreparedVectorQuery>> {
-        let db = self.db.as_ref().context(OptionNoneSnafu {
-            message: "db is not initialized".to_string(),
-        })?;
-        let vector_cf = self
-            .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
-            .context(OptionNoneSnafu {
-                message: "VectorDataCF is not initialized".to_string(),
-            })?;
-        let snapshot = db.snapshot();
-        let mut read_options = ReadOptions::default();
-        read_options.set_snapshot(&snapshot);
-        let Some(meta) = self.read_vector_meta_opt(key, Some(&read_options))? else {
-            return Ok(None);
-        };
-        let element_query = if let Some(element) = element {
-            let member_key = self.vector_member_key(key, meta.version(), element)?;
-            let value_raw = db
-                .get_cf_opt(&vector_cf, &member_key, &read_options)
-                .context(RocksSnafu)?
-                .context(KeyNotFoundSnafu {
-                    key: String::from_utf8_lossy(element).to_string(),
-                })?;
-            let value = VectorDataValue::decode(&value_raw)?;
-            ensure!(
-                value.dimension() == meta.dimension(),
-                InvalidFormatSnafu {
-                    message: format!(
-                        "vector member dimension {} does not match meta dimension {}",
-                        value.dimension(),
-                        meta.dimension()
-                    )
-                }
-            );
-            Some(value.canonical().clone())
-        } else {
-            None
-        };
-        Ok(Some(PreparedVectorQuery {
-            dimension: meta.dimension(),
-            element_query,
-        }))
+    ) -> Result<Option<PreparedVsimSession<'_>>> {
+        PreparedVsimSession::prepare(self, key, element)
     }
 
     pub fn vemb(&self, key: &[u8], element: &[u8]) -> Result<Option<Vec<f64>>> {
@@ -504,6 +494,18 @@ impl Redis {
         options: VectorSearchOptions,
         cancel: &FlatQueryCancel,
     ) -> Result<Vec<VectorHit>> {
+        self.validate_vsim_options(options)?;
+        let element = match &query {
+            VectorQuery::Element(element) => Some(element.as_slice()),
+            VectorQuery::Vector(_) => None,
+        };
+        let Some(session) = self.prepare_vsim_session(key, element)? else {
+            return Ok(Vec::new());
+        };
+        session.search_with_cancel(query, options, cancel)
+    }
+
+    fn validate_vsim_options(&self, options: VectorSearchOptions) -> Result<()> {
         let vector_config = &self.storage.vector;
         if options.count == 0 {
             return InvalidArgumentSnafu {
@@ -517,36 +519,38 @@ impl Redis {
             }
             .fail();
         }
+        Ok(())
+    }
 
-        // The deadline starts before gate acquisition so queue wait counts
-        // against the configured timeout.
-        let timeout =
-            Duration::from_millis(vector_config.flat_query_timeout_ms).min(MAX_FLAT_QUERY_TIMEOUT);
-        let deadline = Instant::now() + timeout;
-        let Some(_permit) = self.flat_query_gate.acquire(deadline) else {
+    pub(crate) fn vsim_session_search(
+        &self,
+        session: &PreparedVsimSession<'_>,
+        query_vector: CanonicalVector,
+        options: VectorSearchOptions,
+        cancel: &FlatQueryCancel,
+    ) -> Result<Vec<VectorHit>> {
+        self.validate_vsim_options(options)?;
+        let Some(_permit) = self.flat_query_gate.acquire(session.deadline) else {
             self.vector_metrics.record_capacity_rejected();
             return VectorFlatQueryTimeoutSnafu.fail();
         };
         self.vector_metrics.record_query_started();
         let started = Instant::now();
-        let result = self.vsim_scan(key, query, options, cancel, deadline);
+        let result = self.vsim_session_scan(session, query_vector, options, cancel);
         self.vector_metrics
             .record_query_finished(started.elapsed(), result.as_ref().err());
         result
     }
 
-    /// The scan body of `vsim_with_cancel`, run while holding a gate permit.
-    /// Metrics are recorded by the caller around this function.
-    fn vsim_scan(
+    fn vsim_session_scan(
         &self,
-        key: &[u8],
-        query: VectorQuery,
+        session: &PreparedVsimSession<'_>,
+        query_vector: CanonicalVector,
         options: VectorSearchOptions,
         cancel: &FlatQueryCancel,
-        deadline: Instant,
     ) -> Result<Vec<VectorHit>> {
         let vector_config = &self.storage.vector;
-        let mut scan_guard = FlatScanGuard::new(vector_config, deadline, cancel);
+        let mut scan_guard = FlatScanGuard::new(vector_config, session.deadline, cancel);
         scan_guard.check_signals()?;
 
         let db = self.db.as_ref().context(OptionNoneSnafu {
@@ -557,35 +561,11 @@ impl Redis {
             .context(OptionNoneSnafu {
                 message: "VectorDataCF is not initialized".to_string(),
             })?;
-        let snapshot = db.snapshot();
-        let mut point_read_options = ReadOptions::default();
-        point_read_options.set_snapshot(&snapshot);
-
-        let Some(meta) = self.read_vector_meta_opt(key, Some(&point_read_options))? else {
-            return Ok(Vec::new());
-        };
-
-        let query_vector = match query {
-            VectorQuery::Element(element) => {
-                let query_key = self.vector_member_key(key, meta.version(), &element)?;
-                let Some(query_raw) = db
-                    .get_cf_opt(&vector_cf, &query_key, &point_read_options)
-                    .context(RocksSnafu)?
-                else {
-                    return KeyNotFoundSnafu {
-                        key: String::from_utf8_lossy(&element).to_string(),
-                    }
-                    .fail();
-                };
-                VectorDataValue::decode(&query_raw)?.canonical().clone()
-            }
-            VectorQuery::Vector(vector) => vector,
-        };
-        if query_vector.dimension() != meta.dimension() {
+        if query_vector.dimension() != session.meta.dimension() {
             return InvalidArgumentSnafu {
                 message: format!(
                     "vector dimension mismatch: expected {}, got {}",
-                    meta.dimension(),
+                    session.meta.dimension(),
                     query_vector.dimension()
                 ),
             }
@@ -593,16 +573,20 @@ impl Redis {
         }
         // Score the query in the set's quantization so it is comparable to
         // the stored members.
-        let query_vector = query_vector.to_quantized(meta.quantization())?;
+        let query_vector = query_vector.to_quantized(session.meta.quantization())?;
+        self.vector_fault_hooks.block_vsim_scan_if_armed();
 
         // Scan exactly this set's generation range: an inclusive lower bound
         // at the (key, incarnation, generation) prefix and its exclusive
         // successor as the upper bound. The starts_with check stays as a
         // defensive guard.
-        let prefix =
-            VectorMemberDataKey::encode_prefix(key, self.storage_incarnation()?, meta.version())?;
+        let prefix = VectorMemberDataKey::encode_prefix(
+            &session.key,
+            self.storage_incarnation()?,
+            session.meta.version(),
+        )?;
         let mut scan_options = ReadOptions::default();
-        scan_options.set_snapshot(&snapshot);
+        scan_options.set_snapshot(&session.snapshot);
         scan_options.set_iterate_lower_bound(prefix.clone());
         if let Some(upper_bound) = VectorMemberDataKey::prefix_upper_bound(&prefix) {
             scan_options.set_iterate_upper_bound(upper_bound);
@@ -633,12 +617,12 @@ impl Redis {
                     .element()
                     .to_vec();
                 let value = VectorDataValue::decode(&encoded_value)?;
-                if value.dimension() != meta.dimension() {
+                if value.dimension() != session.meta.dimension() {
                     return InvalidFormatSnafu {
                         message: format!(
                             "vector member dimension {} does not match meta dimension {}",
                             value.dimension(),
-                            meta.dimension()
+                            session.meta.dimension()
                         ),
                     }
                     .fail();
@@ -646,7 +630,12 @@ impl Redis {
                 Ok((element, value.canonical().clone()))
             });
 
-        engine.search(&query_vector, &meta.metric(), options.count, candidates)
+        engine.search(
+            &query_vector,
+            &session.meta.metric(),
+            options.count,
+            candidates,
+        )
     }
 
     fn read_vector_meta_opt(
@@ -680,71 +669,49 @@ impl Redis {
         }
     }
 
-    fn read_vector_meta(&self, key: &[u8]) -> Result<Option<VectorMeta>> {
-        self.read_vector_meta_opt(key, None)
-    }
-
-    /// Sample-decode vector set metas (MetaCF) and member entries
-    /// (VectorDataCF) to verify the codec can parse this instance's data.
-    ///
-    /// Used to validate restored snapshot data: at most `sample_size` members
-    /// and `sample_size` metas are decoded (sampling, not a full scan); any
-    /// decode failure rejects the data.
-    pub fn validate_vector_data_sample(&self, sample_size: usize) -> Result<VectorDataSample> {
+    pub(crate) fn read_vector_meta_opt_at(
+        &self,
+        key: &[u8],
+        read_options: &ReadOptions,
+        logical_now_micros: u64,
+    ) -> Result<Option<VectorMeta>> {
         let db = self.db.as_ref().context(OptionNoneSnafu {
             message: "db is not initialized".to_string(),
         })?;
-        let vector_cf = self
-            .get_cf_handle(ColumnFamilyIndex::VectorDataCF)
-            .context(OptionNoneSnafu {
-                message: "VectorDataCF is not initialized".to_string(),
-            })?;
         let meta_cf = self
             .get_cf_handle(ColumnFamilyIndex::MetaCF)
             .context(OptionNoneSnafu {
                 message: "MetaCF is not initialized".to_string(),
             })?;
-
-        let storage_incarnation = self.storage_incarnation()?;
-        let mut sample = VectorDataSample::default();
-        for entry in db
-            .iterator_cf(&vector_cf, IteratorMode::Start)
-            .take(sample_size)
+        let meta_key = BaseMetaKey::new(key).encode()?;
+        if self.vector_fault_hooks.fail_meta_read() {
+            return SystemSnafu {
+                message: "injected fault: vector meta read failed".to_string(),
+            }
+            .fail();
+        }
+        match db
+            .get_cf_opt(&meta_cf, &meta_key, read_options)
+            .context(RocksSnafu)?
         {
-            let (encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-            let member_key = ParsedVectorMemberDataKey::decode(&encoded_key)?;
-            ensure!(
-                member_key.storage_incarnation() == storage_incarnation,
-                InvalidFormatSnafu {
-                    message: format!(
-                        "vector member storage incarnation {} does not match manifest {}",
-                        member_key.storage_incarnation(),
-                        storage_incarnation
-                    )
-                }
-            );
-            VectorDataValue::decode(&encoded_value)?;
-            sample.members += 1;
+            Some(value) => self.parse_vector_meta_at(&value, logical_now_micros),
+            None => Ok(None),
         }
-
-        for entry in db.iterator_cf(&meta_cf, IteratorMode::Start) {
-            if sample.metas >= sample_size {
-                break;
-            }
-            let (_encoded_key, encoded_value) = entry.context(RocksSnafu)?;
-            if encoded_value.first() == Some(&(DataType::VectorSet as u8)) {
-                VectorMeta::decode(&encoded_value)?;
-                sample.metas += 1;
-            }
-        }
-
-        Ok(sample)
     }
-}
 
-/// Counts of vector entries decoded during a restore validation sample.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct VectorDataSample {
-    pub metas: usize,
-    pub members: usize,
+    fn read_vector_meta(&self, key: &[u8]) -> Result<Option<VectorMeta>> {
+        self.read_vector_meta_opt(key, None)
+    }
+
+    /// Validate every persisted VectorSet meta and member in this instance.
+    pub fn validate_vector_consistency(&self) -> Result<crate::VectorConsistencyReport> {
+        let db = self.db.as_ref().context(OptionNoneSnafu {
+            message: "db is not initialized".to_string(),
+        })?;
+        crate::vector_consistency::validate_vector_consistency_db(
+            db,
+            self.storage_incarnation()?,
+            "open Redis instance",
+        )
+    }
 }

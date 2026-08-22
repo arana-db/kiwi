@@ -56,6 +56,10 @@ fn command_table_gates(config: &Config) -> cmd::table::CommandTableGates {
     )
 }
 
+fn vector_admission_limits(config: &Config) -> cmd::vector::admission::VectorAdmissionLimits {
+    cmd::vector::admission::VectorAdmissionLimits::from(&config.vector)
+}
+
 impl StorageAccessPermit for PausePermitWrapper {}
 
 impl PauseController for PauseControllerWrapper {
@@ -262,7 +266,41 @@ fn main() -> std::io::Result<()> {
 }
 
 fn preflight_server_startup(config: &Config) -> std::io::Result<()> {
-    raft::state_machine::preflight_snapshot_install(std::path::Path::new(&config.data_dir))
+    let db_path = std::path::Path::new(&config.data_dir);
+    let marker_path = raft::snapshot_install::snapshot_install_marker_path(db_path)?;
+    let pending_instances = raft::snapshot_install::validate_snapshot_install_marker(db_path)
+        .map_err(|error| {
+            std::io::Error::new(
+                error.kind(),
+                format!(
+                    "invalid snapshot install marker {}: {error}",
+                    marker_path.display()
+                ),
+            )
+        })?;
+    if let Some(marker_instances) = pending_instances {
+        if marker_instances != config.db_instance_num {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "snapshot install marker {} describes {marker_instances} instances, but startup config requires {}",
+                    marker_path.display(),
+                    config.db_instance_num
+                ),
+            ));
+        }
+        if config.raft.is_some() {
+            return Ok(());
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "snapshot install marker {} requires Raft startup recovery, but Raft is disabled",
+                marker_path.display()
+            ),
+        ));
+    }
+    Ok(())
 }
 
 async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntimeError> {
@@ -271,12 +309,55 @@ async fn initialize_storage(config: &Config) -> Result<GlobalStorage, DualRuntim
     let storage_options = Arc::new(StorageOptions::from_config(config));
     let data_dir = PathBuf::from(&config.data_dir);
 
+    if let Some(raft_config) = config.raft.as_ref() {
+        let snapshot_work_dir = PathBuf::from(&raft_config.data_dir).join("snapshots");
+        let recovery = raft::snapshot_install::recover_snapshot_install(
+            &data_dir,
+            &snapshot_work_dir,
+            Arc::clone(&storage_options),
+        )
+        .await
+        .map_err(|error| {
+            DualRuntimeError::storage_runtime(format!(
+                "Failed to recover interrupted snapshot install before admission: {error}"
+            ))
+        })?;
+        info!("Snapshot install startup recovery result: {:?}", recovery);
+    }
+
     let mut storage = Storage::new(config.db_instance_num, 0);
 
     info!("Opening storage at path: {:?}", data_dir);
-    let bg_task_receiver = storage
-        .open(storage_options, &data_dir)
-        .map_err(|e| DualRuntimeError::storage_runtime(format!("Failed to open storage: {}", e)))?;
+    let mut bg_task_receiver = match storage.open(Arc::clone(&storage_options), &data_dir) {
+        Ok(receiver) => receiver,
+        Err(error) => {
+            let rollback = storage::recover_or_rollback_before_admission(
+                &data_dir,
+                config.db_instance_num,
+                &storage_options,
+            );
+            let rollback_context = match rollback {
+                Ok(true) => "; verified legacy backup restored before admission".to_string(),
+                Ok(false) => String::new(),
+                Err(rollback_error) => format!("; rollback also failed: {rollback_error}"),
+            };
+            return Err(DualRuntimeError::storage_runtime(format!(
+                "Failed to open storage: {error}{rollback_context}"
+            )));
+        }
+    };
+    if storage::close_rollback_window(&data_dir).map_err(|error| {
+        DualRuntimeError::storage_runtime(format!("Failed to close rollback window: {error}"))
+    })? {
+        drop(bg_task_receiver);
+        bg_task_receiver = storage
+            .reopen(storage_options, &data_dir)
+            .map_err(|error| {
+                DualRuntimeError::storage_runtime(format!(
+                    "Failed to reopen storage after closing rollback window: {error}"
+                ))
+            })?;
+    }
     info!("Storage opened successfully");
 
     tokio::spawn(async move {
@@ -459,6 +540,7 @@ async fn start_server(
         config.requirepass.clone(),
         leader_gate,
         command_table_gates(config),
+        vector_admission_limits(config),
     ) {
         Some(server) => {
             tokio::spawn(async move {
@@ -480,7 +562,86 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
 
+    use raft::snapshot_install::{
+        SNAPSHOT_INSTALL_MARKER_VERSION, SnapshotInstallMarkerV2, SnapshotInstallPhase,
+        SnapshotInstallStorageIdentity,
+    };
+    use storage::{ManifestDigest, SnapshotInstanceManifest};
+
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn vector_admission_limits_follow_config() {
+        let config = Config {
+            vector: conf::vector_config::VectorConfig {
+                max_dimension: 17,
+                max_element_bytes: 23,
+                max_vector_bytes: 29,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert_eq!(
+            vector_admission_limits(&config),
+            cmd::vector::admission::VectorAdmissionLimits {
+                max_dimension: 17,
+                max_element_bytes: 23,
+                max_vector_bytes: 29,
+            }
+        );
+    }
+
+    fn write_valid_install_marker(db_path: &std::path::Path) -> PathBuf {
+        let digest = ManifestDigest::compute(b"server startup preflight");
+        let marker = SnapshotInstallMarkerV2 {
+            version: SNAPSHOT_INSTALL_MARKER_VERSION,
+            phase: SnapshotInstallPhase::StagedValidated,
+            snapshot_id: "server-startup-preflight".to_string(),
+            last_log_index: 10,
+            last_log_term: 2,
+            db_instance_num: 1,
+            target_name: db_path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("test DB path should have a UTF-8 basename")
+                .to_string(),
+            staged_name: ".restore_temp_server-preflight".to_string(),
+            backup_name: format!(
+                ".{}.snapshot-install-backup-server-preflight",
+                db_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .expect("test DB path should have a UTF-8 basename")
+            ),
+            pending_snapshot_data_name: ".snapshot-install-server-preflight.tar".to_string(),
+            pending_raft_meta_name: ".snapshot-install-server-preflight.raft-meta.json".to_string(),
+            pending_checkpoint_meta_name: ".snapshot-install-server-preflight.checkpoint-meta.json"
+                .to_string(),
+            snapshot_archive_digest: digest.clone(),
+            raft_metadata_digest: digest.clone(),
+            checkpoint_metadata_digest: digest.clone(),
+            old_storage: None,
+            new_storage: SnapshotInstallStorageIdentity {
+                root_manifest_id: "server-preflight-root".to_string(),
+                root_manifest_digest: digest.clone(),
+                instance_manifests: vec![SnapshotInstanceManifest {
+                    instance_id: 0,
+                    manifest_digest: digest.clone(),
+                    storage_incarnation: 1,
+                }],
+                logical_instance_digests: vec![digest],
+            },
+        };
+        let marker_path = raft::snapshot_install::snapshot_install_marker_path(db_path)
+            .expect("test DB path should support a marker");
+        std::fs::write(
+            &marker_path,
+            serde_json::to_vec(&marker).expect("test marker should serialize"),
+        )
+        .expect("test marker should be written");
+        marker_path
+    }
 
     #[test]
     fn startup_preflight_rejects_marker_even_when_raft_is_disabled() {
@@ -509,6 +670,51 @@ mod tests {
                 .contains(&marker_path.display().to_string()),
             "server refusal must identify the marker path: {error}"
         );
+
+        std::fs::remove_file(marker_path).expect("test should remove its marker");
+        std::fs::remove_dir_all(root).expect("test should remove its temporary root");
+    }
+
+    #[test]
+    fn startup_preflight_allows_valid_marker_only_for_raft_recovery() {
+        let root = std::env::temp_dir().join(format!(
+            "kiwi-server-valid-preflight-{}-{}",
+            std::process::id(),
+            TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        let db_path = root.join("data");
+        std::fs::create_dir_all(&root).expect("test should create its temporary root");
+        let marker_path = write_valid_install_marker(&db_path);
+
+        let standalone = Config {
+            data_dir: db_path.display().to_string(),
+            db_instance_num: 1,
+            raft: None,
+            ..Default::default()
+        };
+        let error = preflight_server_startup(&standalone)
+            .expect_err("standalone startup cannot recover a Raft snapshot install");
+        assert!(error.to_string().contains("Raft is disabled"));
+
+        let mismatched = Config {
+            data_dir: db_path.display().to_string(),
+            db_instance_num: 2,
+            raft: Some(Default::default()),
+            ..Default::default()
+        };
+        let error = preflight_server_startup(&mismatched)
+            .expect_err("startup must reject marker/config instance-count drift");
+        assert!(error.to_string().contains("describes 1 instances"));
+        assert!(error.to_string().contains("startup config requires 2"));
+
+        let clustered = Config {
+            data_dir: db_path.display().to_string(),
+            db_instance_num: 1,
+            raft: Some(Default::default()),
+            ..Default::default()
+        };
+        preflight_server_startup(&clustered)
+            .expect("clustered startup should defer a valid marker to startup recovery");
 
         std::fs::remove_file(marker_path).expect("test should remove its marker");
         std::fs::remove_dir_all(root).expect("test should remove its temporary root");

@@ -16,8 +16,14 @@
 // limitations under the License.
 
 use std::collections::HashMap;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::collections::HashSet;
 use std::ops::Deref;
 use std::path::Path;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::path::PathBuf;
+#[cfg(any(test, feature = "test-fault-injection"))]
+use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -41,7 +47,7 @@ use crate::custom_comparator::{
 use crate::data_compaction_filter::DataCompactionFilterFactory;
 use crate::error::Error::RedisErr;
 use crate::error::InvalidFormatSnafu;
-use crate::error::{IoSnafu, OptionNoneSnafu, Result, RocksSnafu};
+use crate::error::{IoSnafu, OptionNoneSnafu, Result, RocksSnafu, map_existing_strict_rocks_open};
 use crate::format_base_value::{DATA_TYPE_TAG, DataType};
 use crate::logindex::{
     FlushTrigger, LogIndexAndSequenceCollector, LogIndexAndSequenceCollectorPurger,
@@ -52,7 +58,11 @@ use crate::options::{OptionType, StorageOptions};
 use crate::statistics::KeyStatistics;
 use crate::storage::BgTaskHandler;
 use crate::storage_define::TYPE_LENGTH;
-use crate::storage_manifest::StorageManifest;
+use crate::storage_manifest::{
+    RootStorageManifestV2, StorageManifest, load_or_create_root_manifest,
+};
+pub use crate::storage_schema::ColumnFamilyIndex;
+use crate::storage_schema::{CANONICAL_COLUMN_FAMILIES, ColumnFamilySpec, ComparatorId};
 
 /// Injection point for vector set generation sequences.
 ///
@@ -61,60 +71,61 @@ use crate::storage_manifest::StorageManifest;
 /// log index that created the key (wired up by the raft layer later).
 pub type GenerationProvider = Arc<dyn Fn() -> Result<u64> + Send + Sync>;
 
-// Import logindex types for use in Storage
+#[cfg(any(test, feature = "test-fault-injection"))]
+static REDIS_OPEN_FAILURES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ColumnFamilyIndex {
-    MetaCF = 0,       // meta & string
-    HashesDataCF = 1, // hash data
-    SetsDataCF = 2,   // set data
-    ListsDataCF = 3,  // list data
-    ZsetsDataCF = 4,  // zset data
-    ZsetsScoreCF = 5, // zset score
-    VectorDataCF = 6, // vector set data
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+pub struct RedisOpenFailureGuard {
+    db_path: PathBuf,
 }
 
-impl ColumnFamilyIndex {
-    /// Total number of column families.
-    /// Update this constant when adding new column families.
-    /// This constant is used by batch.rs for validation.
-    pub const COUNT: usize = 7;
-
-    /// All column families in declaration order (by discriminant).
-    pub const ALL: [ColumnFamilyIndex; Self::COUNT] = [
-        ColumnFamilyIndex::MetaCF,
-        ColumnFamilyIndex::HashesDataCF,
-        ColumnFamilyIndex::SetsDataCF,
-        ColumnFamilyIndex::ListsDataCF,
-        ColumnFamilyIndex::ZsetsDataCF,
-        ColumnFamilyIndex::ZsetsScoreCF,
-        ColumnFamilyIndex::VectorDataCF,
-    ];
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            ColumnFamilyIndex::MetaCF => "default",
-            ColumnFamilyIndex::HashesDataCF => "hash_data_cf",
-            ColumnFamilyIndex::SetsDataCF => "set_data_cf",
-            ColumnFamilyIndex::ListsDataCF => "list_data_cf",
-            ColumnFamilyIndex::ZsetsDataCF => "zset_data_cf",
-            ColumnFamilyIndex::ZsetsScoreCF => "zset_score_cf",
-            ColumnFamilyIndex::VectorDataCF => "vector_data_cf",
+#[cfg(any(test, feature = "test-fault-injection"))]
+impl Drop for RedisOpenFailureGuard {
+    fn drop(&mut self) {
+        if let Ok(mut failures) = REDIS_OPEN_FAILURES.lock() {
+            failures.remove(&self.db_path);
         }
     }
+}
 
-    pub fn data_type(&self) -> Option<DataType> {
-        match self {
-            ColumnFamilyIndex::HashesDataCF => Some(DataType::Hash),
-            ColumnFamilyIndex::SetsDataCF => Some(DataType::Set),
-            ColumnFamilyIndex::ListsDataCF => Some(DataType::List),
-            ColumnFamilyIndex::ZsetsDataCF | ColumnFamilyIndex::ZsetsScoreCF => {
-                Some(DataType::ZSet)
+#[cfg(any(test, feature = "test-fault-injection"))]
+#[doc(hidden)]
+#[must_use]
+pub fn fail_next_redis_open(db_path: &Path) -> RedisOpenFailureGuard {
+    let db_path = db_path.to_path_buf();
+    let inserted = REDIS_OPEN_FAILURES
+        .lock()
+        .map(|mut failures| failures.insert(db_path.clone()))
+        .unwrap_or(false);
+    assert!(
+        inserted,
+        "Redis open failure already registered for {}",
+        db_path.display()
+    );
+    RedisOpenFailureGuard { db_path }
+}
+
+fn maybe_fail_redis_open(db_path: &Path) -> Result<()> {
+    #[cfg(any(test, feature = "test-fault-injection"))]
+    {
+        let should_fail = REDIS_OPEN_FAILURES
+            .lock()
+            .map(|mut failures| failures.remove(db_path))
+            .unwrap_or(false);
+        if should_fail {
+            return Err(InvalidFormatSnafu {
+                message: format!(
+                    "injected Redis open failure after RocksDB open: {}",
+                    db_path.display()
+                ),
             }
-            ColumnFamilyIndex::VectorDataCF => Some(DataType::VectorSet),
-            ColumnFamilyIndex::MetaCF => None,
+            .build());
         }
     }
+    let _ = db_path;
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -390,6 +401,34 @@ impl Redis {
     }
 
     pub fn open(&mut self, db_path: &str) -> Result<()> {
+        let root_load = load_or_create_root_manifest(Path::new(db_path), 1)?;
+        self.open_bound_internal(
+            db_path,
+            0,
+            &root_load.manifest,
+            true,
+            root_load.created_this_call,
+        )
+    }
+
+    pub(crate) fn open_bound(
+        &mut self,
+        db_path: &str,
+        instance_id: u32,
+        root: &RootStorageManifestV2,
+        allow_manifest_creation: bool,
+    ) -> Result<()> {
+        self.open_bound_internal(db_path, instance_id, root, false, allow_manifest_creation)
+    }
+
+    fn open_bound_internal(
+        &mut self,
+        db_path: &str,
+        instance_id: u32,
+        root: &RootStorageManifestV2,
+        root_manifest_is_local: bool,
+        allow_manifest_creation: bool,
+    ) -> Result<()> {
         self.small_compaction_threshold.store(
             self.storage.small_compaction_threshold as u64,
             std::sync::atomic::Ordering::SeqCst,
@@ -460,33 +499,28 @@ impl Redis {
         let mut db_opts = self.storage.options.clone();
         db_opts.add_event_listener(purger);
 
-        // A legacy database has no vector column family. Refuse to open a
-        // database that already has that column family but lost its manifest
-        // before RocksDB can create or mutate any descriptors.
         let db_directory = Path::new(db_path);
         let manifest_path = db_directory.join(crate::storage_manifest::STORAGE_MANIFEST_FILE);
         let current_path = db_directory.join("CURRENT");
+        db_opts.create_if_missing(allow_manifest_creation && !current_path.exists());
+        db_opts.create_missing_column_families(allow_manifest_creation && !current_path.exists());
         if !manifest_path.exists() && current_path.exists() {
-            let column_families = DB::list_cf(&db_opts, db_path).context(RocksSnafu)?;
-            if column_families
-                .iter()
-                .any(|name| name == ColumnFamilyIndex::VectorDataCF.name())
-            {
-                return Err(InvalidFormatSnafu {
-                    message: format!(
-                        "storage manifest {} is missing but the database has a vector column family; \
-                         refusing to reinterpret existing vector data",
-                        manifest_path.display()
-                    ),
-                }
-                .build());
+            return Err(InvalidFormatSnafu {
+                message: format!(
+                    "storage manifest {} is missing for an existing RocksDB; staged migration is required",
+                    manifest_path.display()
+                ),
             }
+            .build());
         } else if !manifest_path.exists() && db_directory.exists() {
             let temp_manifest_path = manifest_path.with_extension("tmp");
+            let local_root_path = db_directory.join(crate::ROOT_STORAGE_MANIFEST_FILE);
             let entries = std::fs::read_dir(db_directory).context(IoSnafu)?;
             let mut has_unrecognized_entry = false;
             for entry in entries {
-                if entry.context(IoSnafu)?.path() != temp_manifest_path {
+                let path = entry.context(IoSnafu)?.path();
+                let is_local_root = root_manifest_is_local && path == local_root_path;
+                if path != temp_manifest_path && !is_local_root {
                     has_unrecognized_entry = true;
                     break;
                 }
@@ -503,29 +537,25 @@ impl Redis {
             }
         }
 
-        // Persist the incarnation before opening descriptors: RocksDB may create
-        // the vector column family as part of a successful legacy migration.
-        std::fs::create_dir_all(db_directory).context(IoSnafu)?;
-        let manifest = StorageManifest::open(db_directory, false)?;
+        // Persist the bound instance identity before RocksDB creates descriptors.
+        if allow_manifest_creation {
+            std::fs::create_dir_all(db_directory).context(IoSnafu)?;
+        }
+        let manifest = StorageManifest::open_bound(
+            db_directory,
+            instance_id,
+            root,
+            false,
+            allow_manifest_creation,
+        )?;
         let _ = incarnation_cell.set(manifest.storage_incarnation());
 
-        const CF_CONFIGS: &[(&str, bool, Option<usize>)] = &[
-            ("default", true, None),                   // meta & string: bloom filter
-            ("hash_data_cf", true, None),              // hash: bloom filter
-            ("set_data_cf", false, None),              // set: no bloom filter
-            ("list_data_cf", true, None),              // list: bloom filter
-            ("zset_data_cf", false, Some(16 * 1024)),  // zset data: 16KB block size
-            ("zset_score_cf", false, Some(16 * 1024)), // zset score: 16KB block size
-            ("vector_data_cf", true, None),            // vector set: bloom filter
-        ];
-        let column_families: Vec<ColumnFamilyDescriptor> = CF_CONFIGS
+        let column_families: Vec<ColumnFamilyDescriptor> = CANONICAL_COLUMN_FAMILIES
             .iter()
-            .map(|(name, use_bloom, block_size)| {
+            .map(|spec| {
                 Self::create_cf_options(
                     &self.storage,
-                    name,
-                    *use_bloom,
-                    *block_size,
+                    spec,
                     self.block_cache.as_deref(),
                     Some(&db_once_cell),
                     &incarnation_cell,
@@ -534,15 +564,19 @@ impl Redis {
             })
             .collect();
 
-        let db = RocksDbOwner::new(
-            DB::open_cf_descriptors(&db_opts, db_path, column_families).context(RocksSnafu)?,
-        );
+        let opened = DB::open_cf_descriptors(&db_opts, db_path, column_families);
+        let db = RocksDbOwner::new(if allow_manifest_creation {
+            opened.context(RocksSnafu)?
+        } else {
+            map_existing_strict_rocks_open(opened)?
+        });
+        maybe_fail_redis_open(db_directory)?;
         let _ = db_once_cell.set(db.downgrade());
 
-        let handles = CF_CONFIGS
+        let handles = CANONICAL_COLUMN_FAMILIES
             .iter()
-            .filter(|(name, _, _)| db.cf_handle(name).is_some())
-            .map(|(name, _, _)| name.to_string())
+            .filter(|spec| db.cf_handle(spec.name).is_some())
+            .map(|spec| spec.name.to_string())
             .collect();
 
         // Initialize cf_tracker from SST properties
@@ -566,9 +600,7 @@ impl Redis {
     // Helper function: create column-family options
     fn create_cf_options(
         storage_options: &StorageOptions,
-        cf_name: &str,
-        use_bloom_filter: bool,
-        block_size: Option<usize>,
+        spec: &ColumnFamilySpec,
         block_cache: Option<&BlockCache>,
         db_once_cell: Option<&Arc<OnceCell<Weak<DB>>>>,
         incarnation_cell: &Arc<OnceCell<u64>>,
@@ -577,26 +609,25 @@ impl Redis {
         let mut cf_opts = storage_options.options.clone();
         let mut table_opts = BlockBasedOptions::default();
 
-        // Set comparator
-        if cf_name == ColumnFamilyIndex::ListsDataCF.name() {
-            cf_opts.set_comparator(
+        match spec.comparator_id {
+            ComparatorId::Bytewise => {}
+            ComparatorId::ListsDataKey => cf_opts.set_comparator(
                 lists_data_key_comparator_name(),
                 Box::new(lists_data_key_compare),
-            );
-        } else if cf_name == ColumnFamilyIndex::ZsetsScoreCF.name() {
-            cf_opts.set_comparator(
+            ),
+            ComparatorId::ZsetsScoreKey => cf_opts.set_comparator(
                 zsets_score_key_comparator_name(),
                 Box::new(zsets_score_key_compare),
-            );
+            ),
         }
 
         // Set bloom filter
-        if use_bloom_filter {
+        if spec.use_bloom_filter {
             table_opts.set_bloom_filter(10.0, true);
         }
 
         // Set block size
-        if let Some(size) = block_size {
+        if let Some(size) = spec.block_size {
             table_opts.set_block_size(size);
         }
 
@@ -619,20 +650,10 @@ impl Redis {
         cf_opts.set_block_based_table_factory(&table_opts);
 
         // Set compaction filter factory
-        if cf_name == ColumnFamilyIndex::MetaCF.name() {
+        if spec.index == ColumnFamilyIndex::MetaCF {
             cf_opts.set_compaction_filter_factory(MetaCompactionFilterFactory);
         } else if let Some(db_once_cell) = db_once_cell
-            && let Some(data_type) = [
-                ColumnFamilyIndex::HashesDataCF,
-                ColumnFamilyIndex::SetsDataCF,
-                ColumnFamilyIndex::ListsDataCF,
-                ColumnFamilyIndex::ZsetsDataCF,
-                ColumnFamilyIndex::ZsetsScoreCF,
-                ColumnFamilyIndex::VectorDataCF,
-            ]
-            .iter()
-            .find(|cf| cf.name() == cf_name)
-            .and_then(|cf| cf.data_type())
+            && let Some(data_type) = spec.index.data_type()
         {
             let factory = DataCompactionFilterFactory::new(
                 Arc::clone(db_once_cell),
@@ -642,7 +663,7 @@ impl Redis {
             cf_opts.set_compaction_filter_factory(factory);
         }
 
-        ColumnFamilyDescriptor::new(cf_name, cf_opts)
+        ColumnFamilyDescriptor::new(spec.name, cf_opts)
     }
 
     /// Get database index
@@ -977,11 +998,20 @@ impl Redis {
     }
 
     pub fn check_type_state(&self, value_raw: &[u8], expected: DataType) -> Result<TypeCheckState> {
+        self.check_type_state_at(value_raw, expected, Utc::now().timestamp_micros() as u64)
+    }
+
+    pub(crate) fn check_type_state_at(
+        &self,
+        value_raw: &[u8],
+        expected: DataType,
+        logical_now_micros: u64,
+    ) -> Result<TypeCheckState> {
         if value_raw.is_empty() {
             return Ok(TypeCheckState::Missing);
         }
 
-        if self.is_stale(value_raw)? {
+        if Self::is_stale_static_at(value_raw, logical_now_micros)? {
             return Ok(TypeCheckState::Stale);
         }
 
@@ -1058,6 +1088,10 @@ impl Redis {
     /// * `Ok(false)` - the value is not expired and is valid
     /// * `Err(_)` - parsing error
     pub fn is_stale_static(val_raw: &[u8]) -> Result<bool> {
+        Self::is_stale_static_at(val_raw, Utc::now().timestamp_micros() as u64)
+    }
+
+    pub(crate) fn is_stale_static_at(val_raw: &[u8], logical_now_micros: u64) -> Result<bool> {
         if val_raw.is_empty() {
             return Ok(false);
         }
@@ -1070,7 +1104,6 @@ impl Redis {
             .fail();
         }
 
-        let now = Utc::now().timestamp_micros() as u64;
         match data_type {
             DataType::String => {
                 // | type(1B) | value | reserve(16B) | ctime(8B) | etime(8B) |
@@ -1084,7 +1117,7 @@ impl Redis {
                 if etime == 0 {
                     return Ok(false);
                 }
-                Ok(etime < now)
+                Ok(etime < logical_now_micros)
             }
             DataType::Hash | DataType::Set | DataType::ZSet | DataType::VectorSet => {
                 // | type(1B) | count(8B) | version(8B) | reserve(16B) | ctime(8B) | etime(8B) |
@@ -1109,7 +1142,7 @@ impl Redis {
                 if etime == 0 {
                     return Ok(false);
                 }
-                Ok(etime < now)
+                Ok(etime < logical_now_micros)
             }
             DataType::List => {
                 // | type(1B) | count(8B) | version(8B) | left(8B) | right(8B) | reserve(16B) | ctime(8B) | etime(8B) |
@@ -1134,7 +1167,7 @@ impl Redis {
                 if etime == 0 {
                     return Ok(false);
                 }
-                Ok(etime < now)
+                Ok(etime < logical_now_micros)
             }
             _ => InvalidFormatSnafu {
                 message: format!(

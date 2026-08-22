@@ -15,16 +15,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use serde::de::{Error as _, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 
 pub const MANIFEST_SCHEMA: &str = "kiwi-redis-compat/v1";
+pub const REQUIRED_VECTOR_JOBS_SCHEMA: &str = "kiwi-vector-required-jobs/v1";
 pub const REDIS_TAG: &str = "8.8.1";
 pub const REDIS_COMMIT: &str = "77b6c308396c9700672390a210143a8496fb4b10";
+
+fn is_canonical_base64(value: &str) -> bool {
+    BASE64_STANDARD
+        .decode(value)
+        .is_ok_and(|decoded| BASE64_STANDARD.encode(decoded) == value)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct CompatibilityManifest {
@@ -174,6 +182,394 @@ impl CompatibilityManifest {
             },
             commands,
         })
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RequiredVectorJobs {
+    job_id: String,
+    test_module: String,
+    pytest_marker: String,
+    protocols: Vec<Protocol>,
+    commands: Vec<String>,
+    raw_cases: BTreeMap<String, Vec<RequiredVectorRawCase>>,
+    final_state_applicability: BTreeMap<String, RequiredVectorFinalStateApplicability>,
+    expected_node_ids: Vec<String>,
+    expected_item_count: usize,
+    manifest_profile: Profile,
+    fast_job_owner: String,
+    fast_job_deselect_marker: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RequiredVectorFinalStateApplicability {
+    applicability: String,
+    reason: Option<String>,
+    state_profile: Option<String>,
+    observation_profile: Option<String>,
+}
+
+impl RequiredVectorFinalStateApplicability {
+    pub fn applicability(&self) -> &str {
+        &self.applicability
+    }
+
+    pub fn reason(&self) -> Option<&str> {
+        self.reason.as_deref()
+    }
+
+    pub fn state_profile(&self) -> Option<&str> {
+        self.state_profile.as_deref()
+    }
+
+    pub fn observation_profile(&self) -> Option<&str> {
+        self.observation_profile.as_deref()
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct RequiredVectorRawCase {
+    case_id: String,
+    evidence_kind: String,
+    node_ids: Vec<String>,
+    request_base64_by_node: BTreeMap<String, String>,
+}
+
+impl RequiredVectorRawCase {
+    pub fn case_id(&self) -> &str {
+        &self.case_id
+    }
+
+    pub fn evidence_kind(&self) -> &str {
+        &self.evidence_kind
+    }
+
+    pub fn node_ids(&self) -> &[String] {
+        &self.node_ids
+    }
+
+    pub fn request_base64_by_node(&self) -> &BTreeMap<String, String> {
+        &self.request_base64_by_node
+    }
+}
+
+impl RequiredVectorJobs {
+    pub fn from_yaml(input: &str) -> Result<Self, ManifestError> {
+        let raw: RawRequiredVectorJobs = yaml_serde::from_str(input)?;
+        if raw.schema != REQUIRED_VECTOR_JOBS_SCHEMA {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required-jobs schema is not kiwi-vector-required-jobs/v1".to_string(),
+            ));
+        }
+        if raw.jobs.len() != 1 {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required-jobs registry must contain exactly one job".to_string(),
+            ));
+        }
+        let raw_job = raw.jobs.into_iter().next().ok_or_else(|| {
+            ManifestError::InvalidRequiredJobs("required job is missing".to_string())
+        })?;
+        if raw_job.job_id != "trusted-vector-differential"
+            || raw_job.test_module != "tests/python/test_vector_set_differential.py"
+            || raw_job.pytest_marker != "raw_vector_protocol"
+        {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector job identity, module, or marker drifted".to_string(),
+            ));
+        }
+        let protocols = raw_job
+            .protocols
+            .into_iter()
+            .map(Protocol::from)
+            .collect::<Vec<_>>();
+        if protocols != [Protocol::Resp2, Protocol::Resp3] {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector protocols must be exactly resp2, resp3".to_string(),
+            ));
+        }
+        let mut commands = BTreeMap::new();
+        for command in raw_job.commands {
+            if !command.starts_with('V')
+                || !command.bytes().all(|byte| byte.is_ascii_uppercase())
+                || commands.insert(command.clone(), ()).is_some()
+            {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "invalid or duplicate required Vector command {command:?}"
+                )));
+            }
+        }
+        if commands.is_empty() {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector command scope must not be empty".to_string(),
+            ));
+        }
+        if raw_job.raw_cases.keys().collect::<Vec<_>>() != commands.keys().collect::<Vec<_>>() {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "raw-case command ownership must exactly match required Vector commands"
+                    .to_string(),
+            ));
+        }
+        let mut node_ids = BTreeMap::new();
+        let prefix = format!("{}::", raw_job.test_module);
+        for node_id in &raw_job.expected_node_ids {
+            if !node_id.starts_with(&prefix)
+                || node_id.trim() != node_id
+                || node_ids.insert(node_id.clone(), ()).is_some()
+            {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "invalid or duplicate expected pytest node ID {node_id:?}"
+                )));
+            }
+        }
+        if raw_job.expected_item_count == 0
+            || raw_job.expected_item_count != raw_job.expected_node_ids.len()
+        {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "expected_item_count must be positive and equal expected_node_ids length"
+                    .to_string(),
+            ));
+        }
+        if raw_job.final_state.keys().collect::<Vec<_>>() != node_ids.keys().collect::<Vec<_>>() {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "final-state applicability must exactly cover expected pytest node IDs".to_string(),
+            ));
+        }
+        let mut final_state_applicability = BTreeMap::new();
+        for (node_id, contract) in raw_job.final_state {
+            let (applicability, reason, state_profile, observation_profile) = match (
+                contract.applicability,
+                contract.reason,
+                contract.state_profile,
+                contract.observation_profile,
+            ) {
+                (
+                    RawFinalStateApplicability::ServerBacked,
+                    None,
+                    Some(state_profile),
+                    Some(observation_profile),
+                ) if matches!(
+                    state_profile.as_str(),
+                    "raw-all-missing"
+                        | "raw-repeated-vector"
+                        | "typed-all-missing"
+                        | "typed-main-vector"
+                        | "typed-main-two-member-vector"
+                        | "typed-main-dense3-vector"
+                        | "typed-string"
+                ) && observation_profile == "complete-vector-state-v1" =>
+                {
+                    (
+                        "server-backed".to_string(),
+                        None,
+                        Some(state_profile),
+                        Some(observation_profile),
+                    )
+                }
+                (
+                    RawFinalStateApplicability::NotApplicable,
+                    Some(RawFinalStateNotApplicableReason::Parser),
+                    None,
+                    None,
+                ) => (
+                    "not-applicable".to_string(),
+                    Some("parser".to_string()),
+                    None,
+                    None,
+                ),
+                (
+                    RawFinalStateApplicability::NotApplicable,
+                    Some(RawFinalStateNotApplicableReason::Comparator),
+                    None,
+                    None,
+                ) => (
+                    "not-applicable".to_string(),
+                    Some("comparator".to_string()),
+                    None,
+                    None,
+                ),
+                _ => {
+                    return Err(ManifestError::InvalidRequiredJobs(format!(
+                        "final-state applicability for {node_id:?} has an invalid state contract"
+                    )));
+                }
+            };
+            final_state_applicability.insert(
+                node_id,
+                RequiredVectorFinalStateApplicability {
+                    applicability,
+                    reason,
+                    state_profile,
+                    observation_profile,
+                },
+            );
+        }
+        for (command, raw_cases) in &raw_job.raw_cases {
+            let case_ids = raw_cases
+                .iter()
+                .map(|raw_case| raw_case.case_id.as_str())
+                .collect::<BTreeSet<_>>();
+            if raw_cases.is_empty() || case_ids.len() != raw_cases.len() {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "raw cases for {command} must have unique case IDs"
+                )));
+            }
+            for raw_case in raw_cases {
+                let unique = raw_case.node_ids.iter().collect::<BTreeSet<_>>();
+                let request_nodes = raw_case
+                    .request_base64_by_node
+                    .keys()
+                    .collect::<BTreeSet<_>>();
+                let valid_case_id = !raw_case.case_id.is_empty()
+                    && raw_case
+                        .case_id
+                        .bytes()
+                        .all(|byte| byte == b'-' || byte.is_ascii_lowercase());
+                if !valid_case_id
+                    || !matches!(
+                        raw_case.evidence_kind.as_str(),
+                        "exact-frame" | "raw-schema"
+                    )
+                    || raw_case.node_ids.is_empty()
+                    || unique.len() != raw_case.node_ids.len()
+                    || request_nodes != unique
+                    || raw_case.request_base64_by_node.values().any(|request| {
+                        request.is_empty()
+                            || request.len() > 16 * 1024
+                            || request.trim() != request
+                            || !is_canonical_base64(request)
+                    })
+                    || raw_case
+                        .node_ids
+                        .iter()
+                        .any(|node_id| !node_ids.contains_key(node_id))
+                    || !raw_case
+                        .node_ids
+                        .iter()
+                        .any(|node_id| node_id.ends_with("[resp2]"))
+                    || !raw_case
+                        .node_ids
+                        .iter()
+                        .any(|node_id| node_id.ends_with("[resp3]"))
+                {
+                    return Err(ManifestError::InvalidRequiredJobs(format!(
+                        "raw case {} for {command} must have a valid kind and unique registered RESP2/RESP3 node IDs",
+                        raw_case.case_id
+                    )));
+                }
+            }
+        }
+        for (command, raw_cases) in &raw_job.raw_cases {
+            let actual = raw_cases
+                .iter()
+                .map(|raw_case| (raw_case.case_id.as_str(), raw_case.evidence_kind.as_str()))
+                .collect::<BTreeSet<_>>();
+            let expected = if command == "VINFO" {
+                BTreeSet::from([("missing-key", "exact-frame"), ("populated", "raw-schema")])
+            } else {
+                BTreeSet::from([("zero-vector", "exact-frame")])
+            };
+            if actual != expected {
+                return Err(ManifestError::InvalidRequiredJobs(format!(
+                    "raw evidence cases for {command} drifted"
+                )));
+            }
+        }
+        let manifest_profile = Profile::from(raw_job.manifest_profile);
+        if manifest_profile != Profile::Redis881StandaloneCacheOff {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "required Vector manifest profile must be redis_8_8_1_standalone_cache_off"
+                    .to_string(),
+            ));
+        }
+        if raw_job.fast_job.owner != raw_job.job_id
+            || raw_job.fast_job.deselect_marker != raw_job.pytest_marker
+        {
+            return Err(ManifestError::InvalidRequiredJobs(
+                "fast-job ownership must name the required job and its pytest marker".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            job_id: raw_job.job_id,
+            test_module: raw_job.test_module,
+            pytest_marker: raw_job.pytest_marker,
+            protocols,
+            commands: commands.into_keys().collect(),
+            raw_cases: raw_job
+                .raw_cases
+                .into_iter()
+                .map(|(command, cases)| {
+                    (
+                        command,
+                        cases
+                            .into_iter()
+                            .map(|raw_case| RequiredVectorRawCase {
+                                case_id: raw_case.case_id,
+                                evidence_kind: raw_case.evidence_kind,
+                                node_ids: raw_case.node_ids,
+                                request_base64_by_node: raw_case.request_base64_by_node,
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
+            final_state_applicability,
+            expected_node_ids: raw_job.expected_node_ids,
+            expected_item_count: raw_job.expected_item_count,
+            manifest_profile,
+            fast_job_owner: raw_job.fast_job.owner,
+            fast_job_deselect_marker: raw_job.fast_job.deselect_marker,
+        })
+    }
+
+    pub fn job_id(&self) -> &str {
+        &self.job_id
+    }
+
+    pub fn test_module(&self) -> &str {
+        &self.test_module
+    }
+
+    pub fn pytest_marker(&self) -> &str {
+        &self.pytest_marker
+    }
+
+    pub fn protocols(&self) -> &[Protocol] {
+        &self.protocols
+    }
+
+    pub fn commands(&self) -> &[String] {
+        &self.commands
+    }
+
+    pub fn raw_cases(&self) -> &BTreeMap<String, Vec<RequiredVectorRawCase>> {
+        &self.raw_cases
+    }
+
+    pub fn final_state_applicability(
+        &self,
+    ) -> &BTreeMap<String, RequiredVectorFinalStateApplicability> {
+        &self.final_state_applicability
+    }
+
+    pub fn expected_node_ids(&self) -> &[String] {
+        &self.expected_node_ids
+    }
+
+    pub fn expected_item_count(&self) -> usize {
+        self.expected_item_count
+    }
+
+    pub fn manifest_profile(&self) -> Profile {
+        self.manifest_profile
+    }
+
+    pub fn fast_job_owner(&self) -> &str {
+        &self.fast_job_owner
+    }
+
+    pub fn fast_job_deselect_marker(&self) -> &str {
+        &self.fast_job_deselect_marker
     }
 }
 
@@ -360,6 +756,70 @@ struct RawCompatibilityManifest {
     profile: RawProfile,
     redis: RawRedisBaseline,
     commands: Vec<RawCommandContract>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequiredVectorJobs {
+    schema: String,
+    jobs: Vec<RawRequiredVectorJob>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequiredVectorJob {
+    job_id: String,
+    test_module: String,
+    pytest_marker: String,
+    protocols: Vec<RawProtocol>,
+    commands: Vec<String>,
+    raw_cases: BTreeMap<String, Vec<RawRequiredVectorCase>>,
+    final_state: BTreeMap<String, RawRequiredVectorFinalStateApplicability>,
+    expected_node_ids: Vec<String>,
+    expected_item_count: usize,
+    manifest_profile: RawProfile,
+    fast_job: RawFastJobOwnership,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequiredVectorFinalStateApplicability {
+    applicability: RawFinalStateApplicability,
+    reason: Option<RawFinalStateNotApplicableReason>,
+    state_profile: Option<String>,
+    observation_profile: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+enum RawFinalStateApplicability {
+    #[serde(rename = "server-backed")]
+    ServerBacked,
+    #[serde(rename = "not-applicable")]
+    NotApplicable,
+}
+
+#[derive(Debug, Deserialize)]
+enum RawFinalStateNotApplicableReason {
+    #[serde(rename = "parser")]
+    Parser,
+    #[serde(rename = "comparator")]
+    Comparator,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRequiredVectorCase {
+    case_id: String,
+    evidence_kind: String,
+    node_ids: Vec<String>,
+    request_base64_by_node: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFastJobOwnership {
+    owner: String,
+    deselect_marker: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -658,6 +1118,8 @@ pub enum ManifestError {
         actual_tag: String,
         actual_commit: String,
     },
+    #[error("invalid required Vector jobs registry: {0}")]
+    InvalidRequiredJobs(String),
     #[error("commands[{index}].command duplicates commands[{first_index}].command {command:?}")]
     DuplicateCommand {
         command: String,

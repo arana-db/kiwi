@@ -79,6 +79,7 @@ struct GatedCmd {
     inner: Arc<dyn Cmd>,
     allowed: bool,
     reject_before_routing: bool,
+    reject_during_network_admission: bool,
     disabled_error: String,
 }
 
@@ -95,6 +96,17 @@ impl Cmd for GatedCmd {
         self.inner.check_pre_route(client)
     }
 
+    fn admit_network_request(
+        &self,
+        argv: &[bytes::Bytes],
+        limits: crate::vector::admission::VectorAdmissionLimits,
+    ) -> Result<(), RespData> {
+        if self.reject_during_network_admission && !self.allowed {
+            return Err(RespData::Error(self.disabled_error.clone().into()));
+        }
+        self.inner.admit_network_request(argv, limits)
+    }
+
     fn do_initial(&self, client: &Client) -> bool {
         if !self.reject_before_routing && !self.allowed {
             client.set_reply(RespData::Error(self.disabled_error.clone().into()));
@@ -105,6 +117,10 @@ impl Cmd for GatedCmd {
 
     fn do_cmd(&self, client: &Client, storage: Arc<Storage>) {
         self.inner.do_cmd(client, storage);
+    }
+
+    fn wrong_arity_reply(&self, command_name: &[u8]) -> RespData {
+        self.inner.wrong_arity_reply(command_name)
     }
 
     fn clone_box(&self) -> Box<dyn Cmd> {
@@ -119,6 +135,7 @@ fn register_gated_cmds(
     cmds: Vec<Arc<dyn Cmd>>,
     allowed: bool,
     reject_before_routing: bool,
+    reject_during_network_admission: bool,
     disabled_error: impl Fn(&CmdMeta) -> String,
 ) {
     for cmd in cmds {
@@ -127,6 +144,7 @@ fn register_gated_cmds(
             inner: cmd,
             allowed,
             reject_before_routing,
+            reject_during_network_admission,
             disabled_error: disabled_error(&meta),
         };
         cmd_table.insert(meta.name, Arc::new(gated));
@@ -139,6 +157,7 @@ fn wrap_gated_cmds(
     cmds: Vec<Arc<dyn Cmd>>,
     allowed: bool,
     reject_before_routing: bool,
+    reject_during_network_admission: bool,
     disabled_error: impl Fn(&CmdMeta) -> String,
 ) -> Vec<Arc<dyn Cmd>> {
     cmds.into_iter()
@@ -148,6 +167,7 @@ fn wrap_gated_cmds(
                 inner: cmd,
                 allowed,
                 reject_before_routing,
+                reject_during_network_admission,
                 disabled_error: disabled_error(&meta),
             }) as Arc<dyn Cmd>
         })
@@ -324,6 +344,7 @@ pub fn create_command_table_with_gates(
         flush_cmds,
         gates.cluster_flush_allowed,
         false,
+        false,
         |meta| {
             format!(
                 "ERR {} is not supported in cluster mode yet",
@@ -347,14 +368,19 @@ pub fn create_command_table_with_gates(
         Arc::new(crate::vector::VInfoCmd::new()),
         Arc::new(crate::vector::VIsMemberCmd::new()),
     ];
-    let vector_cmds = wrap_gated_cmds(vector_cmds, gates.vector_cluster_allowed, true, |_| {
-        "ERR vector commands are not supported in cluster mode yet".to_string()
-    });
+    let vector_cmds = wrap_gated_cmds(
+        vector_cmds,
+        gates.vector_cluster_allowed,
+        true,
+        true,
+        |_| "ERR vector commands are not supported in cluster mode yet".to_string(),
+    );
     register_gated_cmds(
         &mut cmd_table,
         vector_cmds,
         gates.vector_enabled,
         false,
+        true,
         |_| "ERR vector support is disabled (vector-enabled=false)".to_string(),
     );
 
@@ -394,6 +420,7 @@ mod tests {
     use storage::storage::Storage;
 
     use crate::auth::{RequirepassProvider, no_requirepass_provider};
+    use crate::vector::admission::VectorAdmissionLimits;
 
     use super::{
         CmdTable, CommandTableGates, NoopServerInfoProvider, create_command_table,
@@ -456,6 +483,182 @@ mod tests {
             RespData::Error(e) => String::from_utf8_lossy(e).into_owned(),
             other => panic!("expected error reply, got {other:?}"),
         }
+    }
+
+    fn network_argv(parts: Vec<Vec<u8>>) -> Vec<Bytes> {
+        parts.into_iter().map(Bytes::from).collect()
+    }
+
+    fn network_admission_error(
+        table: &CmdTable,
+        name: &str,
+        argv: Vec<Vec<u8>>,
+        limits: VectorAdmissionLimits,
+    ) -> String {
+        let command = table.get(name).expect("command should be registered");
+        let reply = command
+            .admit_network_request(&network_argv(argv), limits)
+            .expect_err("request should be rejected");
+        error_text(&reply)
+    }
+
+    #[test]
+    fn gated_vector_commands_forward_network_admission() {
+        let table = create_command_table_with_gates(
+            no_requirepass_provider(),
+            CommandTableGates::from_flags(true, true, true),
+        );
+        let limits = VectorAdmissionLimits {
+            max_dimension: 1,
+            max_element_bytes: 3,
+            max_vector_bytes: 4,
+        };
+        let cases = [
+            (
+                "vadd",
+                vec![
+                    b"vadd".to_vec(),
+                    b"key".to_vec(),
+                    b"VALUES".to_vec(),
+                    b"2".to_vec(),
+                    b"1".to_vec(),
+                    b"2".to_vec(),
+                    b"element".to_vec(),
+                    b"NOQUANT".to_vec(),
+                ],
+                "ERR vector dimension exceeds max_dimension",
+            ),
+            (
+                "vsim",
+                vec![
+                    b"vsim".to_vec(),
+                    b"key".to_vec(),
+                    b"FP32".to_vec(),
+                    vec![0; 8],
+                ],
+                "ERR vector exceeds max_vector_bytes",
+            ),
+            (
+                "vemb",
+                vec![b"vemb".to_vec(), b"key".to_vec(), b"element".to_vec()],
+                "ERR vector element exceeds max_element_bytes",
+            ),
+            (
+                "vrem",
+                vec![b"vrem".to_vec(), b"key".to_vec(), b"element".to_vec()],
+                "ERR vector element exceeds max_element_bytes",
+            ),
+            (
+                "vismember",
+                vec![b"vismember".to_vec(), b"key".to_vec(), b"element".to_vec()],
+                "ERR vector element exceeds max_element_bytes",
+            ),
+        ];
+
+        for (name, argv, expected) in cases {
+            assert_eq!(
+                network_admission_error(&table, name, argv, limits),
+                expected,
+                "{name} must forward network admission through both gates"
+            );
+        }
+    }
+
+    #[test]
+    fn network_admission_feature_gate_precedes_cluster_gate() {
+        let table = create_command_table_with_gates(
+            no_requirepass_provider(),
+            CommandTableGates::from_flags(false, false, true),
+        );
+        let limits = VectorAdmissionLimits {
+            max_dimension: 1,
+            max_element_bytes: 1,
+            max_vector_bytes: 1,
+        };
+
+        assert_eq!(
+            network_admission_error(
+                &table,
+                "vadd",
+                vec![
+                    b"vadd".to_vec(),
+                    b"key".to_vec(),
+                    b"FP32".to_vec(),
+                    vec![0; 8],
+                    b"element".to_vec(),
+                    b"NOQUANT".to_vec(),
+                ],
+                limits,
+            ),
+            "ERR vector support is disabled (vector-enabled=false)"
+        );
+    }
+
+    #[test]
+    fn network_admission_cluster_gate_precedes_resource_limit() {
+        let table = create_command_table_with_gates(
+            no_requirepass_provider(),
+            CommandTableGates::from_flags(true, false, true),
+        );
+        let limits = VectorAdmissionLimits {
+            max_dimension: 1,
+            max_element_bytes: 1,
+            max_vector_bytes: 1,
+        };
+
+        assert_eq!(
+            network_admission_error(
+                &table,
+                "vadd",
+                vec![
+                    b"vadd".to_vec(),
+                    b"key".to_vec(),
+                    b"FP32".to_vec(),
+                    vec![0; 8],
+                    b"element".to_vec(),
+                    b"NOQUANT".to_vec(),
+                ],
+                limits,
+            ),
+            "ERR vector commands are not supported in cluster mode yet"
+        );
+    }
+
+    #[test]
+    fn non_vector_commands_use_noop_network_admission() {
+        let table = create_command_table(no_requirepass_provider());
+        let command = table.get("set").expect("SET should be registered");
+        let argv = network_argv(vec![b"set".to_vec(), b"key".to_vec(), b"value".to_vec()]);
+
+        assert_eq!(
+            command.admit_network_request(
+                &argv,
+                VectorAdmissionLimits {
+                    max_dimension: 0,
+                    max_element_bytes: 0,
+                    max_vector_bytes: 0,
+                },
+            ),
+            Ok(())
+        );
+
+        let table = create_command_table_with_gates(
+            no_requirepass_provider(),
+            CommandTableGates::from_flags(true, true, false),
+        );
+        let command = table.get("flushdb").expect("FLUSHDB should be registered");
+        assert_eq!(
+            command.admit_network_request(
+                &network_argv(vec![b"flushdb".to_vec()]),
+                VectorAdmissionLimits {
+                    max_dimension: 0,
+                    max_element_bytes: 0,
+                    max_vector_bytes: 0,
+                },
+            ),
+            Ok(()),
+            "the non-Vector FLUSH gate must remain in do_initial"
+        );
     }
 
     #[test]
@@ -604,6 +807,38 @@ mod tests {
             ],
         );
         assert_eq!(error_text(&reply), "ERR invalid vector specification");
+    }
+
+    #[test]
+    fn enabled_vadd_preserves_redis_wrong_arity_casing_through_both_gates() {
+        let table = create_command_table_with_gates(
+            no_requirepass_provider(),
+            CommandTableGates::from_flags(true, true, true),
+        );
+        let cases = [
+            vec![b"vadd".to_vec()],
+            vec![b"vadd".to_vec(), b"k".to_vec()],
+            vec![b"vadd".to_vec(), b"k".to_vec(), b"FP32".to_vec()],
+            vec![
+                b"vadd".to_vec(),
+                b"k".to_vec(),
+                b"FP32".to_vec(),
+                b"bad".to_vec(),
+            ],
+        ];
+
+        for argv in cases {
+            assert_eq!(
+                error_text(&run_command(&table, "vadd", &argv)),
+                "ERR wrong number of arguments for 'VADD' command"
+            );
+        }
+
+        assert_eq!(
+            error_text(&run_command(&table, "set", &[b"set".to_vec()])),
+            "ERR wrong number of arguments for 'set' command",
+            "the VADD exception must not change other command error bytes"
+        );
     }
 
     #[test]

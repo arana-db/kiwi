@@ -199,6 +199,7 @@ macro_rules! define_vector_command {
     };
 }
 
+pub mod admission;
 pub mod vadd;
 pub mod vcard;
 pub mod vdim;

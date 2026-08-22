@@ -22,10 +22,12 @@
 
 [advisories]
 ignore = [
-  # RUSTSEC-2026-0235: rkyv 0.7.46 is a transitive dependency of openraft
-  # 0.9.25 (Raft wire serialization); no safe in-scope upgrade exists below a
-  # breaking openraft bump. The advisory requires a maliciously crafted
-  # archive with Rc/Arc and is not reachable from the cluster's own binlog
-  # writes. Remove this exception once openraft pulls rkyv >= 0.8.17.
+  # RUSTSEC-2026-0235: rkyv 0.7.46
+  # owner: security-deps / Issue #430
+  # potential_path: openraft -> byte-unit -> rust_decimal
+  # current_status: unreachable optional dependency
+  # Evidence: the locked offline all-targets all-features inverse tree is empty.
+  # remove_when: rkyv@0.7.46 becomes reachable, or dependencies permit an
+  # advisory-free version without this exception.
   "RUSTSEC-2026-0235",
 ]

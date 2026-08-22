@@ -16,7 +16,7 @@
 // limitations under the License.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -25,11 +25,21 @@ use kstd::lock_mgr::LockMgr;
 use snafu::ResultExt;
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock, mpsc};
 
-use crate::error::{Error, MpscSnafu, Result};
+use crate::error::{
+    Error, InvalidFormatSnafu, MpscSnafu, Result, format_storage_compatibility_refusal,
+    split_strict_rocks_open_cause,
+};
 use crate::expiration_manager::ExpirationManager;
 use crate::format_base_value::DataType;
 use crate::options::OptionType;
 use crate::slot_indexer::SlotIndexer;
+use crate::storage_manifest::{
+    MigrationPhase, OnDiskDescriptor, RootStorageManifestV2, current_storage_descriptor,
+    load_or_create_root_manifest, observe_on_disk_descriptor, validate_existing_instance_manifests,
+};
+use crate::storage_migration::{
+    finalize_migration_after_storage_open, prepare_or_resume_migration,
+};
 use crate::storage_scan::{SCAN_CURSOR_STATE_CAPACITY, ScanCursorState};
 use crate::{ColumnFamilyIndex, Redis, StorageOptions, data_type_to_tag};
 use conf::raft_type::{Binlog, OperateType};
@@ -38,6 +48,78 @@ pub enum TaskType {
     None = 0,
     CleanAll = 1,
     CompactRange = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AdmissionStep {
+    MigrationPrepare,
+    RootManifestLoad,
+    InstanceValidation,
+    StrictInstanceOpen,
+    MigrationFinalize,
+}
+
+fn wrap_storage_compatibility_refusal<T>(
+    result: Result<T>,
+    root: &Path,
+    db_instance_num: usize,
+    step: AdmissionStep,
+) -> Result<T> {
+    match result {
+        Err(Error::InvalidFormat { message, .. }) => {
+            let (cause, strict_rocks_open) = split_strict_rocks_open_cause(message);
+            let on_disk = observe_on_disk_descriptor(root);
+            let action = compatibility_action(step, &on_disk, db_instance_num, strict_rocks_open);
+            Err(InvalidFormatSnafu {
+                message: format_storage_compatibility_refusal(
+                    &current_storage_descriptor(),
+                    &on_disk.render(strict_rocks_open),
+                    action,
+                    &cause,
+                ),
+            }
+            .build())
+        }
+        other => other,
+    }
+}
+
+fn compatibility_action(
+    step: AdmissionStep,
+    on_disk: &OnDiskDescriptor,
+    db_instance_num: usize,
+    strict_rocks_open: bool,
+) -> &'static str {
+    match on_disk {
+        OnDiskDescriptor::RootManifestPresentUnreadable | OnDiskDescriptor::Unavailable => {
+            "keep the directory offline; inspect it and restore from a verified backup"
+        }
+        OnDiskDescriptor::LegacyWithoutRootManifest
+            if step == AdmissionStep::MigrationPrepare && strict_rocks_open =>
+        {
+            "preserve the directory; current Kiwi already attempted staged migration, so fix the registered-profile cause before retrying"
+        }
+        OnDiskDescriptor::LegacyWithoutRootManifest => {
+            "preserve the directory; use a source-compatible binary for logical export, then import into empty current-v2 storage"
+        }
+        OnDiskDescriptor::RootManifest { .. } if on_disk.is_future_version() => {
+            "preserve the directory and use a compatible Kiwi version or restore a compatible backup"
+        }
+        OnDiskDescriptor::RootManifest { .. }
+            if on_disk.has_runtime_topology_mismatch(db_instance_num) =>
+        {
+            "preserve the directory; use the matching db_instance_num or a supported offline migration"
+        }
+        OnDiskDescriptor::RootManifest { .. } if strict_rocks_open => {
+            "preserve the directory and use a compatible Kiwi version or restore a compatible backup"
+        }
+        OnDiskDescriptor::Empty if step == AdmissionStep::MigrationPrepare => {
+            "preserve the directory and retry with the current Kiwi after checking the cause"
+        }
+        _ => {
+            "preserve the directory and follow the cause with a compatible version, staged migration, or verified backup"
+        }
+    }
 }
 
 impl From<u8> for TaskType {
@@ -114,6 +196,7 @@ pub struct Storage {
     pub db_instance_num: usize,
     pub db_id: usize,
     pub scan_keynum_exit: AtomicBool,
+    db_path: Option<PathBuf>,
 }
 
 impl Drop for Storage {
@@ -140,6 +223,7 @@ impl Storage {
             bg_task: None,
             current_task_type: AtomicU8::new(TaskType::None.into()),
             scan_keynum_exit: AtomicBool::new(false),
+            db_path: None,
             ignore_tasks: AtomicBool::new(false),
             expiration_manager: None,
             expiration_cleanup_task: None,
@@ -151,6 +235,32 @@ impl Storage {
         self.insts
             .first()
             .map(|instance| Arc::clone(&instance.storage))
+    }
+
+    pub fn db_path(&self) -> Option<&Path> {
+        self.db_path.as_deref()
+    }
+
+    /// Compute checksum-verified logical digests using the already-open RocksDB
+    /// handles, so snapshot install can bind the exact pre-pause live state.
+    pub fn logical_snapshot_digests(&self) -> crate::error::Result<Vec<crate::ManifestDigest>> {
+        self.insts
+            .iter()
+            .enumerate()
+            .map(|(instance_id, instance)| {
+                let db =
+                    instance
+                        .db
+                        .as_ref()
+                        .ok_or_else(|| crate::error::Error::InvalidFormat {
+                            message: format!(
+                                "storage instance {instance_id} is closed during logical digest"
+                            ),
+                            location: snafu::location!(),
+                        })?;
+                crate::storage_migration::logical_open_db_digest(db.as_ref())
+            })
+            .collect()
     }
 
     /// Wait for shared top-level command access without blocking a runtime worker.
@@ -188,6 +298,7 @@ impl Storage {
         // owners remain valid and keep their RocksDB handles alive.
         self.scan_cursor_states.clear();
         self.insts.clear();
+        self.db_path = None;
     }
 
     pub fn open(
@@ -195,20 +306,114 @@ impl Storage {
         options: Arc<StorageOptions>,
         db_path: impl AsRef<Path>,
     ) -> Result<mpsc::Receiver<BgTask>> {
+        let db_path = db_path.as_ref();
+        wrap_storage_compatibility_refusal(
+            prepare_or_resume_migration(db_path, self.db_instance_num, &options),
+            db_path,
+            self.db_instance_num,
+            AdmissionStep::MigrationPrepare,
+        )?;
+        let mut root_load = wrap_storage_compatibility_refusal(
+            load_or_create_root_manifest(db_path, self.db_instance_num),
+            db_path,
+            self.db_instance_num,
+            AdmissionStep::RootManifestLoad,
+        )?;
+        wrap_storage_compatibility_refusal(
+            validate_existing_instance_manifests(
+                db_path,
+                &root_load.manifest,
+                root_load.created_this_call,
+            ),
+            db_path,
+            self.db_instance_num,
+            AdmissionStep::InstanceValidation,
+        )?;
+        let mut root_manifest = root_load.manifest;
+
         let (handler, receiver) = BgTaskHandler::new();
         let handler_arc = Arc::new(handler);
-        self.bg_task_handler = Some(Arc::clone(&handler_arc));
+        let mut opened_instances = wrap_storage_compatibility_refusal(
+            self.open_instances(
+                Arc::clone(&options),
+                db_path,
+                &root_manifest,
+                root_load.created_this_call,
+                &handler_arc,
+            ),
+            db_path,
+            self.db_instance_num,
+            AdmissionStep::StrictInstanceOpen,
+        )?;
 
-        // Initialize expiration manager
+        let requires_runtime_finalize = root_manifest.migration().is_some_and(|transaction| {
+            matches!(
+                transaction.phase,
+                MigrationPhase::ShadowPromoted | MigrationPhase::NewStorageOpened
+            )
+        });
+        if requires_runtime_finalize {
+            drop(opened_instances);
+            wrap_storage_compatibility_refusal(
+                finalize_migration_after_storage_open(db_path, self.db_instance_num, &options),
+                db_path,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
+            )?;
+            root_load = wrap_storage_compatibility_refusal(
+                load_or_create_root_manifest(db_path, self.db_instance_num),
+                db_path,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
+            )?;
+            wrap_storage_compatibility_refusal(
+                validate_existing_instance_manifests(
+                    db_path,
+                    &root_load.manifest,
+                    root_load.created_this_call,
+                ),
+                db_path,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
+            )?;
+            root_manifest = root_load.manifest;
+            opened_instances = wrap_storage_compatibility_refusal(
+                self.open_instances(
+                    Arc::clone(&options),
+                    db_path,
+                    &root_manifest,
+                    false,
+                    &handler_arc,
+                ),
+                db_path,
+                self.db_instance_num,
+                AdmissionStep::MigrationFinalize,
+            )?;
+        }
+
         let expiration_manager = Arc::new(ExpirationManager::new(Arc::clone(&handler_arc)));
         let cleanup_task = expiration_manager.start_cleanup_task();
+
+        self.scan_cursor_states.clear();
+        self.insts = opened_instances;
+        self.db_path = Some(db_path.to_path_buf());
+        self.bg_task_handler = Some(handler_arc);
         self.expiration_manager = Some(expiration_manager);
         self.expiration_cleanup_task = Some(cleanup_task);
+        self.is_opened.store(true, Ordering::SeqCst);
 
-        let db_path = db_path.as_ref();
-        let handler_for_redis = Arc::clone(&handler_arc);
-        self.scan_cursor_states.clear();
-        self.insts.clear();
+        Ok(receiver)
+    }
+
+    fn open_instances(
+        &self,
+        options: Arc<StorageOptions>,
+        db_path: &Path,
+        root_manifest: &RootStorageManifestV2,
+        allow_manifest_creation: bool,
+        handler_arc: &Arc<BgTaskHandler>,
+    ) -> Result<Vec<Arc<Redis>>> {
+        let mut opened_instances = Vec::with_capacity(self.db_instance_num);
         for i in 0..self.db_instance_num {
             let sub_path = db_path.join(i.to_string());
             let sub_path_str = match sub_path.to_str() {
@@ -223,21 +428,22 @@ impl Storage {
             let mut inst = Redis::new(
                 options.clone(),
                 i as i32,
-                Arc::clone(&handler_for_redis),
+                Arc::clone(handler_arc),
                 Arc::clone(&self.lock_mgr),
             );
-            if let Err(e) = inst.open(sub_path_str) {
+            if let Err(e) = inst.open_bound(
+                sub_path_str,
+                i as u32,
+                root_manifest,
+                allow_manifest_creation,
+            ) {
                 log::error!("open RocksDB{i} failed: {e:?}");
-                self.insts.clear();
-                self.is_opened.store(false, Ordering::SeqCst);
                 return Err(e);
             }
             log::info!("open RocksDB{i} success!");
-            self.insts.push(Arc::new(inst));
+            opened_instances.push(Arc::new(inst));
         }
-        self.is_opened.store(true, Ordering::SeqCst);
-
-        Ok(receiver)
+        Ok(opened_instances)
     }
 
     pub async fn shutdown(&mut self) {
@@ -503,23 +709,25 @@ impl Storage {
             inst.create_checkpoint(&sub)?;
         }
 
+        let db_path = self
+            .db_path()
+            .ok_or_else(|| crate::error::Error::InvalidFormat {
+                message: "cannot checkpoint Storage without an opened database path".to_string(),
+                location: snafu::location!(),
+            })?;
+        crate::RootStorageManifestV2::read_from_dir(db_path)?
+            .write_to_dir_atomically(checkpoint_root)?;
+
         meta.write_to_dir_atomically(checkpoint_root)
             .context(crate::error::IoSnafu)?;
         Ok(())
     }
 
-    /// Sample-decode vector set metas and member entries on every instance to
-    /// verify the codec can parse the data (used to validate restored
-    /// snapshot data before it serves traffic).
-    pub fn validate_vector_data_sample(
-        &self,
-        sample_size: usize,
-    ) -> Result<crate::VectorDataSample> {
-        let mut total = crate::VectorDataSample::default();
+    /// Validate the complete VectorSet meta/member closure on every instance.
+    pub fn validate_vector_consistency(&self) -> Result<crate::VectorConsistencyReport> {
+        let mut total = crate::VectorConsistencyReport::default();
         for inst in &self.insts {
-            let sample = inst.validate_vector_data_sample(sample_size)?;
-            total.metas += sample.metas;
-            total.members += sample.members;
+            total.merge(inst.validate_vector_consistency()?)?;
         }
         Ok(total)
     }
@@ -631,21 +839,12 @@ impl Storage {
         let mut batch = instance.create_rocks_batch()?;
 
         for entry in &binlog.entries {
-            let cf_idx = match entry.cf_idx {
-                0 => ColumnFamilyIndex::MetaCF,
-                1 => ColumnFamilyIndex::HashesDataCF,
-                2 => ColumnFamilyIndex::SetsDataCF,
-                3 => ColumnFamilyIndex::ListsDataCF,
-                4 => ColumnFamilyIndex::ZsetsDataCF,
-                5 => ColumnFamilyIndex::ZsetsScoreCF,
-                6 => ColumnFamilyIndex::VectorDataCF,
-                _ => {
-                    return Err(crate::error::Error::RedisErr {
-                        message: format!("Invalid column family index: {}", entry.cf_idx),
-                        location: snafu::location!(),
-                    });
+            let cf_idx = ColumnFamilyIndex::try_from(entry.cf_idx).map_err(|()| {
+                crate::error::Error::RedisErr {
+                    message: format!("Invalid column family index: {}", entry.cf_idx),
+                    location: snafu::location!(),
                 }
-            };
+            })?;
 
             match entry.op_type {
                 OperateType::Put => {
@@ -772,7 +971,11 @@ mod append_log_fn_tests {
     use super::*;
     use crate::batch::AppendLogFn;
     use crate::format_base_key::BaseMetaKey;
+    use crate::format_lists_data_key::ListsDataKey;
+    use crate::format_member_data_key::MemberDataKey;
     use crate::format_strings_value::StringValue;
+    use crate::format_vector_member_key::VectorMemberDataKey;
+    use crate::format_zset_score_key::ZSetsScoreKey;
     use crate::slot_indexer::key_to_slot_id;
     use conf::raft_type::{Binlog, BinlogEntry, BinlogResponse, OperateType};
     use std::sync::Arc;
@@ -795,7 +998,7 @@ mod append_log_fn_tests {
             db_id,
             slot_idx: key_to_slot_id(key) as u32,
             entries: vec![BinlogEntry {
-                cf_idx: ColumnFamilyIndex::MetaCF as u32,
+                cf_idx: ColumnFamilyIndex::MetaCF.stable_id(),
                 op_type: OperateType::Put,
                 key: BaseMetaKey::new(key)
                     .encode()
@@ -803,6 +1006,68 @@ mod append_log_fn_tests {
                     .to_vec(),
                 value: Some(StringValue::new(value.to_vec()).encode().to_vec()),
             }],
+        }
+    }
+
+    fn canonical_cf_mapping_binlog(key: &[u8]) -> Binlog {
+        let put = |cf_idx: ColumnFamilyIndex, key: Vec<u8>| BinlogEntry {
+            cf_idx: cf_idx.stable_id(),
+            op_type: OperateType::Put,
+            key,
+            value: Some(b"value".to_vec()),
+        };
+        Binlog {
+            db_id: 0,
+            slot_idx: key_to_slot_id(key) as u32,
+            entries: vec![
+                put(
+                    ColumnFamilyIndex::MetaCF,
+                    BaseMetaKey::new(key).encode().unwrap().to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::HashesDataCF,
+                    MemberDataKey::new(key, 1, b"hash")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::SetsDataCF,
+                    MemberDataKey::new(key, 1, b"set")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::ListsDataCF,
+                    ListsDataKey::new(key, 1, 1).encode().unwrap().clone(),
+                ),
+                put(
+                    ColumnFamilyIndex::ZsetsDataCF,
+                    MemberDataKey::new(key, 1, b"zset")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::ZsetsScoreCF,
+                    ZSetsScoreKey::new(key, 1, 1.0, b"member")
+                        .encode()
+                        .unwrap()
+                        .to_vec(),
+                ),
+                put(
+                    ColumnFamilyIndex::VectorDataCF,
+                    VectorMemberDataKey {
+                        key,
+                        storage_incarnation: 1,
+                        generation_sequence: 1,
+                        element: b"vector",
+                    }
+                    .encode_full()
+                    .unwrap(),
+                ),
+            ],
         }
     }
 
@@ -879,6 +1144,10 @@ mod append_log_fn_tests {
             storage.on_binlog_write(&malformed_key, 8).is_err(),
             "column-family key layout must be validated"
         );
+
+        storage
+            .on_binlog_write(&canonical_cf_mapping_binlog(b"all-cfs"), 9)
+            .expect("Raft apply must accept every canonical registry wire ID");
 
         storage.shutdown().await;
         storage.close();

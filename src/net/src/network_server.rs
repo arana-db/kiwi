@@ -24,6 +24,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use client::Client;
 use cmd::table::CmdTable;
+use cmd::vector::admission::VectorAdmissionLimits;
 use executor::CmdExecutor;
 use log::{info, warn};
 use tokio::net::TcpListener;
@@ -220,6 +221,8 @@ pub struct NetworkServer {
     cmd_table: Arc<CmdTable>,
     /// Command executor for processing commands
     executor: Arc<CmdExecutor>,
+    /// Resource limits applied before vector payloads are copied for dispatch.
+    vector_admission_limits: VectorAdmissionLimits,
     /// Connection pool for managing network resources
     connection_pool: Arc<ConnectionPool<NetworkResources>>,
     /// Authentication password; when set, clients must AUTH before running commands
@@ -241,6 +244,7 @@ impl NetworkServer {
         storage_client: Arc<StorageClient>,
         cmd_table: Arc<CmdTable>,
         executor: Arc<CmdExecutor>,
+        vector_admission_limits: VectorAdmissionLimits,
         requirepass: Option<String>,
         leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
     ) -> Result<Self, Box<dyn Error>> {
@@ -251,6 +255,7 @@ impl NetworkServer {
             storage_client: storage_client.clone(),
             cmd_table: cmd_table.clone(),
             executor: executor.clone(),
+            vector_admission_limits,
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             requirepass,
             leader_gate,
@@ -267,6 +272,7 @@ impl NetworkServer {
         cmd_table: Arc<CmdTable>,
         executor: Arc<CmdExecutor>,
         pool_config: PoolConfig,
+        vector_admission_limits: VectorAdmissionLimits,
         requirepass: Option<String>,
         leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
     ) -> Result<Self, Box<dyn Error>> {
@@ -275,6 +281,7 @@ impl NetworkServer {
             storage_client: storage_client.clone(),
             cmd_table: cmd_table.clone(),
             executor: executor.clone(),
+            vector_admission_limits,
             connection_pool: Arc::new(ConnectionPool::new(pool_config)),
             requirepass,
             leader_gate,
@@ -494,6 +501,7 @@ impl NetworkServer {
                     let storage_client = self.storage_client.clone();
                     let cmd_table = self.cmd_table.clone();
                     let executor = self.executor.clone();
+                    let vector_admission_limits = self.vector_admission_limits;
                     let requirepass = self.requirepass.clone();
                     let leader_gate = self.leader_gate.clone();
                     let connection_shutdown = lifecycle_shutdown.child_token();
@@ -539,6 +547,7 @@ impl NetworkServer {
                             pooled_resources.inner().storage_client.clone(),
                             pooled_resources.inner().cmd_table.clone(),
                             pooled_resources.inner().executor.clone(),
+                            vector_admission_limits,
                             leader_gate,
                             connection_shutdown,
                         )
@@ -595,6 +604,11 @@ impl ServerTrait for NetworkServer {
     async fn run(&self) -> Result<(), Box<dyn Error>> {
         self.run_until_cancelled(CancellationToken::new()).await
     }
+
+    #[cfg(test)]
+    fn vector_admission_limits(&self) -> Option<VectorAdmissionLimits> {
+        Some(self.vector_admission_limits)
+    }
 }
 
 #[allow(clippy::unwrap_used)]
@@ -606,6 +620,14 @@ mod tests {
     use runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
     use std::sync::Arc;
     use std::time::Duration;
+
+    fn test_vector_admission_limits() -> VectorAdmissionLimits {
+        VectorAdmissionLimits {
+            max_dimension: 4096,
+            max_element_bytes: 1_048_576,
+            max_vector_bytes: 16_777_216,
+        }
+    }
 
     #[tokio::test]
     async fn test_network_server_creation() {
@@ -623,6 +645,7 @@ mod tests {
             storage_client,
             cmd_table,
             executor,
+            test_vector_admission_limits(),
             None,
             None,
         );
@@ -657,6 +680,7 @@ mod tests {
             cmd_table,
             executor,
             pool_config,
+            test_vector_admission_limits(),
             None,
             None,
         );
@@ -679,7 +703,15 @@ mod tests {
         let cmd_table = Arc::new(create_command_table(Arc::new(|| None)));
         let executor = Arc::new(CmdExecutorBuilder::new().build());
 
-        let server = NetworkServer::new(None, storage_client, cmd_table, executor, None, None);
+        let server = NetworkServer::new(
+            None,
+            storage_client,
+            cmd_table,
+            executor,
+            test_vector_admission_limits(),
+            None,
+            None,
+        );
 
         assert!(server.is_ok());
         let server = server.unwrap();
@@ -701,6 +733,7 @@ mod tests {
             storage_client,
             cmd_table,
             executor,
+            test_vector_admission_limits(),
             None,
             None,
         )

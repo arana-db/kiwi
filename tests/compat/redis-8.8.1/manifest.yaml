@@ -83,13 +83,20 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418
         reason: "Kiwi lacks omitted/default Q8, explicit Q8, BIN, REDUCE, CAS, EF, SETATTR, and M parameters supported by Redis 8.8.1"
         remove_when: Kiwi implements omitted/default Q8, explicit Q8, BIN, REDUCE, CAS, EF, SETATTR, and M with trusted wire evidence
         introduced: 2026-08-05
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Operational-limit difference: Kiwi applies max_dimension, max_vector_bytes, VALUES raw token byte, and max_element_bytes admission before Redis command and storage semantics"
+        remove_when: Redis-compatible admission boundary is defined and raw RESP2/RESP3 differential covers below, at, and above the boundary while pre-storage safety remains enforced
+        introduced: 2026-08-11
         affected: standalone_cache_off; resp2/resp3
         last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
     owner: cmd-vector
@@ -103,7 +110,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences: []
     owner: cmd-vector
   - command: VDIM
@@ -116,7 +123,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences: []
     owner: cmd-vector
   - command: VEMB
@@ -129,7 +136,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418
@@ -145,6 +152,13 @@ commands:
         introduced: 2026-08-05
         affected: standalone_cache_off; resp2/resp3
         last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Operational-limit difference: Kiwi applies max_element_bytes admission before Redis VEMB command and storage semantics"
+        remove_when: Redis-compatible admission boundary is defined and raw RESP2/RESP3 differential covers below, at, and above the boundary while pre-storage safety remains enforced
+        introduced: 2026-08-11
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
     owner: cmd-vector
   - command: VINFO
     classification: known_difference
@@ -156,41 +170,55 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418
-        reason: "VINFO field values differ: Redis 8.8.1 reports real HNSW internals (hnsw-m, max-level, vset-uid) while Kiwi Phase 1 reports FLAT sentinels with different semantics; only field-name set and value types match"
+        reason: "VINFO HNSW/FLAT payloads differ for hnsw-m, max-level, vset-uid, and hnsw-max-node-uid: Redis 8.8.1 reports real HNSW internals while Kiwi Phase 1 reports FLAT sentinels; field token encoding, order, container, pair count, and value frame types match exactly"
         remove_when: Kiwi VINFO reports HNSW-equivalent field values and values match on wire differential
         introduced: 2026-08-04
         affected: standalone_cache_off; resp2/resp3
         last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
     owner: cmd-vector
   - command: VISMEMBER
-    classification: required
+    classification: known_difference
     modes:
-      standalone_cache_off: required
+      standalone_cache_off: known_difference
       raft_single_group_cache_off: deferred
     protocols: [resp2, resp3]
     arguments: exact
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
-    known_differences: []
+    tests: [wire-differential, final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Operational-limit difference: Kiwi applies max_element_bytes admission before Redis VISMEMBER command and storage semantics"
+        remove_when: Redis-compatible admission boundary is defined and raw RESP2/RESP3 differential covers below, at, and above the boundary while pre-storage safety remains enforced
+        introduced: 2026-08-11
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
     owner: cmd-vector
   - command: VREM
-    classification: required
+    classification: known_difference
     modes:
-      standalone_cache_off: required
+      standalone_cache_off: known_difference
       raft_single_group_cache_off: deferred
     protocols: [resp2, resp3]
     arguments: exact
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
-    known_differences: []
+    tests: [wire-differential, final-state]
+    known_differences:
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Operational-limit difference: Kiwi applies max_element_bytes admission before Redis VREM command and storage semantics"
+        remove_when: Redis-compatible admission boundary is defined and raw RESP2/RESP3 differential covers below, at, and above the boundary while pre-storage safety remains enforced
+        introduced: 2026-08-11
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
     owner: cmd-vector
   - command: VSIM
     classification: known_difference
@@ -202,7 +230,7 @@ commands:
     reply_schema: exact
     errors: exact-prefix
     ttl_semantics: applicable
-    tests: [final-state]
+    tests: [wire-differential, final-state]
     known_differences:
       - owner: cmd-vector
         issue: https://github.com/arana-db/kiwi/issues/418
@@ -216,6 +244,13 @@ commands:
         reason: "Kiwi does not support Redis 8.8.1 VSIM WITHATTRIBS, EPSILON, EF, FILTER, FILTER-EF, or NOTHREAD"
         remove_when: Kiwi implements VSIM WITHATTRIBS, EPSILON, EF, FILTER, FILTER-EF, and NOTHREAD with trusted wire evidence
         introduced: 2026-08-05
+        affected: standalone_cache_off; resp2/resp3
+        last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+      - owner: cmd-vector
+        issue: https://github.com/arana-db/kiwi/issues/418
+        reason: "Operational-limit difference: Kiwi applies max_dimension, max_vector_bytes, and max_element_bytes admission before Redis VSIM command and storage semantics"
+        remove_when: Redis-compatible admission boundary is defined and raw RESP2/RESP3 differential covers below, at, and above the boundary while pre-storage safety remains enforced
+        introduced: 2026-08-11
         affected: standalone_cache_off; resp2/resp3
         last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
     owner: cmd-vector

@@ -188,22 +188,10 @@ impl<'a> RocksBatch<'a> {
     }
 }
 
-/// Convert ColumnFamilyIndex to its corresponding array index.
-///
-/// This function uses an explicit match to ensure compile-time safety.
-/// When a new ColumnFamilyIndex variant is added, the compiler will
-/// require this match to be updated.
+/// Convert the canonical wire identifier to the corresponding handle index.
 #[inline]
 fn cf_index_to_usize(cf_idx: ColumnFamilyIndex) -> usize {
-    match cf_idx {
-        ColumnFamilyIndex::MetaCF => 0,
-        ColumnFamilyIndex::HashesDataCF => 1,
-        ColumnFamilyIndex::SetsDataCF => 2,
-        ColumnFamilyIndex::ListsDataCF => 3,
-        ColumnFamilyIndex::ZsetsDataCF => 4,
-        ColumnFamilyIndex::ZsetsScoreCF => 5,
-        ColumnFamilyIndex::VectorDataCF => 6,
-    }
+    cf_idx.stable_id() as usize
 }
 
 /// Get the column family handle from the handles vector.
@@ -293,6 +281,39 @@ pub struct BinlogBatch {
     entries: Vec<BinlogEntry>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PhysicalKeyLayout {
+    VectorMember,
+    Delimited {
+        tail_length: usize,
+        exact_tail: bool,
+    },
+}
+
+fn physical_key_layout(cf_idx: ColumnFamilyIndex) -> PhysicalKeyLayout {
+    match cf_idx {
+        ColumnFamilyIndex::MetaCF => PhysicalKeyLayout::Delimited {
+            tail_length: SUFFIX_RESERVE_LENGTH,
+            exact_tail: true,
+        },
+        ColumnFamilyIndex::HashesDataCF
+        | ColumnFamilyIndex::SetsDataCF
+        | ColumnFamilyIndex::ZsetsDataCF => PhysicalKeyLayout::Delimited {
+            tail_length: VERSION_LENGTH + SUFFIX_RESERVE_LENGTH,
+            exact_tail: false,
+        },
+        ColumnFamilyIndex::ListsDataCF => PhysicalKeyLayout::Delimited {
+            tail_length: 2 * VERSION_LENGTH + SUFFIX_RESERVE_LENGTH,
+            exact_tail: true,
+        },
+        ColumnFamilyIndex::ZsetsScoreCF => PhysicalKeyLayout::Delimited {
+            tail_length: 2 * VERSION_LENGTH + SUFFIX_RESERVE_LENGTH,
+            exact_tail: false,
+        },
+        ColumnFamilyIndex::VectorDataCF => PhysicalKeyLayout::VectorMember,
+    }
+}
+
 impl BinlogBatch {
     /// Create a new BinlogBatch.
     ///
@@ -306,38 +327,28 @@ impl BinlogBatch {
     }
 
     pub(crate) fn infer_user_key(cf_idx: u32, encoded_key: &[u8]) -> Result<Vec<u8>> {
-        if cf_idx == ColumnFamilyIndex::VectorDataCF as u32 {
-            let parsed = ParsedVectorMemberDataKey::decode(encoded_key)?;
-            return Ok(parsed.key().to_vec());
-        }
-
-        let tail_length = match cf_idx {
-            value if value == ColumnFamilyIndex::MetaCF as u32 => SUFFIX_RESERVE_LENGTH,
-            value
-                if value == ColumnFamilyIndex::HashesDataCF as u32
-                    || value == ColumnFamilyIndex::SetsDataCF as u32
-                    || value == ColumnFamilyIndex::ZsetsDataCF as u32 =>
-            {
-                VERSION_LENGTH + SUFFIX_RESERVE_LENGTH
+        let wire_cf_idx = cf_idx;
+        let cf_idx = ColumnFamilyIndex::try_from(wire_cf_idx).map_err(|()| {
+            InvalidFormatSnafu {
+                message: format!("Invalid column family index: {wire_cf_idx}"),
             }
-            value if value == ColumnFamilyIndex::ListsDataCF as u32 => {
-                2 * VERSION_LENGTH + SUFFIX_RESERVE_LENGTH
+            .build()
+        })?;
+        let (tail_length, exact_tail) = match physical_key_layout(cf_idx) {
+            PhysicalKeyLayout::VectorMember => {
+                let parsed = ParsedVectorMemberDataKey::decode(encoded_key)?;
+                return Ok(parsed.key().to_vec());
             }
-            value if value == ColumnFamilyIndex::ZsetsScoreCF as u32 => {
-                2 * VERSION_LENGTH + SUFFIX_RESERVE_LENGTH
-            }
-            _ => {
-                return InvalidFormatSnafu {
-                    message: format!("Invalid column family index: {cf_idx}"),
-                }
-                .fail();
-            }
+            PhysicalKeyLayout::Delimited {
+                tail_length,
+                exact_tail,
+            } => (tail_length, exact_tail),
         };
 
         if encoded_key.len() < PREFIX_RESERVE_LENGTH + 2 + tail_length {
             return InvalidFormatSnafu {
                 message: format!(
-                    "Encoded key is too short for column family {cf_idx}: len={}",
+                    "Encoded key is too short for column family {wire_cf_idx}: len={}",
                     encoded_key.len()
                 ),
             }
@@ -355,15 +366,15 @@ impl BinlogBatch {
         }
 
         let remaining = key_part.len() - key_part_end;
-        let has_valid_tail = match cf_idx {
-            value if value == ColumnFamilyIndex::MetaCF as u32 => remaining == tail_length,
-            value if value == ColumnFamilyIndex::ListsDataCF as u32 => remaining == tail_length,
-            _ => remaining >= tail_length,
+        let has_valid_tail = if exact_tail {
+            remaining == tail_length
+        } else {
+            remaining >= tail_length
         };
         if !has_valid_tail {
             return InvalidFormatSnafu {
                 message: format!(
-                    "Encoded key has invalid physical layout for column family {cf_idx}: trailing bytes={remaining}"
+                    "Encoded key has invalid physical layout for column family {wire_cf_idx}: trailing bytes={remaining}"
                 ),
             }
             .fail();
@@ -452,7 +463,7 @@ impl BinlogBatch {
 impl Batch for BinlogBatch {
     fn put(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8], value: &[u8]) -> Result<()> {
         self.entries.push(BinlogEntry {
-            cf_idx: cf_idx as u32,
+            cf_idx: cf_idx.stable_id(),
             op_type: OperateType::Put,
             key: key.to_vec(),
             value: Some(value.to_vec()),
@@ -462,7 +473,7 @@ impl Batch for BinlogBatch {
 
     fn delete(&mut self, cf_idx: ColumnFamilyIndex, key: &[u8]) -> Result<()> {
         self.entries.push(BinlogEntry {
-            cf_idx: cf_idx as u32,
+            cf_idx: cf_idx.stable_id(),
             op_type: OperateType::Delete,
             key: key.to_vec(),
             value: None,
@@ -561,11 +572,48 @@ mod tests {
         let binlog = take_captured_binlog(&captured);
         assert_eq!(binlog.slot_idx, key_to_slot_id(user_key) as u32);
         assert_eq!(binlog.entries.len(), 2);
-        assert_eq!(binlog.entries[0].cf_idx, ColumnFamilyIndex::MetaCF as u32);
+        assert_eq!(
+            binlog.entries[0].cf_idx,
+            ColumnFamilyIndex::MetaCF.stable_id()
+        );
         assert_eq!(binlog.entries[0].op_type, OperateType::Put);
         assert_eq!(binlog.entries[0].value, Some(b"v1".to_vec()));
         assert_eq!(binlog.entries[1].op_type, OperateType::Delete);
         assert_eq!(binlog.entries[1].value, None);
+    }
+
+    #[test]
+    fn column_family_handle_and_binlog_wire_indices_use_registry_stable_ids() {
+        for cf_idx in ColumnFamilyIndex::ALL {
+            assert_eq!(
+                cf_index_to_usize(cf_idx),
+                usize::try_from(cf_idx.stable_id())
+                    .expect("registered stable CF ID should fit usize")
+            );
+            assert_eq!(
+                ColumnFamilyIndex::try_from(cf_idx.stable_id())
+                    .expect("registered stable CF ID should round-trip"),
+                cf_idx
+            );
+        }
+
+        let append_log_fn: AppendLogFn = Arc::new(|_| Ok(BinlogResponse::ok()));
+        let mut batch = BinlogBatch::new(append_log_fn);
+        batch
+            .put(ColumnFamilyIndex::VectorDataCF, b"physical-key", b"value")
+            .expect("registry wire-ID test should put Vector data");
+        batch
+            .delete(ColumnFamilyIndex::ZsetsScoreCF, b"physical-key")
+            .expect("registry wire-ID test should delete ZSet score data");
+        assert_eq!(
+            batch.entries[0].cf_idx,
+            ColumnFamilyIndex::VectorDataCF.stable_id()
+        );
+        assert_eq!(
+            batch.entries[1].cf_idx,
+            ColumnFamilyIndex::ZsetsScoreCF.stable_id()
+        );
+        assert!(BinlogBatch::infer_user_key(99, b"physical-key").is_err());
     }
 
     #[test]

@@ -28,6 +28,7 @@ use bytes::Bytes;
 use client::Client;
 use cmd::CmdFlags;
 use cmd::table::CmdTable;
+use cmd::vector::admission::VectorAdmissionLimits;
 use executor::CmdExecutor;
 use log::{debug, error, warn};
 use resp::encode::RespEncoder;
@@ -88,6 +89,7 @@ pub async fn process_network_connection(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    vector_admission_limits: VectorAdmissionLimits,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
 ) -> std::io::Result<()> {
     process_network_connection_until_cancelled(
@@ -95,6 +97,7 @@ pub async fn process_network_connection(
         storage_client,
         cmd_table,
         executor,
+        vector_admission_limits,
         leader_gate,
         CancellationToken::new(),
     )
@@ -109,6 +112,7 @@ pub async fn process_network_connection_until_cancelled(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    vector_admission_limits: VectorAdmissionLimits,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
     shutdown: CancellationToken,
 ) -> std::io::Result<()> {
@@ -139,6 +143,7 @@ pub async fn process_network_connection_until_cancelled(
                                     storage_client.clone(),
                                     cmd_table.clone(),
                                     executor.clone(),
+                                    vector_admission_limits,
                                     leader_gate.clone(),
                                     &shutdown,
                                 ).await;
@@ -171,6 +176,7 @@ pub async fn process_network_connection_until_cancelled(
                                                 storage_client.clone(),
                                                 cmd_table.clone(),
                                                 executor.clone(),
+                                                vector_admission_limits,
                                                 leader_gate.clone(),
                                                 &shutdown,
                                             ).await;
@@ -204,6 +210,7 @@ pub async fn process_network_connection_until_cancelled(
                                 storage_client.clone(),
                                 cmd_table.clone(),
                                 executor.clone(),
+                                vector_admission_limits,
                                 leader_gate.clone(),
                                 &shutdown,
                             ).await;
@@ -275,33 +282,26 @@ async fn handle_network_command(
 /// Represents a parsed command ready for execution
 #[derive(Debug, Clone)]
 struct ParsedCommand {
-    cmd_name: Vec<u8>,
-    argv: Vec<Vec<u8>>,
+    cmd_name: Bytes,
+    argv: Vec<Bytes>,
 }
 
 /// Extract command from RESP data
 fn extract_command_from_data(data: RespData) -> Option<ParsedCommand> {
     match data {
         RespData::Array(Some(params)) if !params.is_empty() => {
-            if let RespData::BulkString(Some(cmd_name)) = &params[0] {
-                let argv = params
-                    .iter()
-                    .map(|p| {
-                        if let RespData::BulkString(Some(d)) = p {
-                            d.to_vec()
-                        } else {
-                            vec![]
-                        }
-                    })
-                    .collect::<Vec<Vec<u8>>>();
+            let mut params = params.into_iter();
+            let RespData::BulkString(Some(cmd_name)) = params.next()? else {
+                return None;
+            };
+            let mut argv = Vec::with_capacity(params.len() + 1);
+            argv.push(cmd_name.clone());
+            argv.extend(params.map(|param| match param {
+                RespData::BulkString(Some(argument)) => argument,
+                _ => Bytes::new(),
+            }));
 
-                Some(ParsedCommand {
-                    cmd_name: cmd_name.to_vec(),
-                    argv,
-                })
-            } else {
-                None
-            }
+            Some(ParsedCommand { cmd_name, argv })
         }
         _ => None,
     }
@@ -426,6 +426,7 @@ async fn process_command_batch(
     storage_client: Arc<StorageClient>,
     cmd_table: Arc<CmdTable>,
     executor: Arc<CmdExecutor>,
+    vector_admission_limits: VectorAdmissionLimits,
     leader_gate: Option<std::sync::Arc<dyn raft::leader_gate::LeaderGate>>,
     shutdown: &CancellationToken,
 ) -> bool {
@@ -435,24 +436,36 @@ async fn process_command_batch(
     // For now, process commands sequentially to maintain order
     // TODO: Implement parallel processing for read-only commands
     for command in commands {
-        // Set up client state for this command
-        client.set_cmd_name(&command.cmd_name);
-        client.set_argv(&command.argv);
+        let cmd_name = String::from_utf8_lossy(command.cmd_name.as_ref()).to_lowercase();
+        let mut admitted = false;
 
-        // Auth check: deny non-NO_AUTH commands when not authenticated
-        let mut auth_rejected = false;
-        if !client.is_authenticated() {
-            let cmd_name_str = String::from_utf8_lossy(&command.cmd_name).to_lowercase();
-            if let Some(cmd) = cmd_table.get(&cmd_name_str)
-                && !cmd.has_flag(CmdFlags::NO_AUTH)
-            {
+        if let Some(cmd) = cmd_table.get(&cmd_name) {
+            if !client.is_authenticated() && !cmd.has_flag(CmdFlags::NO_AUTH) {
                 client.set_reply(RespData::Error("NOAUTH Authentication required.".into()));
-                auth_rejected = true;
+            } else if !cmd.check_arg(command.argv.len()) {
+                client.set_reply(cmd.wrong_arity_reply(cmd_name.as_bytes()));
+            } else if let Err(reply) =
+                cmd.admit_network_request(&command.argv, vector_admission_limits)
+            {
+                client.set_reply(reply);
+            } else {
+                admitted = true;
             }
+        } else {
+            warn!("Unknown command: {}", cmd_name);
+            client.set_reply(RespData::Error(
+                format!("ERR unknown command `{}`", cmd_name).into(),
+            ));
         }
 
-        // Handle the command
-        if !auth_rejected {
+        if admitted {
+            let argv = command
+                .argv
+                .iter()
+                .map(|argument| argument.to_vec())
+                .collect::<Vec<Vec<u8>>>();
+            client.set_cmd_name(command.cmd_name.as_ref());
+            client.set_argv(&argv);
             handle_network_command(
                 client.clone(),
                 storage_client.clone(),
@@ -594,10 +607,11 @@ mod tests {
     use async_trait::async_trait;
     use client::StreamTrait;
     use cmd::table::create_command_table;
+    use cmd::{Cmd, CmdMeta};
     use executor::CmdExecutorBuilder;
     use runtime::{MessageChannel, StorageClient as RuntimeStorageClient};
     use std::future::pending;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
     use tokio::sync::Semaphore;
 
@@ -643,6 +657,172 @@ mod tests {
         (storage_client, cmd_table, executor)
     }
 
+    struct RecordingWriteStream {
+        writes: Arc<Mutex<Vec<u8>>>,
+    }
+
+    #[async_trait]
+    impl StreamTrait for RecordingWriteStream {
+        async fn read(&mut self, _buf: &mut [u8]) -> Result<usize, std::io::Error> {
+            pending::<Result<usize, std::io::Error>>().await
+        }
+
+        async fn write(&mut self, data: &[u8]) -> Result<usize, std::io::Error> {
+            self.writes.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+    }
+
+    #[derive(Clone)]
+    struct RejectingAdmissionCmd {
+        meta: CmdMeta,
+        client: Arc<Client>,
+        expected_payload_pointer: usize,
+    }
+
+    impl Cmd for RejectingAdmissionCmd {
+        fn meta(&self) -> &CmdMeta {
+            &self.meta
+        }
+
+        fn admit_network_request(
+            &self,
+            argv: &[Bytes],
+            _limits: VectorAdmissionLimits,
+        ) -> Result<(), RespData> {
+            assert_eq!(
+                self.client.argv(),
+                vec![b"sentinel-before-admission".to_vec()],
+                "Client argv was replaced before network admission"
+            );
+            assert_eq!(
+                argv[1].as_ptr() as usize,
+                self.expected_payload_pointer,
+                "network admission did not receive the original RESP Bytes allocation"
+            );
+            Err(RespData::Error(
+                "ERR injected network admission rejection".into(),
+            ))
+        }
+
+        fn do_initial(&self, _client: &Client) -> bool {
+            panic!("rejected command must not reach do_initial")
+        }
+
+        fn do_cmd(&self, _client: &Client, _storage: Arc<storage::storage::Storage>) {
+            panic!("rejected command must not reach storage")
+        }
+
+        fn clone_box(&self) -> Box<dyn Cmd> {
+            Box::new(self.clone())
+        }
+    }
+
+    fn test_vector_admission_limits() -> VectorAdmissionLimits {
+        VectorAdmissionLimits {
+            max_dimension: 4096,
+            max_element_bytes: 1_048_576,
+            max_vector_bytes: 16_777_216,
+        }
+    }
+
+    #[test]
+    fn parsed_command_keeps_bulk_bytes_until_admission() {
+        fn assert_bytes(_: &Bytes) {}
+
+        let payload = Bytes::from(vec![b'x'; 32]);
+        let payload_pointer = payload.as_ptr();
+
+        let command = extract_command_from_data(RespData::Array(Some(vec![
+            RespData::BulkString(Some(Bytes::from_static(b"VADD"))),
+            RespData::BulkString(Some(Bytes::from_static(b"vectors"))),
+            RespData::BulkString(Some(payload)),
+        ])))
+        .expect("bulk-string command should parse");
+
+        assert_bytes(&command.cmd_name);
+        for argument in &command.argv {
+            assert_bytes(argument);
+        }
+        assert_eq!(command.cmd_name, Bytes::from_static(b"VADD"));
+        assert_eq!(command.argv[1], Bytes::from_static(b"vectors"));
+        assert_eq!(
+            command.argv[2].as_ptr(),
+            payload_pointer,
+            "parsed bulk payload must retain the RESP Bytes backing allocation"
+        );
+    }
+
+    #[test]
+    fn non_bulk_arguments_preserve_existing_empty_argument_semantics() {
+        fn assert_bytes(_: &Bytes) {}
+
+        let command = extract_command_from_data(RespData::Array(Some(vec![
+            RespData::BulkString(Some(Bytes::from_static(b"PING"))),
+            RespData::Integer(1),
+            RespData::BulkString(None),
+        ])))
+        .expect("bulk-string command name should parse");
+
+        assert_eq!(command.argv.len(), 3);
+        assert_bytes(&command.argv[1]);
+        assert_bytes(&command.argv[2]);
+        assert!(command.argv[1].is_empty());
+        assert!(command.argv[2].is_empty());
+    }
+
+    #[tokio::test]
+    async fn parsed_command_admission_precedes_client_payload_copy() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let client = Arc::new(Client::new(Box::new(RecordingWriteStream {
+            writes: writes.clone(),
+        })));
+        client.set_argv(&[b"sentinel-before-admission".to_vec()]);
+
+        let payload = Bytes::from(vec![b'x'; 32]);
+        let expected_payload_pointer = payload.as_ptr() as usize;
+        let command = ParsedCommand {
+            cmd_name: Bytes::from_static(b"VPROBE"),
+            argv: vec![Bytes::from_static(b"VPROBE"), payload],
+        };
+        let rejecting_cmd = RejectingAdmissionCmd {
+            meta: CmdMeta {
+                name: "vprobe".to_string(),
+                arity: 2,
+                flags: CmdFlags::NO_AUTH,
+                ..Default::default()
+            },
+            client: client.clone(),
+            expected_payload_pointer,
+        };
+        let mut cmd_table = CmdTable::new();
+        cmd_table.insert("vprobe".to_string(), Arc::new(rejecting_cmd));
+        let (storage_client, _, executor) = create_test_components();
+
+        let response_writes_cancelled = process_command_batch(
+            &[command],
+            client.clone(),
+            storage_client,
+            Arc::new(cmd_table),
+            executor,
+            test_vector_admission_limits(),
+            None,
+            &CancellationToken::new(),
+        )
+        .await;
+
+        assert!(!response_writes_cancelled);
+        assert_eq!(
+            client.argv(),
+            vec![b"sentinel-before-admission".to_vec()],
+            "rejected request must not cross the Bytes-to-Vec copy boundary"
+        );
+        assert_eq!(
+            writes.lock().unwrap().as_slice(),
+            b"-ERR injected network admission rejection\r\n"
+        );
+    }
+
     #[tokio::test]
     async fn test_handle_network_command_unknown() {
         let (storage_client, _cmd_table, _executor) = create_test_components();
@@ -670,6 +850,7 @@ mod tests {
             storage_client,
             cmd_table,
             executor,
+            test_vector_admission_limits(),
             None,
             shutdown.clone(),
         ));
@@ -711,6 +892,7 @@ mod tests {
             storage_client,
             cmd_table,
             executor,
+            test_vector_admission_limits(),
             None,
             shutdown.clone(),
         ));

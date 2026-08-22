@@ -17,13 +17,15 @@
 
 use std::sync::Arc;
 
+use bytes::Bytes;
 use client::Client;
 use resp::RespData;
 use storage::storage::Storage;
 
 use crate::{AclCategory, Cmd, CmdFlags, CmdMeta, impl_cmd_clone_box, impl_cmd_meta};
 
-use super::{MissingError, storage_error_reply};
+use super::admission::{VectorAdmissionLimits, admit_vector_request};
+use super::{MissingError, error_reply, storage_error_reply};
 
 crate::define_vector_command!(
     VIsMemberCmd,
@@ -36,6 +38,14 @@ crate::define_vector_command!(
 impl Cmd for VIsMemberCmd {
     impl_cmd_meta!();
     impl_cmd_clone_box!();
+
+    fn admit_network_request(
+        &self,
+        argv: &[Bytes],
+        limits: VectorAdmissionLimits,
+    ) -> Result<(), RespData> {
+        admit_vector_request(argv, limits).map_err(|error| error_reply(error.as_str()))
+    }
 
     fn do_initial(&self, client: &Client) -> bool {
         super::set_command_key(client)
