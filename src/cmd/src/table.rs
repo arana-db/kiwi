@@ -23,6 +23,7 @@ use resp::RespData;
 use storage::storage::Storage;
 
 use crate::auth::RequirepassProvider;
+use crate::server_info::{NoopServerInfoProvider, ServerInfoProviderRef};
 use crate::{Cmd, CmdMeta};
 
 pub type CmdTable = HashMap<String, Arc<dyn Cmd>>;
@@ -201,11 +202,16 @@ macro_rules! register_group_cmd {
 }
 
 pub fn create_command_table(requirepass_provider: RequirepassProvider) -> CmdTable {
-    create_command_table_with_gates(requirepass_provider, CommandTableGates::default())
+    create_command_table_with_gates(
+        requirepass_provider,
+        Arc::new(NoopServerInfoProvider),
+        CommandTableGates::default(),
+    )
 }
 
 pub fn create_command_table_with_gates(
     requirepass_provider: RequirepassProvider,
+    info_provider: ServerInfoProviderRef,
     gates: CommandTableGates,
 ) -> CmdTable {
     let mut cmd_table: CmdTable = HashMap::new();
@@ -283,7 +289,6 @@ pub fn create_command_table_with_gates(
         crate::list::LInsertCmd,
         crate::list::RPoplpushCmd,
         // Admin commands
-        crate::admin::InfoCmd,
         crate::admin::ConfigCmd,
         // Set commands
         crate::sadd::SaddCmd,
@@ -385,6 +390,12 @@ pub fn create_command_table_with_gates(
         let cmd_name = auth_cmd.meta().name.clone();
         cmd_table.insert(cmd_name, Arc::new(auth_cmd));
     }
+    // InfoCmd requires the read-only server-state provider assembled at startup.
+    {
+        let info_cmd = crate::admin::InfoCmd::with_provider(Arc::clone(&info_provider));
+        let cmd_name = info_cmd.meta().name.clone();
+        cmd_table.insert(cmd_name, Arc::new(info_cmd));
+    }
     {
         let hello_cmd = crate::hello::HelloCmd::new(requirepass_provider);
         cmd_table.insert(hello_cmd.meta().name.clone(), Arc::new(hello_cmd));
@@ -412,7 +423,8 @@ mod tests {
     use crate::vector::admission::VectorAdmissionLimits;
 
     use super::{
-        CmdTable, CommandTableGates, create_command_table, create_command_table_with_gates,
+        CmdTable, CommandTableGates, NoopServerInfoProvider, create_command_table,
+        create_command_table_with_gates,
     };
 
     #[test]
@@ -715,6 +727,7 @@ mod tests {
     fn vector_commands_are_rejected_when_disabled() {
         let table = create_command_table_with_gates(
             no_requirepass_provider(),
+            Arc::new(NoopServerInfoProvider),
             CommandTableGates::from_flags(false, true, true),
         );
         let argvs: [(&str, Vec<Vec<u8>>); 8] = [
@@ -761,6 +774,7 @@ mod tests {
     fn vector_feature_gate_precedes_cluster_gate() {
         let table = create_command_table_with_gates(
             no_requirepass_provider(),
+            Arc::new(NoopServerInfoProvider),
             CommandTableGates::from_flags(false, false, true),
         );
         let reply = run_command(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
@@ -774,6 +788,7 @@ mod tests {
     fn vector_commands_pass_gate_when_enabled() {
         let table = create_command_table_with_gates(
             no_requirepass_provider(),
+            Arc::new(NoopServerInfoProvider),
             CommandTableGates::from_flags(true, true, true),
         );
         // Malformed vector spec: parsing fails before storage is touched, so
@@ -830,6 +845,7 @@ mod tests {
     fn vector_commands_are_rejected_when_cluster_gate_disallows() {
         let table = create_command_table_with_gates(
             no_requirepass_provider(),
+            Arc::new(NoopServerInfoProvider),
             CommandTableGates::from_flags(true, false, true),
         );
         let reply = run_pre_route_check(&table, "vcard", &[b"vcard".to_vec(), b"k".to_vec()]);
@@ -889,6 +905,7 @@ mod tests {
     fn flush_commands_are_rejected_when_cluster_gate_disallows() {
         let table = create_command_table_with_gates(
             no_requirepass_provider(),
+            Arc::new(NoopServerInfoProvider),
             CommandTableGates::from_flags(true, true, false),
         );
         let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);
@@ -907,6 +924,7 @@ mod tests {
     fn flush_commands_execute_when_gate_allows() {
         let table = create_command_table_with_gates(
             no_requirepass_provider(),
+            Arc::new(NoopServerInfoProvider),
             CommandTableGates::from_flags(true, true, true),
         );
         let reply = run_command(&table, "flushdb", &[b"flushdb".to_vec()]);

@@ -24,6 +24,7 @@ use std::time::Instant;
 
 use client::{Client, StreamTrait};
 use cmd::auth::RequirepassProvider;
+use cmd::server_info::{NoopServerInfoProvider, ServerInfoProviderRef};
 use cmd::table::{CmdTable, CommandTableGates, create_command_table_with_gates};
 use log::{debug, error, info, warn};
 use tokio::sync::mpsc;
@@ -169,18 +170,25 @@ impl Drop for StorageAccessPermit {
 /// used by the network runtime, so AUTH validates against the configured
 /// `requirepass` regardless of which runtime executes the command.
 pub fn initialize_storage_command_table(requirepass_provider: RequirepassProvider) {
-    initialize_storage_command_table_with_gates(requirepass_provider, CommandTableGates::default());
+    initialize_storage_command_table_with_gates(
+        requirepass_provider,
+        Arc::new(NoopServerInfoProvider),
+        CommandTableGates::default(),
+    );
 }
 
 /// Same as [`initialize_storage_command_table`], additionally applying feature
 /// gates (vector commands, cluster FLUSHDB/FLUSHALL) consistent with the
-/// network-runtime command table.
+/// network-runtime command table, and the read-only server-state provider used
+/// by the INFO command.
 pub fn initialize_storage_command_table_with_gates(
     requirepass_provider: RequirepassProvider,
+    info_provider: ServerInfoProviderRef,
     gates: CommandTableGates,
 ) {
-    let _ = STORAGE_COMMAND_TABLE
-        .get_or_init(|| create_command_table_with_gates(requirepass_provider, gates));
+    let _ = STORAGE_COMMAND_TABLE.get_or_init(|| {
+        create_command_table_with_gates(requirepass_provider, info_provider, gates)
+    });
 }
 
 struct RuntimeCommandStream;

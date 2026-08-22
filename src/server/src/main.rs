@@ -38,6 +38,8 @@ struct PausePermitWrapper {
     _permit: RuntimeStorageAccessPermit,
 }
 
+mod server_info;
+
 /// Build the command-table feature gates from the loaded configuration:
 /// vector commands follow `vector-enabled` and remain rejected in cluster
 /// mode until their Raft apply/replay correctness contract is complete.
@@ -120,6 +122,15 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
+    let config_file = args
+        .config
+        .clone()
+        .map(|path| {
+            std::fs::canonicalize(&path)
+                .map(|abs| abs.to_string_lossy().into_owned())
+                .unwrap_or(path)
+        })
+        .unwrap_or_default();
     let config = if let Some(config_path) = args.config {
         Config::load(&config_path).map_err(|_e| {
             std::io::Error::new(
@@ -132,6 +143,11 @@ fn main() -> std::io::Result<()> {
     };
 
     preflight_server_startup(&config)?;
+
+    let server_info_provider = Arc::new(server_info::KiwiServerInfoProvider::new(
+        &config,
+        config_file,
+    ));
 
     let addr = format!("{}:{}", config.binding, config.port);
     let protocol = "tcp";
@@ -187,6 +203,8 @@ fn main() -> std::io::Result<()> {
         let storage_for_server = storage.clone();
         let requirepass_for_storage_server = config.requirepass.clone();
         let gates_for_storage_server = command_table_gates(&config);
+        let info_provider_for_storage =
+            Arc::clone(&server_info_provider) as cmd::server_info::ServerInfoProviderRef;
         storage_handle.spawn(async move {
             info!("Initializing storage server...");
             match initialize_storage_server(
@@ -194,6 +212,7 @@ fn main() -> std::io::Result<()> {
                 storage_for_server,
                 pause_controller,
                 requirepass_for_storage_server,
+                info_provider_for_storage,
                 gates_for_storage_server,
             )
             .await
@@ -219,6 +238,7 @@ fn main() -> std::io::Result<()> {
             &storage,
             &config,
             pause_controller_for_raft,
+            Arc::clone(&server_info_provider),
         )
         .await
         {
@@ -356,14 +376,17 @@ async fn initialize_storage_server(
     global_storage: GlobalStorage,
     pause_controller: StorageServerPauseController,
     requirepass: Option<String>,
+    info_provider: cmd::server_info::ServerInfoProviderRef,
     gates: cmd::table::CommandTableGates,
 ) -> Result<(), DualRuntimeError> {
     info!("Initializing storage server...");
 
     // Initialize the storage-runtime command table with the same password
-    // provider used by the network runtime, so AUTH behaves consistently.
+    // provider used by the network runtime, so AUTH behaves consistently, plus
+    // the read-only server-state provider backing the INFO command.
     runtime::initialize_storage_command_table_with_gates(
         Arc::new(move || requirepass.clone()),
+        info_provider,
         gates,
     );
 
@@ -383,6 +406,7 @@ async fn start_server(
     global_storage: &GlobalStorage,
     config: &Config,
     pause_controller: StorageServerPauseController,
+    server_info_provider: Arc<server_info::KiwiServerInfoProvider>,
 ) -> std::io::Result<()> {
     use conf::raft_type::{Binlog, BinlogResponse};
     use tokio::sync::{mpsc, oneshot};
@@ -415,6 +439,7 @@ async fn start_server(
         )
         .await
         .map_err(|e| std::io::Error::other(format!("Failed to create Raft node: {}", e)))?;
+        server_info_provider.set_raft(raft_app.clone());
 
         // Bridge: storage runtime -> (channel) -> network runtime drain task -> client_write.
         let (log_tx, mut log_rx) =

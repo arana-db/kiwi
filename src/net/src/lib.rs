@@ -39,6 +39,7 @@ use async_trait::async_trait;
 use crate::network_server::NetworkServer;
 use crate::storage_client::StorageClient;
 use crate::tcp::TcpServer;
+use cmd::server_info::NoopServerInfoProvider;
 use cmd::table::{CommandTableGates, create_command_table_with_gates};
 use cmd::vector::admission::VectorAdmissionLimits;
 use executor::CmdExecutorBuilder;
@@ -146,10 +147,13 @@ impl ServerFactory {
         // Wrap the runtime storage client in the network-side StorageClient
         let storage_client = Arc::new(StorageClient::new(runtime_storage_client));
 
-        // Create command table with requirepass provider
+        // Create command table with requirepass provider. The network-runtime
+        // table only runs pre-route admission (never INFO do_cmd), so it uses a
+        // no-op server-state provider.
         let requirepass_for_provider = requirepass.clone();
         let cmd_table = Arc::new(create_command_table_with_gates(
             Arc::new(move || requirepass_for_provider.clone()),
+            Arc::new(NoopServerInfoProvider),
             gates,
         ));
         let executor = Arc::new(CmdExecutorBuilder::new().build());

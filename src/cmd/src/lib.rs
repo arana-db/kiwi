@@ -71,6 +71,7 @@ mod scan_options;
 pub mod scard;
 pub mod sdiff;
 pub mod sdiffstore;
+pub mod server_info;
 pub mod set;
 pub mod setbit;
 pub mod setex;
@@ -129,6 +130,9 @@ use storage::storage::Storage;
 use crate::vector::admission::VectorAdmissionLimits;
 
 pub use auth::RequirepassProvider;
+pub use server_info::{
+    NoopServerInfoProvider, ServerInfoProvider, ServerInfoProviderRef, ServerInfoSnapshot,
+};
 
 bitflags! {
     #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
