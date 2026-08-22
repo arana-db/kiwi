@@ -51,7 +51,40 @@
 
 **文件：** 只创建 ignored `.codex/recovery/**`；不修改 tracked 文件。
 
-- [ ] **步骤 1：重新获取 planning PR 合并后的 exact main**
+- [ ] **步骤 1：完成 session、recovery、dirty ownership 与 authority preflight**
+
+在 fetch、创建 worktree 或写 recovery 之前，完整读取：
+
+```text
+AGENTS.md
+CLAUDE.md
+CONTRIBUTING.md
+.planning/PROJECT.md
+.planning/STATE.md
+.planning/KANBAN.md
+.planning/SDD.md（完整读取，包括 front matter、当前工作包和 current_plan）
+current_plan 指向的完整计划
+.codex/recovery/ACTIVE.md（若存在）
+```
+
+运行：
+
+```powershell
+git status --porcelain=v2 --branch --untracked-files=all
+git worktree list --porcelain
+```
+
+把当前 branch、HEAD、upstream、dirty path ownership、已有 recovery、目标 branch 和
+目标 worktree 路径逐项对账。任一状态与 recovery 不一致、出现来源不明或 mixed-owner
+修改、目标 branch/path 已存在，或者 implementation task 未明确授权 Issue #433 的
+exact 14-file 源码/测试/CI 修改时，立即停止，不执行 fetch、worktree add 或 checkpoint
+写入。
+
+implementation authority 与 Git authority 分开核验。Commit、push、创建 PR、merge、
+Resolve thread 和关闭 Issue 都只能记录新 task 实际明确授予的权限；缺少某项授权时，
+后续对应步骤必须停止，不能由本 planning PR、Issue #433 或本计划自行推导权限。
+
+- [ ] **步骤 2：重新获取 planning PR 合并后的 exact main**
 
 运行：
 
@@ -63,7 +96,7 @@ git log -5 --oneline origin/main
 
 预期：记录一个包含 planning PR 的 exact SHA；不得继续使用本计划中的历史 planning baseline 作为 implementation Head。
 
-- [ ] **步骤 2：创建独立 worktree 和 branch**
+- [ ] **步骤 3：创建独立 worktree 和 branch**
 
 运行前确认目标路径和 branch 不存在、`.worktrees/` 已 ignored。然后创建例如：
 
@@ -76,11 +109,14 @@ git worktree add `
 
 预期：新 worktree clean，`HEAD == origin/main`。不得复用 planning worktree 或两个 frozen Oracle worktree。
 
-- [ ] **步骤 3：创建 implementation recovery checkpoint**
+- [ ] **步骤 4：创建 implementation recovery checkpoint**
 
-使用 `scripts/codex-workstate.ps1` 记录：Issue #433、exact base SHA、上述 14 个 exact files、commit/push/create PR 权限、merge 禁止、dirty ownership 和 Task 1 作为下一安全动作。
+使用 `scripts/codex-workstate.ps1` 记录：Issue #433、exact base SHA、上述 14 个 exact
+files、dirty ownership、Task 1 作为下一安全动作，以及步骤 1 实际核验到的 authority。
+未明确授予的 commit、push、create PR、merge、Resolve 或 Issue 状态权限必须写入
+`Forbidden`，不得把计划中的后续命令当作授权来源。
 
-- [ ] **步骤 4：运行 relevant baseline**
+- [ ] **步骤 5：运行 relevant baseline**
 
 Windows：
 
@@ -121,7 +157,7 @@ fn core_smoke_required_gate_contract_is_present() {
 - Core Python module 存在；
 - manifest schema 是 v2，六条 Core command-level classification 为 `known_difference`，且 `required_cases` 与 Core registry 双向闭合；
 - workflow 含唯一 Core job；
--普通 Python Make 入口排除 `raw_core_protocol`。
+- 普通 Python Make 入口排除 `raw_core_protocol`。
 
 fixture、repo root、文件读取失败必须 panic `CORE_GATE_HARNESS_ERROR:`，不能加入 `missing`。
 
@@ -147,7 +183,12 @@ test result: FAILED. 0 passed; 1 failed
 
 - [ ] **步骤 3：保存 RED 证据但不提交独立失败 commit**
 
-记录命令、exit code、marker 计数和完整 log 到 recovery checkpoint。保持 test 进入下一任务，最终由细粒度 positive/mutant tests 取代一次性 gap helper。
+记录命令、exit code、marker 计数和完整 log 到 recovery checkpoint。保持 test 进入下一
+任务，最终由细粒度 positive/mutant tests 取代一次性 gap helper。在 Task 6 删除该
+helper 之前，完整 `ci_contract` suite 仍应只因这个总体 RED 缺少后续 runner/workflow
+而失败；Task 2 至 Task 5 涉及 `ci_contract` 时只运行各自新增的 exact tests，不得声称
+完整 `ci_contract` suite 已 GREEN。Manifest 和 Oracle 的独立完整 suites 仍按各任务要求
+执行。
 
 ## Task 2：兼容 manifest 与 Core registry Rust 合同
 
@@ -230,6 +271,12 @@ jobs:
 - [ ] **步骤 6：实现 canonical helper**
 
 `kiwi-required-core-jobs` 只接受一个 registry path，成功时 stdout 只输出 canonical JSON，失败时 stderr 前缀固定为 `required Core jobs registry:` 且 exit 非零。
+
+权威输入固定为 tracked、frozen callback input 中的
+`tests/compat/redis-8.8.1/core-required-jobs.yaml`；schema 是
+`kiwi-core-required-jobs/v1`。Helper stdout 是唯一允许进入 callback evidence 的
+canonical registry bytes，schema 是 `kiwi-core-required-jobs/canonical-v1`。不得接受
+调用者提供的预生成 JSON 替代 helper 输出。
 
 - [ ] **步骤 7：运行 GREEN 和 mutants**
 
@@ -340,13 +387,23 @@ python3 -m pytest tests/python/test_core_differential.py \
 
 预期：列出恰好 30 个 node。若 conftest 在 collect-only 阶段要求真实 endpoint，应修复 fixture scope，使 collection 不启动服务；不得用环境变量伪造 endpoint。
 
-- [ ] **步骤 6：运行 contract GREEN**
+- [ ] **步骤 6：运行本阶段 exact contract GREEN**
 
 ```powershell
-cargo test -p kiwi-compat --test ci_contract -- --test-threads=1
+cargo test -p kiwi-compat --test ci_contract `
+  core_differential_collection_contract_is_fail_closed `
+  -- --exact --nocapture --test-threads=1
+cargo test -p kiwi-compat --test ci_contract `
+  standard_python_integration_excludes_required_vector_cluster_gate `
+  -- --exact --nocapture --test-threads=1
+cargo test -p kiwi-compat --test ci_contract `
+  vector_differential_fast_job_uses_marker_ownership_not_path_ignore `
+  -- --exact --nocapture --test-threads=1
 ```
 
-预期：Core marker/Make mutants 全绿，现有 Vector marker tests 全绿。
+预期：Core marker/Make mutants 全绿，现有 Vector marker tests 全绿。此时 Task 1 的
+总体 gap test 仍应因为 Core runner/workflow 尚未创建而保持 RED；不得运行或宣称完整
+`ci_contract` suite 全绿。
 
 - [ ] **步骤 7：Commit**
 
@@ -356,7 +413,7 @@ git commit -s -m "test(compat): add raw Redis Core smoke cases" `
   -m "Constraint: compare raw RESP bytes and keep ordinary Python integration separate." `
   -m "Confidence: exact 30-node collection and marker mutation tests are fail closed." `
   -m "Scope-risk: test-only Python and collection contracts; no production command changes." `
-  -m "Tested: cargo test -p kiwi-compat --test ci_contract -- --test-threads=1; pytest collect-only reports 30 nodes." `
+  -m "Tested: exact Core/Vector marker contract tests; pytest collect-only reports 30 nodes." `
   -m "Not-tested: Redis/Kiwi execution waits for the trusted runner and Oracle profile." `
   -m "Refs #433" `
   -m "Co-authored-by: OmX <omx@oh-my-codex.dev>"
@@ -377,6 +434,7 @@ git commit -s -m "test(compat): add raw Redis Core smoke cases" `
 ```text
 core_callback_profile_accepts_only_exact_frozen_argv
 core_evidence_requires_core_helper_and_registry_schema
+core_evidence_rejects_source_registry_or_canonical_artifact_drift
 core_cleanup_schema_cannot_use_vector_schema
 core_provenance_rejects_vector_core_schema_file_cross_pairing
 core_evidence_semantic_replay_accepts_the_canonical_document
@@ -411,19 +469,34 @@ Descriptor 固定：
 vector-v1:
   callback argv = run-vector-differential.sh --callback
   helper = target/debug/kiwi-required-vector-jobs
-  registry file/schema = vector-required-jobs.json / kiwi-vector-required-jobs/canonical-v1
+  source registry/schema = tests/compat/redis-8.8.1/vector-required-jobs.yaml / kiwi-vector-required-jobs/v1
+  canonical registry artifact/schema = /work/vector-required-jobs.json / kiwi-vector-required-jobs/canonical-v1
   cleanup schema = kiwi-vector-callback-cleanup/v1
   evidence schema = kiwi-vector-differential-evidence/v1
 
 core-smoke-v1:
   callback argv = run-core-differential.sh --callback
   helper = target/debug/kiwi-required-core-jobs
-  registry file/schema = core-required-jobs.json / kiwi-core-required-jobs/canonical-v1
+  source registry/schema = tests/compat/redis-8.8.1/core-required-jobs.yaml / kiwi-core-required-jobs/v1
+  canonical registry artifact/schema = /work/core-required-jobs.json / kiwi-core-required-jobs/canonical-v1
   cleanup schema = kiwi-core-callback-cleanup/v1
   evidence schema = kiwi-core-differential-evidence/v1
 ```
 
 Descriptor 只选择 callback runtime/evidence allowlist、helper、registry、cleanup/evidence schema。不得移动或复制 `run_bounded`、rebuild、runtime identity、cleanup 和 publication transaction。
+
+Core callback 必须从 frozen `/callback-input` 读取 source YAML，并使用 frozen helper
+直接生成 `/work/core-required-jobs.json`；collector 只接受该 exact 文件名和 bytes，Rust
+semantic replay 同时验证 source path/schema、helper identity、canonical schema 和 evidence
+中的 required-jobs document。任一 source/helper/file/schema 交叉配对、预生成 JSON 注入
+或 helper stdout/evidence bytes 漂移都必须失败。
+
+Core evidence 的 profile-specific `registry_binding` 固定记录：source registry
+path/schema 及其 callback-input manifest size/SHA、helper path/size/SHA、canonical artifact
+file/schema/size/SHA，以及 strict-parsed required-jobs document。Offline replay 对 document
+重新 canonicalize 后必须重算 canonical artifact size/SHA，并与 `registry_binding`、callback
+manifest 和 helper identity 全部相等；这样进程和 `/work` 删除后仍能证明最终 evidence
+消费的是受冻结 source/helper pairing，而不是调用者注入的预生成 JSON。
 
 在 `oracle.rs` 增加 strict `DifferentialEvidenceDocument::{VectorV1, CoreSmokeV1}` parser。`OracleProvenance::verify_external_bindings` 在 file/name/size/SHA pairing 通过后必须解析 document，并验证 registry、collection、summary、raw transcript、final-state、cleanup 和 helper/schema pairing。现有 `kiwi-verify-oracle-evidence` 无需改文件，因为它已将完整 sealed evidence bytes 传入该函数。
 
@@ -477,6 +550,9 @@ git commit -s -m "test(compat): generalize trusted differential evidence profile
 - exact `KIWI_EXPECTED_HEAD`；
 - `cargo build --locked` 构建 Core helper、external verifier 和 Kiwi；
 - authoritative registry 唯一输入；
+- exact frozen helper invocation 把 source YAML stdout 写入 `/work/core-required-jobs.json`；
+- collection、raw transcript、final state、summary 和 evidence collector 全部只消费该 canonical file；
+- offline semantic replay 用 `registry_binding` 重算并验证 canonical document、source manifest entry 和 helper identity；
 - collect-only 后验证 exact 30 node IDs；
 - execution summary 30/30/0/0/0/0/0；
 - raw transcript 和 final-state 校验；
@@ -487,7 +563,11 @@ git commit -s -m "test(compat): generalize trusted differential evidence profile
 - evidence/provenance outputs distinct且预先不存在。
 - ordinary/CI mode 拒绝 `KIWI_CORE_TEST_MODE`、`KIWI_CORE_TEST_MUTANT` 和 `--test-mutant`，显式 test-mutant mode 禁止发布 final outputs。
 
-Mutants 覆盖：helper bypass、registry copy drift、summary 字段删除、30→29、skip/xfail/xpass/deselect、validation reordering、cleanup bypass、unexpected file、symlink、missing artifact、expected Head mismatch、required job 注入 test-mode env、test-mutant mode 意外发布 artifact。
+Mutants 覆盖：helper bypass、source registry path/schema drift、预生成 canonical JSON 注入、
+canonical registry size/SHA/document drift、registry copy drift、summary 字段删除、30→29、
+skip/xfail/xpass/deselect、validation reordering、cleanup bypass、unexpected file、symlink、
+missing artifact、expected Head mismatch、required job 注入 test-mode env、test-mutant mode
+意外发布 artifact。
 
 - [ ] **步骤 2：运行 runner RED**
 
@@ -505,6 +585,10 @@ cargo test -p kiwi-compat --test ci_contract `
 
 ```text
 validate frozen input
+run /callback-input/target/debug/kiwi-required-core-jobs
+  /callback-input/tests/compat/redis-8.8.1/core-required-jobs.yaml
+  > /work/core-required-jobs.json
+validate exact canonical file/schema/bytes and reject pre-generated JSON
 start Kiwi
 wait raw readiness
 collect 30 nodes
@@ -525,7 +609,19 @@ return callback status
 
 Outer mode验证 clean exact Head，构建 Core helper/verifier/Kiwi，构建 primary Redis，再调用现有 verifier，以 exact Core callback argv 触发 `core-smoke-v1` profile。成功后只接受非空、互异的 final Core evidence 和 provenance。
 
-- [ ] **步骤 5：在 WSL 运行真实 GREEN**
+- [ ] **步骤 5：运行本阶段 exact runner contract GREEN**
+
+```powershell
+cargo test -p kiwi-compat --test ci_contract `
+  core_differential_runner_is_fail_closed `
+  -- --exact --nocapture --test-threads=1
+```
+
+预期：runner source、canonical registry producer、collection/summary、test-mode 隔离、
+cleanup、artifact allowlist 和 expected-Head mutants 全部通过。Task 1 总体 gap test 仍因
+workflow 尚未创建保持 RED，不运行完整 `ci_contract` suite。
+
+- [ ] **步骤 6：在 WSL 运行真实 GREEN**
 
 ```bash
 export KIWI_COMPAT_REQUIRE_ORACLE=1
@@ -537,13 +633,15 @@ export KIWI_EXPECTED_HEAD="$(git rev-parse HEAD)"
 bash scripts/compat/run-core-differential.sh
 ```
 
-预期：独立 rebuild hash equality；30 collected/30 passed；两份 final JSON存在；work/runtime/checkout/process residue 为零。
+预期：独立 rebuild hash equality；source YAML 只经 frozen helper 生成 exact
+`/work/core-required-jobs.json`，且 collector/replay 绑定相同 bytes；30 collected/30 passed；
+两份 final JSON存在；work/runtime/checkout/process residue 为零。
 
-- [ ] **步骤 6：受控 negative run**
+- [ ] **步骤 7：受控 negative run**
 
 复制 runner 输入到临时测试根并使用测试 seam 将 summary 的 `skipped` 改为 1。预期 exit 非零、无 final evidence/provenance、marker 为 collection/run contract error而非 harness setup error。
 
-- [ ] **步骤 7：Commit**
+- [ ] **步骤 8：Commit**
 
 ```powershell
 git add -- scripts/compat/run-core-differential.sh tools/compat/tests/ci_contract.rs
@@ -551,7 +649,7 @@ git commit -s -m "test(compat): run trusted Redis Core smoke differential" `
   -m "Constraint: use the accepted Oracle controller and publish no evidence before cleanup." `
   -m "Confidence: collection, transcript, final-state, cleanup, and residue mutants fail closed." `
   -m "Scope-risk: Core test runner only; no production command or Vector runner changes." `
-  -m "Tested: ci_contract suite and WSL trusted Core runner, 30 collected and 30 passed." `
+  -m "Tested: exact Core runner contract tests and WSL trusted Core runner, 30 collected and 30 passed." `
   -m "Not-tested: GitHub-hosted required job is introduced by the next task." `
   -m "Refs #433" `
   -m "Co-authored-by: OmX <omx@oh-my-codex.dev>"
@@ -595,9 +693,14 @@ cargo test -p kiwi-compat --test ci_contract `
 
 复用 trusted Vector job 的 Linux trust boundary 和 source checkout步骤，但使用独立 `$RUNNER_TEMP/kiwi-core-oracle` 输出目录和 Core runner。不要把 Core 塞进 Vector job，也不要修改 Vector job 名称、registry、commands 或 upload paths。
 
-- [ ] **步骤 4：替换总体 gap RED 为持久 positive/mutant tests**
+- [ ] **步骤 4：替换总体 gap RED，并首次要求完整 suite GREEN**
 
-删除 Task 1 一次性 `required_core_contract_gaps` helper；保留细粒度 manifest、registry、marker、runner、controller、workflow tests。再次运行 Task 1 exact test 名应不存在，完整 ci_contract suite 应执行所有持久 tests。
+确认 manifest、registry、marker、runner、controller 和 workflow 的持久 positive/mutant
+tests 都已存在后，删除 Task 1 一次性 `required_core_contract_gaps` helper 和总体 RED
+test。再次运行 Task 1 exact test 名应不存在；只有完成该删除后，才首次要求完整
+`ci_contract` suite 全绿。删除前的 Task 2 至 Task 5 证据只能声明各自 exact tests
+通过，不能声明完整 `ci_contract` suite 通过；独立 manifest/Oracle suites 的完整执行
+不受此限制。
 
 - [ ] **步骤 5：运行 GREEN**
 
