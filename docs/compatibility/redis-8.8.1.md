@@ -5,7 +5,7 @@
 > Oracle license options：RSALv2、SSPLv1、AGPLv3
 > Kiwi 当前运行基线：Cache OFF
 
-关联决定：`D001`、`D009`、`D011`、`D012`。
+关联决定：`D001`、`D009`、`D011`、`D012`、`D018`、`D020`。
 
 主要需求：`REQ-COMPAT-001` 至 `REQ-COMPAT-010`、`REQ-STABILITY-001` 至 `REQ-STABILITY-006`。
 
@@ -21,6 +21,8 @@ Redis 8.8.1 exact binary/source 是 Kiwi 普通命令、RESP、错误、连接�
 - `unsupported`：明确不提供，并定义客户端可见错误或发现行为。
 
 Redis Core、可选模块、管理接口和分布式限制必须分别分类，禁止用笼统的“Redis compatible”隐藏范围。
+
+当前 main@`cb39927e44b84553f98ffee6ed1daa3f7388cf97` 的机器可读 manifest 只有 12 个命令条目，其中 4 个 `required`、2 个 `deferred`、6 个 `known_difference`；已执行的 Trusted Oracle differential 是 8 个 Vector 命令、40 个固定 node 的 Vector-only gate。它证明现有 Vector required registry，不证明 Redis Core、完整 TCL、集群或哨兵兼容。
 
 ## 2. Profile
 
@@ -87,12 +89,27 @@ Redis 8.8.1 原始 RESP differential
 
 客户端 typed conversion 可能合并 Null、空集合、整数和字符串表现，也可能隐藏 Push、Pipeline 中间错误或二进制转换差异，因此不能替代 raw wire evidence。
 
+### 4.1 门禁分层和测试来源职责
+
+| 层级 | Required 内容 | 不得解释为 |
+|---|---|---|
+| PR fast | 受 changed-path 影响的 manifest/registry 合同、确定性 raw RESP2/RESP3、Kiwi/Redis exact response 与 final-state、单元/集成和静态检查 | 全命令兼容、系统稳定或 release ready |
+| nightly/full | 固定 Redis exact commit 的官方 TCL external-server suite、扩大后的完整 differential、property/fuzz、确定性故障与可回放 seed/artifact | M6/release 稳定性通过 |
+| M6/release | fresh independent Oracle rebuild、binary hash equality、真实 upgrade/rollback、close/reopen、3/5 节点历史和完整 exact-ref evidence bundle | Cache ON 或 Embedded Redis Hot Tier 解冻 |
+
+职责固定如下：
+
+- Redis 官方 TCL suite 提供固定上游场景和断言；runner 只允许 external-server 适配与机器可读 skip registry，不修改上游断言制造通过。
+- Python 负责 raw RESP differential、二进制安全输入、跨语言集成、服务进程编排、final-state/TTL 对账和故障场景驱动；不迁移到一个新通用 harness 才能开始首切片。
+- redis-rs 只在 raw/TCL 合同之后验证客户端生态；它是 test-only consumer，不是服务端语义 Oracle，也不进入生产依赖图。
+- Cluster、Sentinel 和 Raft single-group 不进入第一个 standalone Core smoke；它们分别等待 WP4、WP6、WP7 的前置门禁和 exact-file plan。
+
 ## 5. 机器可读 manifest
 
 命令条目至少包含：
 
 ```yaml
-schema: kiwi-redis-compat/v1
+schema: kiwi-redis-compat/v2
 command: GET
 redis:
   tag: 8.8.1
@@ -113,7 +130,45 @@ known_differences: []
 owner: cmd-string
 ```
 
-Schema 必须拒绝未知字段、空 owner、空 protocols、空 modes、重复命令名和不支持的 classification。命令名按 Redis ASCII 大小写规则规范化，不能使用 locale-sensitive 转换。
+`kiwi-redis-compat/v2` 保留 command-level `classification`，并新增可选、机器可读的 `required_cases`：
+
+```yaml
+command: SET
+classification: known_difference
+modes:
+  standalone_cache_off: known_difference
+  raft_single_group_cache_off: deferred
+arguments: exact
+required_cases:
+  registry_path: tests/compat/redis-8.8.1/core-required-jobs.yaml
+  registry_schema: kiwi-core-required-jobs/v1
+  case_ids: [set-binary-success, set-wrong-arity]
+known_differences:
+  - owner: cmd-string
+    issue: https://github.com/arana-db/kiwi/issues/325
+    reason: required evidence currently covers only the listed SET cases, not the complete Redis 8.8.1 SET option surface
+    remove_when: every Redis 8.8.1 SET arity and option family is classified and all required cases have trusted raw and final-state evidence
+    introduced: 2026-08-20
+    affected: standalone_cache_off; resp2/resp3; command-level coverage
+    last_verified_ref: redis-source:77b6c308396c9700672390a210143a8496fb4b10
+```
+
+`classification` 始终描述整条命令；`required_cases` 只声明 registry 中列出的 case 是 fail-closed required subset，不能把 subset 提升为 command-level `required`。从 v1 迁移到 v2 时，现有 12 条命令的 classification 和 known-difference 语义必须原样保持。Schema 必须拒绝未知字段、空 owner、空 protocols、空 modes、重复命令名、不支持的 classification、空/重复/未登记 required case、registry/schema/path 漂移和 command/case 双向闭包缺口。命令名按 Redis ASCII 大小写规则规范化，不能使用 locale-sensitive 转换。
+
+### 5.1 首个 Core smoke registry
+
+Issue [#433](https://github.com/arana-db/kiwi/issues/433) 是 WP1 首个可执行切片。它把 6 个已存在的 standalone Cache OFF 命令登记到 v2 manifest；六条 command-level classification 均保持 `known_difference`，同时用 `required_cases` 冻结 RESP2/RESP3 各 15 个 fail-closed case：
+
+| 命令 | 固定 case |
+|---|---|
+| `PING` | 无参数、binary echo、错误 arity |
+| `SET` | binary key/value 成功、错误 arity |
+| `GET` | binary existing、missing、错误 arity |
+| `DEL` | single-key existing、single-key missing、错误 arity |
+| `TYPE` | string、missing |
+| `PTTL` | persistent `-1`、missing `-2` |
+
+两个协议合计 30 个 server-backed node。首切片不覆盖 multi-key `DEL`、SET options、expiration mutation、transaction、pipeline、Push、Cluster 或 Sentinel，也不得据此声明 Redis Core 已整体兼容。现有 12 条 manifest 加入这 6 个命令后应严格成为 18 条：4 条 command-level `required`、2 条 `deferred`、12 条 `known_difference`。Core registry、manifest `required_cases` 和 evidence 中的 command/case/node 集合必须双向相等；删除或增加任一 case、把 SET options 或 multi-key DEL 偷换成 covered surface、或把六条命令提前改成 command-level `required` 都必须失败。
 
 ## 6. Raw RESP differential
 
@@ -240,6 +295,8 @@ Verifier 必须在 callback、进程和目录清理及输入身份复核全部�
 或发布后复核失败时，两份 final 文件都必须回滚。CI 只上传这两个最终文件，
 不能上传 live work directory、candidate 或 provenance-only 结果；上传 artifact 的
 固定保留期为 7 天。
+
+D020 的首切片不建立第二套 controller。Target 是保留上述 held-FD 工具执行、absolute deadline、输出上限、进程组 cleanup、cleanup-before-publish、原子发布、回滚和 provenance binding 内核，只把当前硬编码的 Vector evidence descriptor、allowlist、collector 与 Rust binding 收窄泛化为两个固定 profile：现有 `vector-v1` 继续绑定 `kiwi-vector-differential-evidence/v1`，新增 `core-smoke-v1` 绑定固定的 Core evidence schema。`kiwi-redis-oracle-provenance/v4` envelope 和 Vector 行为必须保持兼容；若实施证明必须改变 v4 字段、含义或外部 binding，实施 task 必须停止并先形成新的 Decision/schema 迁移计划，不能静默升版。
 
 测试通过但缺少 exact identity 或原始 transcript 时，只能作为辅助结果，不能关闭 required compatibility item。
 

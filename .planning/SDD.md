@@ -3,11 +3,11 @@ document: kiwi-sdd
 title: Kiwi 架构设计与 SDD 开发计划
 status: accepted-design
 authority: sole-project-entry
-version: 4
-updated_at: 2026-08-19
+version: 5
+updated_at: 2026-08-20
 baseline_repository: arana-db/kiwi
 baseline_branch: main
-baseline_ref: 9a8a64aca12a825912f299450e10fc6043eca610
+baseline_ref: cb39927e44b84553f98ffee6ed1daa3f7388cf97
 wp0_pr_number: 414
 wp0_pr_base_ref: 0c4795ec716299598686fc7c5e0fac03a30e044d
 wp0_pr_head_ref: e2bfc7deb481590a757f0034874b7f21a4a31aa2
@@ -24,7 +24,7 @@ wp8_merge_ref: 9a8a64aca12a825912f299450e10fc6043eca610
 wp8_exact_main_verification_ref: 9a8a64aca12a825912f299450e10fc6043eca610
 wp8_exact_main_verification_run: 32129266046
 wp8_exact_main_verification_status: passed
-github_snapshot_at: 2026-08-19T07:28:08Z
+github_snapshot_at: 2026-08-20T07:58:21Z
 redis_oracle_tag: 8.8.1
 redis_oracle_ref: 77b6c308396c9700672390a210143a8496fb4b10
 required_runtime_mode: cache-off
@@ -170,16 +170,20 @@ M7 到 M10 进入长期架构，但不进入当前实现：
 | D | Discussion、RFC、Proposal | 设计输入，必须显式采纳 |
 | E | 历史计划、旧周报、过期 Issue、草稿 | 背景，不形成当前任务 |
 
-### 3.2 2026-08-19T07:28:08Z 实时快照
+### 3.2 2026-08-20T07:58:21Z 实时快照
 
 - Repository：arana-db/kiwi。
 - Default branch：main。
-- main：9a8a64aca12a825912f299450e10fc6043eca610。
+- main：cb39927e44b84553f98ffee6ed1daa3f7388cf97。
 - PR #414：MERGED，base 0c4795ec716299598686fc7c5e0fac03a30e044d，Head e2bfc7deb481590a757f0034874b7f21a4a31aa2，merge commit 9820162ebdf2d26aa6349e704efe8737b2e73e4a；Issue #413 已关闭。
 - PR #417：MERGED，merge commit 688d905fec31b54aec76f36676f55efd8b5cfa17；其 main push CI run 30801285622 成功，完成 WP0 exact-main verification。
 - PR #356：MERGED，最终 Head 4e404b61cec1ece8f8750e0a0631839cce7f4ddc，merge commit 733888fc90ad8ef039947e87b08d7500a405954a；VectorSet Phase 1 已进入当前主线。
 - PR #422：MERGED，Base 733888fc90ad8ef039947e87b08d7500a405954a，最终 Head 2b03219cdd5e452e08c1b2144c3c90516190d41f，merge commit 9a8a64aca12a825912f299450e10fc6043eca610；其 main push `ci` run 32129266046 成功。
-- Issue #415 已关闭；Issue #418、#421 和 #430 保持 OPEN。#418 持有 Vector compatibility residual differences，#430 持有 `RUSTSEC-2026-0235` advisory 生命周期。
+- main@cb39927e44b84553f98ffee6ed1daa3f7388cf97 的 `ci` run 32340146786 已成功，17 个 jobs 全部完成且无失败；同一 exact SHA 的 Release Drafter、Security Audit、Benchmark 和 CodeQL runs 也已成功。
+- Issue #415 和 #421 已关闭；Issue #325、#418、#430 和新建的 WP1 Core smoke child Issue #433 保持 OPEN。#418 持有 Vector compatibility residual differences，#430 持有 `RUSTSEC-2026-0235` advisory 生命周期。
+- PR #424 保持 OPEN、非 Draft、MERGEABLE/CLEAN，Head 8652af614378c0ca64f5abc11bd68f2309572909，21 个可见 checks 全部成功；其 9 个源码/测试路径不属于本 planning task，且 WP7 尚无 exact-file implementation plan。
+- PR #427 保持 OPEN、非 Draft、CONFLICTING/DIRTY，Head 2498b41f8804345f6b75b989bda9a29369ab2f5d，21 个可见 checks 全部成功；其 7 个 Raft 源码/测试路径不属于本 planning task，且 WP4 尚未 ready。
+- 两个开放 PR 都没有触及本 task 的 7 个规划文件。仓库未发现可证明生效的 required status-check rule，因此可见绿灯只作为实时 check 证据，不表述为 required gate 已配置或已通过。
 
 该快照只用于编制本版本。开始任一工作包、创建 PR、复审或验收前必须重新查询实时状态。
 
@@ -204,6 +208,7 @@ Issue 数量和分类会变化，工作包只依赖明确列出的 Issue，不�
 | Block cache | [#143](https://github.com/arana-db/kiwi/issues/143) | 支持轨道，PR #412 已合并，Issue 已关闭，待能力证据评估 |
 | Error model | [#315](https://github.com/arana-db/kiwi/issues/315) | WP6 |
 | Test strategy | [#325](https://github.com/arana-db/kiwi/issues/325) | WP1/WP6/WP7 |
+| Core raw differential smoke | [#433](https://github.com/arana-db/kiwi/issues/433) | WP1 首个可执行 implementation slice |
 | Raft apply Epic | [#332](https://github.com/arana-db/kiwi/issues/332) | WP4 Epic |
 | Applied metadata | [#334](https://github.com/arana-db/kiwi/issues/334) | WP4 child |
 | Apply marker | [#335](https://github.com/arana-db/kiwi/issues/335) | WP4 child |
@@ -964,23 +969,25 @@ Requirement：
 - `python scripts/validate_sdd.py --self-test` 的失败路径变异测试；
 - `python scripts/validate_sdd.py` 的 Markdown 链接、占位词、围栏和状态断言；
 - WP0 exact-main 状态提升时，baseline_ref 必须推进到 verification ref 或其后的 main 提交，并在线核验 recorded GitHub Actions run 与 ci workflow、main push、精确 SHA 和 success 结论一致；
-- 68 个 REQ 和 19 个 Decision 的唯一注册、范围展开和引用全集闭包；
+- 68 个 REQ 和 20 个 Decision 的唯一注册、范围展开和引用全集闭包；
 - WP0、primary Issue #413、PR #414 和 20 个预期产物的一致性断言；
 - live Issue #413、开放 Issue 数量、关键 PR 状态和远端 main 复核；
 - 独立只读审查不得留下 Critical 或 Important finding。
 
 ### WP1：Redis 8.8.1 Oracle 与兼容性基础
 
-状态：proposed。
+状态：ready。
 
-Primary Issue：#325。
+Primary Issue handling：
+
+- 首个 implementation slice：[#433](https://github.com/arana-db/kiwi/issues/433)；
+- Parent / umbrella：[#325](https://github.com/arana-db/kiwi/issues/325)，保持 OPEN，不由首切片关闭；
+- Historical evidence：已关闭的 [#415](https://github.com/arana-db/kiwi/issues/415) 与已合并的 [PR #422](https://github.com/arana-db/kiwi/pull/422)。
 
 Related：
 
-- #315；
-- #415（M1-001-T2 Oracle provenance）；
-- OQ-3；
-- OQ-10。
+- [#315](https://github.com/arana-db/kiwi/issues/315)；
+- [#418](https://github.com/arana-db/kiwi/issues/418) 只持有 Vector residual differences，不纳入 Core 首切片关闭语义。
 
 Requirement：
 
@@ -992,7 +999,9 @@ Requirement：
 
 - WP0 accepted；
 - Redis 8.8.1 exact tag 和 commit 身份保持固定；
-- OQ-3 与 OQ-10 在进入 ready 前形成可执行选择。
+- D020 已冻结 PR fast、nightly/full、M6/release 分层及 TCL、Python、redis-rs 职责；
+- [设计](../docs/superpowers/specs/2026-08-20-wp1-redis-compatibility-gates-design.md)、[实施计划](../docs/superpowers/plans/2026-08-20-wp1-redis-compatibility-gates.md)、Issue #433、exact 14-file scope 和 Windows/WSL/Linux/CI 验证路径已就绪；
+- 源码实施必须另开 Codex task、隔离 worktree 和 recovery checkpoint；本 planning task 不继续实现。
 
 交付：
 
@@ -1013,6 +1022,13 @@ Requirement：
 - CI compatibility jobs；
 - compatibility docs。
 
+首个可执行切片：
+
+- standalone Cache OFF 下 `PING`、`SET`、`GET`、single-key `DEL`、`TYPE`、`PTTL`；
+- RESP2/RESP3 各 15 个固定 case，共 30 个 server-backed node；
+- 复用 Trusted Oracle controller 的安全执行与清理内核，只把 Vector-only evidence 层收窄泛化为固定的 Core smoke profile；
+- exact 14-file scope 由 Issue #433 和实施计划共同冻结，首切片不修改 `src/**`。
+
 非目标：
 
 - 不把 Redis 或 redis-rs 引入生产 server dependency；
@@ -1031,6 +1047,8 @@ Requirement：
 - `cargo test --manifest-path tools/compat/Cargo.toml`；
 - raw RESP2/RESP3 differential、TCL external-server runner 和 Python integration；
 - fast/nightly/release 三层门禁均输出 exact-ref、seed 和可回放 artifact。
+
+下一实施动作：另开 implementation task，从 Issue #433 与实施计划 Task 0 开始；先建立隔离 worktree/recovery 和 marker-aware overall RED，再按 TDD 实施 manifest/registry、Python raw differential、Oracle evidence profile、runner 与 CI。实施 PR 完整满足 #433 时使用 `Fixes #433`，对 #325 使用 `Related #325`，不得关闭 #415 或 #418。
 
 ### WP2：StorageManifest、CF、Comparator 和 Topology
 
@@ -1707,7 +1725,7 @@ docs/sdd/WP-N/
 
 | 字段 | 当前值 |
 |---|---|
-| Baseline | main@9a8a64aca12a825912f299450e10fc6043eca610 |
+| Baseline | main@cb39927e44b84553f98ffee6ed1daa3f7388cf97 |
 | Current milestone | M0-M6 / WP8 |
 | Current work package | WP8 |
 | Status | accepted |
@@ -1720,7 +1738,9 @@ docs/sdd/WP-N/
 | M7/M8 | frozen |
 | Next safe action | 等待下一个经明确批准的工作包；M7/M8 继续 frozen |
 
-PR #422 以 Base 733888fc90ad8ef039947e87b08d7500a405954a、最终 Head 2b03219cdd5e452e08c1b2144c3c90516190d41f 合并为 main@9a8a64aca12a825912f299450e10fc6043eca610；该 merge 与 PR Head tree 一致，`ci` run 32129266046 在 exact main 上完成 Trusted Oracle 独立重建、Vector raw RESP2/RESP3 与 final-state differential、storage/snapshot migration、runtime admission、三节点 fail-closed 和供应链门禁。Issue #415 已关闭；五条 operational-limit differences 的 active owner 迁移到保持 OPEN 的 #418，`RUSTSEC-2026-0235` advisory owner 迁移到保持 OPEN 的 #430。WP8 的 Requirement、实现证据和残留风险已对账并进入 accepted；Issue #421 只在本治理 PR 合并且新的 exact-main `ci` 成功后按 closeout 评论关闭。M7/M8 和 Vector Set Phase 2 继续 frozen，不因 WP8 accepted 自动解冻。
+PR #422 以 Base 733888fc90ad8ef039947e87b08d7500a405954a、最终 Head 2b03219cdd5e452e08c1b2144c3c90516190d41f 合并为 main@9a8a64aca12a825912f299450e10fc6043eca610；该 merge 与 PR Head tree 一致，`ci` run 32129266046 在 exact main 上完成 Trusted Oracle 独立重建、Vector raw RESP2/RESP3 与 final-state differential、storage/snapshot migration、runtime admission、三节点 fail-closed 和供应链门禁。Issue #415、#421 已关闭；五条 operational-limit differences 的 active owner 迁移到保持 OPEN 的 #418，`RUSTSEC-2026-0235` advisory owner 迁移到保持 OPEN 的 #430。WP8 的 Requirement、实现证据和残留风险已对账并进入 accepted。后继 main@cb39927e44b84553f98ffee6ed1daa3f7388cf97 的 `ci` run 32340146786 也已成功。M7/M8 和 Vector Set Phase 2 继续 frozen，不因 WP8 accepted 或 WP1 ready 自动解冻。
+
+Ready queue：WP1 已由 D020、Issue #433、独立设计和 exact-file 实施计划推进到 `ready`，但它不是当前 `in-progress` 工作包，也不改变 front matter 中 WP8 accepted 的历史控制面。开始 WP1 源码实施需要新的明确授权 task，并从 Issue #433 的首切片执行。
 
 ## 18. 决策门禁
 
@@ -1741,6 +1761,7 @@ PR #422 以 Base 733888fc90ad8ef039947e87b08d7500a405954a、最终 Head 2b03219c
 | D017 | 当前不支持真正 Multi-Key |
 | D018 | 兼容性与故障验证使用分层门禁 |
 | D019 | 一个 Draft PR 聚合 VectorSet 合并后全量闭环，但保持独立任务、worktree 和验收门禁 |
+| D020 | Redis 8.8.1 兼容门禁、TCL/Python/redis-rs 职责和首个 Core smoke evidence profile 已冻结 |
 
 以下已批准 Decision 属于治理、测试来源或 M7-M10 冻结范围，同样受本 SDD
 追踪，但不授权 WP0-WP8 增加对应生产能力：
@@ -1843,24 +1864,24 @@ python scripts/validate_sdd.py
 
 | 事实 | 源码位置 |
 |---|---|
-| Workspace、Rust 1.97.1、Edition 2024 和依赖 | [Cargo.toml](../Cargo.toml) |
-| bootstrap runtime 和服务启动 | [server main](../src/server/src/main.rs#L119) |
-| Storage 到 Raft append bridge | [server main](../src/server/src/main.rs#L307) |
-| 当前 shutdown 顺序 | [runtime manager](../src/common/runtime/manager.rs#L224) |
-| 有界 MessageChannel | [runtime message](../src/common/runtime/message.rs#L400) |
-| StorageServer 执行入口 | [storage server](../src/common/runtime/storage_server.rs#L1353) |
-| 网络侧执行扩展 | [executor ext](../src/net/src/executor_ext.rs#L51) |
-| CF index 和 descriptor | [storage redis](../src/storage/src/redis.rs#L57) |
-| TTL etime 权威读取 | [storage redis](../src/storage/src/redis.rs#L872) |
-| stale 判断 | [storage implementation](../src/storage/src/storage_impl.rs#L638) |
+| Workspace、Rust 1.97.1、Edition 2024 和依赖 | [workspace](../Cargo.toml#L1)、[package contract](../Cargo.toml#L39)、[workspace dependencies](../Cargo.toml#L58) |
+| bootstrap runtime 和服务启动 | [runtime bootstrap](../src/server/src/main.rs#L139)、[storage/server start](../src/server/src/main.rs#L171)、[network start](../src/server/src/main.rs#L215) |
+| Storage 到 Raft append bridge | [server append bridge](../src/server/src/main.rs#L419) |
+| 当前 shutdown 顺序 | [runtime manager](../src/common/runtime/manager.rs#L249) |
+| 有界 MessageChannel | [runtime message](../src/common/runtime/message.rs#L393) |
+| StorageServer 执行入口 | [storage server](../src/common/runtime/storage_server.rs#L1364) |
+| 网络侧执行扩展 | [executor ext](../src/net/src/executor_ext.rs#L46) |
+| CF index 和 descriptor | [storage schema](../src/storage/src/storage_schema.rs#L28)、[descriptor construction](../src/storage/src/redis.rs#L553) |
+| TTL etime 权威读取 | [Redis string metadata](../src/storage/src/redis_strings.rs#L40) |
+| stale 判断 | [storage Redis](../src/storage/src/redis.rs#L1074) |
 | ExpirationManager 内存索引 | [expiration manager](../src/storage/src/expiration_manager.rs#L30) |
-| CompactSpecificKey 当前 no-op | [storage](../src/storage/src/storage.rs#L462) |
-| Binlog db/slot 隐含约束 | [storage batch](../src/storage/src/batch.rs#L445) |
-| Raft log/vote/committed 写入 | [RocksDB Raft log store](../src/raft/src/log_store_rocksdb.rs#L105) |
-| durable apply 后推进 last_applied | [Raft state machine](../src/raft/src/state_machine.rs#L470) |
-| Snapshot install transaction | [Raft state machine](../src/raft/src/state_machine.rs#L548) |
+| CompactSpecificKey 当前 no-op | [task dispatch](../src/storage/src/storage.rs#L553)、[no-op implementation](../src/storage/src/storage.rs#L675) |
+| Binlog db/slot 隐含约束 | [storage batch](../src/storage/src/batch.rs#L489) |
+| Raft log/vote/committed 写入 | [log append](../src/raft/src/log_store_rocksdb.rs#L86)、[vote write](../src/raft/src/log_store_rocksdb.rs#L180)、[committed write](../src/raft/src/log_store_rocksdb.rs#L214) |
+| durable apply 后推进 last_applied | [Raft state machine apply](../src/raft/src/state_machine.rs#L361) |
+| Snapshot install transaction | [Raft state machine install](../src/raft/src/state_machine.rs#L423) |
 | Snapshot archive 内存模型 | [snapshot archive](../src/raft/src/snapshot_archive.rs#L18) |
-| Snapshot metadata version 处理 | [checkpoint](../src/storage/src/checkpoint.rs#L190) |
+| Snapshot metadata version 处理 | [checkpoint](../src/storage/src/checkpoint.rs#L96) |
 | 当前 Redis 8.8.1 manifest | [compatibility manifest](../tests/compat/redis-8.8.1/manifest.yaml#L18) |
 
 源码移动或 baseline_ref 更新时，维护者必须重新定位这些证据；过期行号不能作为接受证据。
