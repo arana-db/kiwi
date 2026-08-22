@@ -52,6 +52,7 @@ fn server_section(snapshot: &ServerInfoSnapshot) -> String {
     format!(
         "# Server\r\n\
          redis_version:{}\r\n\
+         kiwi_version:{}\r\n\
          redis_git_sha1:{}\r\n\
          redis_mode:{}\r\n\
          os:{}\r\n\
@@ -64,6 +65,7 @@ fn server_section(snapshot: &ServerInfoSnapshot) -> String {
          executable:{}\r\n\
          config_file:{}\r\n",
         snapshot.version,
+        snapshot.kiwi_version,
         snapshot.git_sha1,
         snapshot.redis_mode,
         snapshot.os,
@@ -115,6 +117,9 @@ fn cluster_section(snapshot: &ServerInfoSnapshot) -> String {
     if let Some(term) = snapshot.raft_term {
         out.push_str(&format!("kiwi_raft_current_term:{}\r\n", term));
     }
+    if let Some(role) = snapshot.raft_role.as_deref() {
+        out.push_str(&format!("kiwi_raft_role:{}\r\n", role));
+    }
     if let Some(leader) = snapshot.raft_leader {
         out.push_str(&format!("kiwi_raft_current_leader:{}\r\n", leader));
     }
@@ -127,7 +132,9 @@ fn cluster_section(snapshot: &ServerInfoSnapshot) -> String {
     out
 }
 
-/// O(1) RocksDB key estimate. Omit the count if any instance fails.
+/// O(1) RocksDB key estimate. This is a physical approximation, not the exact
+/// Redis db0 contract, so it is reported under a kiwi_* name and marked
+/// unavailable if any instance fails to report.
 fn keyspace_section(storage: &Storage) -> String {
     let mut keys = 0u64;
     let mut estimate_failed = false;
@@ -141,7 +148,7 @@ fn keyspace_section(storage: &Storage) -> String {
     if estimate_failed {
         out.push_str("kiwi_keyspace_estimate:unavailable\r\n");
     } else {
-        out.push_str(&format!("db0:keys={}\r\n", keys));
+        out.push_str(&format!("kiwi_keyspace_estimate:{}\r\n", keys));
     }
     out
 }
@@ -357,6 +364,7 @@ mod tests {
         fn standalone() -> Self {
             let mut snapshot = ServerInfoSnapshot::empty();
             snapshot.version = "9.9.9".to_string();
+            snapshot.kiwi_version = "0.0.0-kiwi".to_string();
             snapshot.process_id = 4242;
             snapshot.tcp_port = 7777;
             snapshot.os = "testos".to_string();
@@ -429,6 +437,8 @@ mod tests {
         let cmd = InfoCmd::with_provider(Arc::new(TestServerInfoProvider::standalone()));
         let out = run_info(&cmd, &["info", "server"]);
         assert!(out.contains("redis_version:9.9.9\r\n"), "{out}");
+        assert!(out.contains("kiwi_version:0.0.0-kiwi\r\n"), "{out}");
+        assert!(out.contains("redis_git_sha1:0000000000000000\r\n"), "{out}");
         assert!(out.contains("process_id:4242\r\n"), "{out}");
         assert!(out.contains("tcp_port:7777\r\n"), "{out}");
         assert!(out.contains("os:testos\r\n"), "{out}");
@@ -452,6 +462,7 @@ mod tests {
         assert!(out.contains("cluster_state:ok\r\n"), "{out}");
         assert!(out.contains("kiwi_raft_node_id:1\r\n"), "{out}");
         assert!(out.contains("kiwi_raft_current_term:3\r\n"), "{out}");
+        assert!(out.contains("kiwi_raft_role:leader\r\n"), "{out}");
         assert!(out.contains("kiwi_raft_current_leader:1\r\n"), "{out}");
     }
 
@@ -536,6 +547,8 @@ mod tests {
         assert!(out.contains("# Server\r\n"), "{out}");
         assert!(out.contains("# Cluster\r\n"), "{out}");
         assert!(out.contains("# Keyspace\r\n"), "{out}");
+        assert!(out.contains("kiwi_keyspace_estimate:"), "{out}");
+        assert!(!out.contains("db0:"), "{out}");
         assert!(out.contains("# Clients\r\n"), "{out}");
     }
 

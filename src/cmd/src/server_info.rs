@@ -22,6 +22,7 @@ use std::sync::Arc;
 #[derive(Clone)]
 pub struct ServerInfoSnapshot {
     pub version: String,
+    pub kiwi_version: String,
     pub git_sha1: String,
     pub redis_mode: String,
     pub os: String,
@@ -47,7 +48,8 @@ impl ServerInfoSnapshot {
     pub fn empty() -> Self {
         Self {
             version: String::new(),
-            git_sha1: String::new(),
+            kiwi_version: String::new(),
+            git_sha1: "0000000000000000".to_string(),
             redis_mode: "standalone".to_string(),
             os: String::new(),
             arch_bits: 0,

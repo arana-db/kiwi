@@ -118,7 +118,15 @@ fn main() -> std::io::Result<()> {
         return Ok(());
     }
 
-    let config_file = args.config.clone().unwrap_or_default();
+    let config_file = args
+        .config
+        .clone()
+        .map(|path| {
+            std::fs::canonicalize(&path)
+                .map(|abs| abs.to_string_lossy().into_owned())
+                .unwrap_or(path)
+        })
+        .unwrap_or_default();
     let config = if let Some(config_path) = args.config {
         Config::load(&config_path).map_err(|_e| {
             std::io::Error::new(
