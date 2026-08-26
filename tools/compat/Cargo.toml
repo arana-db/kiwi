@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-base64 = "0.22"
+base64 = "0.23"
 chrono.workspace = true
 libc = "0.2"
 serde = { workspace = true, features = ["derive"] }
