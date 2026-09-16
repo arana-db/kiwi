@@ -49,7 +49,7 @@ jobs:
           df -h
 
       - name: Setup Rust toolchain
-        uses: actions-rust-lang/setup-rust-toolchain@2b1f5e9b395427c92ee4e3331786ca3c37afe2d7 # v1
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v1
         with:
           target: ${{ matrix.target }}
 
